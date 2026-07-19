@@ -57,6 +57,48 @@ pub fn split_stints(frames: &[TimedFrame], min_seconds: f32) -> Vec<&[TimedFrame
     stints
 }
 
+/// One lap within a stint. Lap numbers are the game's 0-based `LapNumber`.
+pub struct LapSlice<'a> {
+    pub number: u16,
+    pub frames: &'a [TimedFrame],
+    /// Authoritative lap time from the next lap's `LastLap` field; None for the
+    /// final (usually incomplete) lap of a stint.
+    pub time_s: Option<f32>,
+    /// True when the lap began from the start of the race clock — a standing start
+    /// (rivals out lap). Its time is not comparable to flying laps.
+    pub standing_start: bool,
+}
+
+/// Split a stint into laps on `LapNumber` transitions. A stint with no transitions
+/// (free roam, where LapNumber stays 0) yields a single slice — callers should only
+/// treat the result as laps when there is more than one.
+pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
+    let mut bounds = vec![0];
+    for i in 1..stint.len() {
+        if stint[i].frame.lap_number != stint[i - 1].frame.lap_number {
+            bounds.push(i);
+        }
+    }
+    bounds.push(stint.len());
+
+    (0..bounds.len() - 1)
+        .map(|k| {
+            let frames = &stint[bounds[k]..bounds[k + 1]];
+            // LastLap in the first frames after the boundary is the finished lap's time.
+            let time_s = stint
+                .get(bounds[k + 1])
+                .map(|next| next.frame.last_lap)
+                .filter(|t| *t > 0.0);
+            LapSlice {
+                number: frames[0].frame.lap_number,
+                frames,
+                time_s,
+                standing_start: frames[0].frame.current_race_time < 0.5,
+            }
+        })
+        .collect()
+}
+
 /// In-game duration of a frame slice, tolerant of TimestampMS overflow.
 pub fn stint_seconds(frames: &[TimedFrame]) -> f32 {
     match (frames.first(), frames.last()) {
@@ -101,6 +143,53 @@ mod tests {
         assert_eq!(stints.len(), 2);
         assert_eq!(stints[0].len(), 100);
         assert_eq!(stints[1].len(), 80);
+    }
+
+    #[test]
+    fn splits_laps_with_times_and_standing_start() {
+        // Lap 0 from a standing start (race clock at 0), lap 1 flying, lap 2 partial.
+        let mut frames = Vec::new();
+        for (lap, race_t0, n) in [(0u16, 0.0f32, 50), (1, 60.0, 50), (2, 120.0, 10)] {
+            for i in 0..n {
+                frames.push(TimedFrame {
+                    recv_us: 0,
+                    frame: TelemetryFrame {
+                        is_race_on: true,
+                        lap_number: lap,
+                        current_race_time: race_t0 + i as f32 * 0.1,
+                        // LastLap holds the previous lap's time
+                        last_lap: match lap {
+                            0 => 0.0,
+                            1 => 60.0,
+                            _ => 59.0,
+                        },
+                        ..Default::default()
+                    },
+                });
+            }
+        }
+        let laps = split_laps(&frames);
+        assert_eq!(laps.len(), 3);
+        assert!(laps[0].standing_start);
+        assert_eq!(laps[0].time_s, Some(60.0));
+        assert!(!laps[1].standing_start);
+        assert_eq!(laps[1].time_s, Some(59.0));
+        assert_eq!(laps[2].time_s, None, "final partial lap has no finished time");
+    }
+
+    #[test]
+    fn free_roam_is_a_single_slice() {
+        let frames: Vec<TimedFrame> = (0..10)
+            .map(|i| TimedFrame {
+                recv_us: 0,
+                frame: TelemetryFrame {
+                    is_race_on: true,
+                    current_race_time: 100.0 + i as f32,
+                    ..Default::default()
+                },
+            })
+            .collect();
+        assert_eq!(split_laps(&frames).len(), 1);
     }
 
     #[test]

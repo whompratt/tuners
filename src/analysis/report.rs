@@ -1,9 +1,53 @@
 //! Text rendering of stint metrics. Observations only — no advice.
 
-use super::metrics::StintMetrics;
+use super::metrics::{stint_metrics, StintMetrics};
+use super::LapSlice;
 use crate::packet::{class_name, drivetrain_name};
 use crate::util::MPS_TO_MPH;
 use std::fmt::Write;
+
+/// Lap table for a stint. Standing-start laps (rivals out laps) are labelled and
+/// excluded from the best-lap comparison — they are not comparable to flying laps.
+pub fn render_laps(laps: &[LapSlice]) -> String {
+    let mut out = String::new();
+    let best_flying = laps
+        .iter()
+        .filter(|l| !l.standing_start)
+        .filter_map(|l| l.time_s)
+        .fold(f32::INFINITY, f32::min);
+
+    writeln!(out, "  laps").unwrap();
+    for lap in laps {
+        let m = stint_metrics(lap.frames);
+        let label = format!("lap {}", lap.number + 1);
+        let time = match lap.time_s {
+            Some(t) => format!("{t:7.2}s"),
+            None => format!("({:.1}s, incomplete)", m.duration_s),
+        };
+        let compare = match (lap.time_s, lap.standing_start) {
+            (_, true) => " | standing start".to_string(),
+            (Some(t), false) if t <= best_flying => " | best".to_string(),
+            (Some(t), false) => format!(" | +{:.2}s vs best", t - best_flying),
+            (None, false) => String::new(),
+        };
+        let extras = [
+            m.wheelspin_frac.map(|w| format!("spin {:.1}%", w * 100.0)),
+            m.lockup_frac.map(|l| format!("lock {:.1}%", l * 100.0)),
+            m.understeer_index.map(|i| format!("balance {i:+.2}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" | ");
+        writeln!(
+            out,
+            "    {label}: {time}{compare} | max {:.0} mph | {extras}",
+            m.max_speed * MPS_TO_MPH,
+        )
+        .unwrap();
+    }
+    out
+}
 
 pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     let mut out = String::new();

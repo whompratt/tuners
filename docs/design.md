@@ -72,6 +72,17 @@ UDP listener → packet decoder → session recorder (raw + decoded)
 - Live in-race coaching / overlay (analysis is post-drive to start with).
 - Anything requiring memory reading or game modification — Data Out only.
 
+## Primary workflow: rivals iteration
+
+The core use case is a **rivals session**: restartable with guaranteed-identical
+conditions, so it is the natural tune-test loop — drive laps, restart, adjust the
+tune, drive again, compare. Analysis must respect two rivals facts: lap 1 is always
+a **standing start** (out lap, much slower on circuits — excluded from lap
+comparisons), and tracks may be **lap-based or point-to-point** (point-to-point has
+no flying laps at all, so every run is a standing start and runs compare only to
+other runs of the same route). Cross-session comparison — same car/track, tune A vs
+tune B — is where recommendations get their evidence.
+
 ## Tune input model
 
 The app iterates on the *user's existing tune* rather than generating one from scratch

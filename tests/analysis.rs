@@ -36,3 +36,28 @@ fn real_fixture_analysis_is_sane() {
     }
     assert!(m.gears.top_gear >= 7, "reached high gears at 155 mph");
 }
+
+/// Real rivals capture spanning the out-lap -> lap-2 boundary: lap semantics
+/// (0-based LapNumber, LastLap-at-boundary, standing start) must hold on real data.
+#[test]
+fn rivals_lap_boundary_fixture() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/rivals-lap-boundary-01.ftel");
+    let session = Session::load(Path::new(path)).unwrap();
+    assert_eq!(session.decode_errors, 0);
+
+    let laps = tuners::analysis::split_laps(&session.frames);
+    assert_eq!(laps.len(), 2);
+    assert_eq!(laps[0].number, 0);
+    assert_eq!(laps[1].number, 1);
+    // The out lap's authoritative time comes from lap 1's LastLap field.
+    let t = laps[0].time_s.expect("out lap has a finished time");
+    assert!((t - 100.75).abs() < 0.02, "out lap time {t}");
+    assert_eq!(laps[1].time_s, None, "boundary fixture ends mid-lap");
+    // The out lap slice here is its final stretch (~150+ mph), NOT the standing start.
+    assert!(!laps[0].standing_start);
+
+    // DistanceTraveled is live in race modes and must be monotonic.
+    let dists: Vec<f32> = session.frames.iter().map(|t| t.frame.distance_traveled).collect();
+    assert!(dists.windows(2).all(|w| w[1] >= w[0]));
+    assert!(dists[0] > 0.0);
+}

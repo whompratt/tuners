@@ -94,6 +94,10 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
     for (i, stint) in stints.iter().enumerate() {
         let metrics = analysis::metrics::stint_metrics(stint);
         println!("{}", analysis::report::render_stint(i + 1, &metrics));
+        let laps = analysis::split_laps(stint);
+        if laps.len() > 1 {
+            println!("{}", analysis::report::render_laps(&laps));
+        }
     }
     Ok(())
 }

@@ -86,8 +86,14 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 - Send rate matches frame rate as documented (~168 Hz observed on a 165 Hz setup).
 - Setup gotcha: the game only starts honouring a newly configured Data Out target
   after a **full game restart**.
-- **`DistanceTraveled` is always 0.0 in free roam** (likely race-only). Distance must
-  be integrated from `Speed` over `TimestampMS`.
+- **`DistanceTraveled` is always 0.0 in free roam** but live and monotonic in race
+  modes (rivals: ~5950 m/lap observed). Integrating `Speed` over `TimestampMS` works
+  everywhere.
+- **Lap semantics (verified in a rivals session)**: `LapNumber` is 0-based and lap 0
+  is the standing-start out lap (~6.5s slower than flying laps in the observed
+  session — never compare it to them). `CurrentLap` resets to 0 at each boundary;
+  `LastLap`/`BestLap` update exactly at the boundary, so a finished lap's
+  authoritative time is read from the first frames of the *next* lap.
 
 ## Still to verify
 
