@@ -59,7 +59,13 @@ pub struct StintMetrics {
     pub slip_frac: Corners<f32>,
     /// mean |front slip angle| − mean |rear slip angle| over cornering samples.
     /// Positive = front washes out first (understeer tendency). None if no cornering.
+    /// Units: fraction of each tire's grip limit (1.0 = at the limit).
     pub understeer_index: Option<f32>,
+    /// Mean |slip angle| per axle over cornering samples — the absolute operating
+    /// point the index difference hides (0.85 front vs 0.55 rear reads very
+    /// differently from 0.30 vs 0.04, at the same index).
+    pub cornering_front_slip: Option<f32>,
+    pub cornering_rear_slip: Option<f32>,
     pub cornering_frac: f32,
     /// Drive-wheel spin as a fraction of on-throttle samples. None if never on throttle.
     pub wheelspin_frac: Option<f32>,
@@ -190,6 +196,8 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         slip_frac: corners_from(std::array::from_fn(|i| frac(slip_count[i]))),
         understeer_index: (cornering > 0)
             .then(|| (front_slip_sum - rear_slip_sum) / cornering as f32),
+        cornering_front_slip: (cornering > 0).then(|| front_slip_sum / cornering as f32),
+        cornering_rear_slip: (cornering > 0).then(|| rear_slip_sum / cornering as f32),
         cornering_frac: frac(cornering),
         wheelspin_frac: (throttle_samples > 0)
             .then(|| wheelspin as f32 / throttle_samples as f32),
@@ -270,6 +278,8 @@ mod tests {
         let idx = m.understeer_index.unwrap();
         assert!((idx - 0.4).abs() < 1e-5, "index {idx}");
         assert_eq!(m.cornering_frac, 1.0);
+        assert!((m.cornering_front_slip.unwrap() - 0.8).abs() < 1e-5);
+        assert!((m.cornering_rear_slip.unwrap() - 0.4).abs() < 1e-5);
     }
 
     #[test]

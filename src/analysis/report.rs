@@ -167,16 +167,19 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         // With ABS on, sustained slip at the limit is normal threshold braking.
         writeln!(out, "    braking at/over slip limit: {}", pct(l)).unwrap();
     }
-    match m.understeer_index {
-        Some(idx) => writeln!(
+    match (m.understeer_index, m.cornering_front_slip, m.cornering_rear_slip) {
+        (Some(idx), Some(front), Some(rear)) => writeln!(
             out,
-            "    balance while cornering ({} of stint): {} (front-rear slip angle delta {:+.2})",
+            "    balance while cornering ({} of stint): {} {:+.2} \
+             (front at {:.0}% of grip limit, rear {:.0}%)",
             pct(m.cornering_frac),
             if idx > 0.05 { "understeer" } else if idx < -0.05 { "oversteer" } else { "neutral" },
             idx,
+            front * 100.0,
+            rear * 100.0,
         )
         .unwrap(),
-        None => writeln!(out, "    no significant cornering in this stint").unwrap(),
+        _ => writeln!(out, "    no significant cornering in this stint").unwrap(),
     }
 
     writeln!(out, "\n  suspension (normalized travel avg | bottomed | topped)").unwrap();

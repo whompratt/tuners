@@ -305,6 +305,8 @@ mod tests {
             },
             slip_frac: Corners::default(),
             understeer_index: Some(0.0),
+            cornering_front_slip: Some(0.5),
+            cornering_rear_slip: Some(0.5),
             cornering_frac: 0.3,
             wheelspin_frac: Some(0.02),
             lockup_frac: Some(0.5),
