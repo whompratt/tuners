@@ -87,9 +87,9 @@ pub enum Band {
 }
 
 /// Corroboration score at or above this reads green.
-pub const GOOD_MIN_SCORE: f32 = 0.70;
+pub const GOOD_MIN_SCORE: f32 = 0.75;
 /// At or above this reads orange; below is red.
-pub const OK_MIN_SCORE: f32 = 0.40;
+pub const OK_MIN_SCORE: f32 = 0.50;
 
 impl Band {
     pub fn from_score(score: f32) -> Band {
