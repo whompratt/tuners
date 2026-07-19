@@ -28,9 +28,10 @@ const TOPPING_FRAC: f32 = 0.10;
 /// dirt, so thresholds are per-surface.
 const UNDERDAMPED_REV_TARMAC: f32 = 7.0;
 const UNDERDAMPED_TOPPED_TARMAC: f32 = 0.05;
-/// Loose-surface underdamping is UNCALIBRATED (no dirt min-damping capture yet);
-/// threshold sits well above the observed 12-16 healthy band.
-const UNDERDAMPED_REV_LOOSE: f32 = 20.0;
+/// Loose-surface underdamping calibrated from a dirt min-damping capture:
+/// healthy axle averages read 11.8-16.2 rev/s, min damping 17.6-19.5 — tight
+/// separation (one car), hence Medium confidence when it fires.
+const UNDERDAMPED_REV_LOOSE: f32 = 17.0;
 const UNDERDAMPED_TOPPED_LOOSE: f32 = 0.15;
 /// Overdamping, strong form (any surface): the wheel lives at full extension
 /// instead of tracking the surface. Dirt max-damping read 66-84%; healthy dirt
@@ -594,6 +595,25 @@ mod tests {
         assert_eq!(damping.len(), 2);
         assert!(damping.iter().all(|r| r.confidence == Confidence::Low));
         assert!(damping.iter().all(|r| r.advice.contains("softer")));
+    }
+
+    /// Real min-damping-on-dirt numbers must fire underdamped advice (and the
+    /// front's 37% topped stays below the 40% strong-overdamped line).
+    #[test]
+    fn underdamped_dirt_fires_increase_damping() {
+        let mut overall = base_metrics();
+        overall.surface_loose = true;
+        overall.suspension = Corners {
+            fl: susp(17.6, 0.37),
+            fr: susp(18.7, 0.32),
+            rl: susp(19.2, 0.21),
+            rr: susp(19.5, 0.20),
+        };
+        let recs = recommend(&overall, &[]);
+        let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
+        assert_eq!(damping.len(), 2, "{damping:?}");
+        assert!(damping.iter().all(|r| r.advice.contains("increase")));
+        assert!(damping.iter().all(|r| r.confidence == Confidence::Medium));
     }
 
     /// Regression from the real dirt captures: healthy dirt reads 12-16 rev/s and
