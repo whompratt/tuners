@@ -17,6 +17,9 @@ USAGE:
                     tune A/B: lap-time delta, where it comes from, mistakes excluded
   tuners recommend <session-file>
                     directional tune advice with evidence (blind mode: no tune input)
+  tuners advise   [journal-file]
+                    history-aware advice from a tuning journal (default tune-journal.txt);
+                    journal lines: <session-file> | <change since previous session>
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60]
                     send synthetic telemetry (stand-in for the game)
 ";
@@ -43,6 +46,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "analyze" => cmd_analyze(&args[1..]),
         "compare" => cmd_compare(&args[1..]),
         "recommend" => cmd_recommend(&args[1..]),
+        "advise" => cmd_advise(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
@@ -152,6 +156,91 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
             &overall, &per_lap
         ))
     );
+    Ok(())
+}
+
+fn cmd_advise(args: &[String]) -> Result<(), String> {
+    let journal_path = match args {
+        [] => "tune-journal.txt",
+        [p] => p.as_str(),
+        _ => return Err("usage: tuners advise [journal-file]".into()),
+    };
+    let text = std::fs::read_to_string(journal_path).map_err(|e| format!("{journal_path}: {e}"))?;
+    let entries = analysis::journal::parse_journal(&text);
+    if entries.is_empty() {
+        return Err(format!("{journal_path}: no sessions listed"));
+    }
+
+    // Load and profile every session, in journal (chronological) order.
+    let mut sessions = Vec::new();
+    for entry in &entries {
+        let session = analysis::Session::load(entry.path.as_ref())
+            .map_err(|e| format!("{}: {e}", entry.path))?;
+        let profile = analysis::profile::session_profile(&session.frames)
+            .map_err(|e| format!("{}: {e}", entry.path))?;
+        sessions.push((entry, session, profile));
+    }
+
+    println!("tuning trajectory ({} sessions):", sessions.len());
+    let mut last_step: Option<(analysis::journal::Change, analysis::journal::Outcome, &str)> = None;
+    for i in 0..sessions.len() {
+        let (entry, _, profile) = &sessions[i];
+        let mut line = format!(
+            "  {}. {}  {} lap(s)  best {}  ideal {}",
+            i + 1,
+            entry.path,
+            profile.laps.len(),
+            tuners::util::format_lap_time(profile.best_lap_time_s),
+            tuners::util::format_lap_time(profile.composite.time_s),
+        );
+        if let Some(note) = &entry.note {
+            line.push_str(&format!("  — {note}"));
+        }
+        if i > 0 {
+            let prev = &sessions[i - 1].2;
+            match analysis::compare::compare(prev, &sessions[i].2) {
+                Ok(cmp) => {
+                    let outcome = analysis::journal::judge(cmp.ideal_delta_s);
+                    let word = match outcome {
+                        analysis::journal::Outcome::Improved(_) => "improved",
+                        analysis::journal::Outcome::Worsened(_) => "WORSE",
+                        _ => "inconclusive",
+                    };
+                    line.push_str(&format!("  → {word} (ideal {:+.2}s)", cmp.ideal_delta_s));
+                    if prev.laps.len() != sessions[i].2.laps.len() {
+                        line.push_str("  [unequal lap counts]");
+                    }
+                    if let Some(note) = &entry.note
+                        && let Some(change) = analysis::journal::parse_change(note)
+                    {
+                        last_step = Some((change, outcome, note));
+                    }
+                }
+                Err(e) => line.push_str(&format!("  → not comparable ({e})")),
+            }
+        }
+        println!("{line}");
+    }
+
+    // Blind recommendations for the latest session, reconciled with the last step.
+    let (last_entry, last_session, _) = sessions.last().unwrap();
+    let segments = analysis::driving_segments(&last_session.frames, 5.0);
+    let stint = segments
+        .iter()
+        .max_by_key(|s| s.len())
+        .ok_or("latest session has no driving stints")?;
+    let overall = analysis::metrics::stint_metrics(stint);
+    let per_lap: Vec<_> = analysis::split_laps(stint)
+        .iter()
+        .filter(|l| l.time_s.is_some() && !l.standing_start)
+        .map(|l| analysis::metrics::stint_metrics(l.frames))
+        .collect();
+    let mut recs = analysis::recommend::recommend(&overall, &per_lap);
+    if let Some((change, outcome, note)) = last_step {
+        analysis::journal::reconcile(&mut recs, change, outcome, note);
+    }
+    println!("\nadvice for {}:\n", last_entry.path);
+    print!("{}", analysis::report::render_recommendations(&recs));
     Ok(())
 }
 

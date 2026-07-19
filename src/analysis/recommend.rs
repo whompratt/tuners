@@ -2,6 +2,7 @@
 //! Blind mode: tune values and slider limits are unknown, so advice is a direction
 //! phrased to survive unknown limits. See docs/plans/004-recommendations.md.
 
+use super::journal::{Change, Family};
 use super::metrics::StintMetrics;
 
 /// Balance index magnitudes: mild tendency vs clear problem.
@@ -44,6 +45,9 @@ pub struct Recommendation {
     pub advice: String,
     pub evidence: Vec<String>,
     pub confidence: Confidence,
+    /// The journal-comparable direction this advice implies, when it maps to a
+    /// parameter family the journal tracks. Lets history reconcile with advice.
+    pub implied: Option<Change>,
 }
 
 /// `overall` covers the whole stint; `per_lap` holds metrics for each completed
@@ -123,7 +127,16 @@ fn balance_rule(
         rear_slip * 100.0,
     ));
 
-    recs.push(Recommendation { area: "balance", advice: advice.into(), evidence, confidence });
+    recs.push(Recommendation {
+        area: "balance",
+        advice: advice.into(),
+        evidence,
+        confidence,
+        implied: Some(Change {
+            family: if understeer { Family::FrontRoll } else { Family::RearRoll },
+            softer: true,
+        }),
+    });
     Some(idx.signum())
 }
 
@@ -164,7 +177,7 @@ fn tire_pressure_rule(
                 "heat is partly scrub from the balance issue above — fix balance first".into(),
             );
         }
-        recs.push(Recommendation { area: "tires", advice, evidence, confidence });
+        recs.push(Recommendation { area: "tires", advice, evidence, confidence, implied: None });
     }
 }
 
@@ -190,6 +203,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             crate::packet::drivetrain_name(overall.drivetrain_type),
         )],
         confidence: if spin >= WHEELSPIN_HIGH { Confidence::High } else { Confidence::Medium },
+        implied: None,
     });
 }
 
@@ -213,6 +227,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             .into(),
         evidence,
         confidence: Confidence::Medium,
+        implied: None,
     });
 }
 
@@ -234,6 +249,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                     bottomed * 100.0
                 )],
                 confidence: Confidence::Medium,
+                implied: None,
             });
         }
         if topped >= TOPPING_FRAC {
@@ -249,6 +265,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                     topped * 100.0
                 )],
                 confidence: Confidence::Low,
+                implied: None,
             });
         }
     }

@@ -2,6 +2,7 @@
 //! Metrics are measured facts only; prescriptive advice lives elsewhere.
 
 pub mod compare;
+pub mod journal;
 pub mod metrics;
 pub mod profile;
 pub mod recommend;

@@ -29,6 +29,25 @@ Two things worth knowing:
   in one lap is simply outvoted by your clean laps. Rewind when *you* want a clean
   run — not to protect the data.
 
+## The tuning journal: advice that remembers
+
+Keep a `tune-journal.txt` — one session per line, chronological, with what you
+changed since the previous session:
+
+```
+sessions/session-A.ftel | baseline
+sessions/session-B.ftel | front arb softer
+sessions/session-C.ftel | front arb softer
+```
+
+`tuners advise` then shows the trajectory (each step's measured outcome) and gives
+recommendations that know what was already tried. This matters because behaviour
+alone can't find the optimum: a car's fastest setup usually still understeers a
+little, so "the car understeers → soften the front" is eventually wrong advice —
+the journal notices when a repeated direction *stops paying* and tells you to
+revert half instead. The tool never needs your actual slider values, only the
+direction of each change.
+
 ## Capturing sessions worth comparing
 
 - Rivals (or any restartable race mode) is the intended loop: identical conditions
