@@ -129,6 +129,14 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Understeer index of a session's longest stint — shown per trajectory row so
+/// the setting -> balance -> lap-time mapping is visible at a glance.
+fn session_balance(session: &analysis::Session) -> Option<f32> {
+    let segments = analysis::driving_segments(&session.frames, 5.0);
+    let stint = segments.iter().max_by_key(|s| s.len())?;
+    analysis::metrics::stint_metrics(stint).understeer_index
+}
+
 fn cmd_serve(args: &[String]) -> Result<(), String> {
     let mut port: u16 = 8080;
     let mut sessions_dir = "sessions".to_string();
@@ -177,6 +185,9 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             tuners::util::format_lap_time(profile.best_lap_time_s),
             tuners::util::format_lap_time(profile.composite.time_s),
         );
+        if let Some(balance) = session_balance(&sessions[i].1) {
+            line.push_str(&format!("  balance {balance:+.2}"));
+        }
         if let Some(note) = &entry.note {
             line.push_str(&format!("  — {note}"));
         }

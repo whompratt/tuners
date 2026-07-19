@@ -89,6 +89,15 @@ better data: the game restores exact car state, so the kept lap is physically
 consistent and its time is real. Analysis reconstructs this kept timeline (erasing
 superseded driving) rather than discarding rewound laps.
 
+**Balance is the real coordinate system.** Setup changes act on lap time *through*
+behaviour (setting → balance → pace), and the first real trajectory showed the
+measured balance tracks the *driver's* preferred operating point more than the
+hardware — drivers adapt inputs to the feel they like. Long-term direction
+([plan 007](plans/007-learning.md)): per-driver balance priors and per-setting
+effect maps learned across cars, used as informed starting points and validated
+per car. Preferred balance differs by driver and surface; there is no universal
+"neutral is best".
+
 **The driver-learning confounder.** Across an iterative tuning session the driver
 learns the car and track and gets faster regardless of the tune, so raw
 best-lap-vs-best-lap deltas systematically flatter whichever tune was driven later.
