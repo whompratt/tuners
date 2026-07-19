@@ -20,6 +20,19 @@ const MAX_REAL_GEAR: u8 = 10;
 /// Suspension travel must move this far (meters) since the last extreme for a
 /// direction change to count as a reversal — filters sensor jitter.
 const OSC_MIN_TRAVEL_M: f32 = 0.002;
+/// Mean |SurfaceRumble| above this = loose surface (tarmac reads ~0.00, dirt
+/// 0.10-0.15 observed).
+const LOOSE_SURFACE_RUMBLE: f32 = 0.05;
+/// All four wheels at or under this normalized travel = airborne.
+const AIRBORNE_TRAVEL: f32 = 0.06;
+/// Minimum airborne time for a jump/crest event (seconds).
+const JUMP_MIN_AIR_S: f32 = 0.15;
+/// Bottoming inside this window after touchdown is a landing, not a spring
+/// problem — excluded from bottomed_frac (one jump must not drive spring advice).
+const LANDING_WINDOW_S: f32 = 0.6;
+/// Flutter (|d rpm/dt|, |d wheel speed/dt|) sampling: same gear, on throttle,
+/// frame gaps up to this many seconds.
+const FLUTTER_MAX_DT_S: f32 = 0.2;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TempStats {
@@ -85,6 +98,20 @@ pub struct StintMetrics {
     pub lockup_frac: Option<f32>,
     pub suspension: Corners<SuspensionStats>,
     pub gears: GearStats,
+    pub surface_rumble_avg: f32,
+    /// Loose surface (dirt/gravel) per SurfaceRumble — baselines for suspension
+    /// activity and slip differ enormously from tarmac.
+    pub surface_loose: bool,
+    /// Airborne events (all four wheels at full droop >= 0.15s): jumps and crests.
+    pub jumps: u32,
+    /// Bottoming samples that happened on jump landings — excluded from
+    /// bottomed_frac so one jump can't drive spring/ride-height advice.
+    pub landing_bottomed_excluded: u32,
+    /// Mean |d rpm/dt| on throttle in-gear (rpm/s). On loose surfaces, roughly
+    /// doubles when overdamped (skipping wheels); flat tarmac shows nothing.
+    pub rpm_flutter: Option<f32>,
+    /// Mean |d wheel-speed/dt| on throttle in-gear (rad/s²), same signal.
+    pub wheelspeed_flutter: Option<f32>,
 }
 
 pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
@@ -105,6 +132,15 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         .map(|t| t.frame.suspension_travel_meters.to_array())
         .unwrap_or_default();
     let mut osc_dir = [0i8; 4];
+    let mut rumble_sum = 0.0f32;
+    let mut air_start: Option<f32> = None;
+    let mut landing_until = f32::NEG_INFINITY;
+    let mut jumps = 0u32;
+    let mut landing_bottomed = 0u32;
+    let mut flutter_prev: Option<(u8, u8, f32, f32, f32)> = None; // gear, accel, rpm, wheel avg, race_t
+    let mut rpm_flutter_sum = 0.0f32;
+    let mut wheel_flutter_sum = 0.0f32;
+    let mut flutter_samples = 0usize;
     let mut cornering = 0usize;
     let mut front_slip_sum = 0.0f32;
     let mut rear_slip_sum = 0.0f32;
@@ -133,16 +169,43 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         }
         prev_race_t = Some(f.current_race_time);
 
+        rumble_sum += f
+            .surface_rumble
+            .to_array()
+            .iter()
+            .map(|r| r.abs())
+            .sum::<f32>()
+            / 4.0;
+
         let temps = f.tire_temp.to_array();
         let slips = f.tire_combined_slip.to_array();
         let travel = f.norm_suspension_travel.to_array();
         let travel_m = f.suspension_travel_meters.to_array();
+
+        // Airborne / landing detection must precede bottoming attribution.
+        let t = f.current_race_time;
+        if travel.iter().all(|v| *v <= AIRBORNE_TRAVEL) {
+            air_start.get_or_insert(t);
+        } else if let Some(start) = air_start.take()
+            && t - start >= JUMP_MIN_AIR_S
+        {
+            jumps += 1;
+            landing_until = t + LANDING_WINDOW_S;
+        }
+        let landing = t < landing_until;
+
         for i in 0..4 {
             temp_sum[i] += temps[i];
             temp_max[i] = temp_max[i].max(temps[i]);
             slip_count[i] += (slips[i].abs() > SLIP_LIMIT) as usize;
             susp_sum[i] += travel[i];
-            susp_bottomed[i] += (travel[i] >= BOTTOMED) as usize;
+            if travel[i] >= BOTTOMED {
+                if landing {
+                    landing_bottomed += 1;
+                } else {
+                    susp_bottomed[i] += 1;
+                }
+            }
             susp_topped[i] += (travel[i] <= TOPPED) as usize;
 
             let delta = travel_m[i] - osc_extreme[i];
@@ -199,6 +262,23 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         if f.engine_max_rpm > 0.0 && f.current_engine_rpm >= LIMITER * f.engine_max_rpm {
             limiter += 1;
         }
+
+        let wheel_avg = f.wheel_rotation_speed.to_array().iter().sum::<f32>() / 4.0;
+        if let Some((pgear, paccel, prpm, pwheel, pt)) = flutter_prev {
+            let dt = f.current_race_time - pt;
+            if dt > 0.0
+                && dt <= FLUTTER_MAX_DT_S
+                && f.gear == pgear
+                && (1..=MAX_REAL_GEAR).contains(&f.gear)
+                && f.accel >= PEDAL_ON
+                && paccel >= PEDAL_ON
+            {
+                rpm_flutter_sum += (f.current_engine_rpm - prpm).abs() / dt;
+                wheel_flutter_sum += (wheel_avg - pwheel).abs() / dt;
+                flutter_samples += 1;
+            }
+        }
+        flutter_prev = Some((f.gear, f.accel, f.current_engine_rpm, wheel_avg, f.current_race_time));
     }
 
     let frac = |count: usize| count as f32 / n as f32;
@@ -255,6 +335,13 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             avg_upshift_rpm: (upshifts > 0).then(|| upshift_rpm_sum / upshifts as f32),
             limiter_frac: frac(limiter),
         },
+        surface_rumble_avg: rumble_sum / n as f32,
+        surface_loose: rumble_sum / n as f32 > LOOSE_SURFACE_RUMBLE,
+        jumps,
+        landing_bottomed_excluded: landing_bottomed,
+        rpm_flutter: (flutter_samples > 50).then(|| rpm_flutter_sum / flutter_samples as f32),
+        wheelspeed_flutter: (flutter_samples > 50)
+            .then(|| wheel_flutter_sum / flutter_samples as f32),
     }
 }
 
@@ -376,6 +463,47 @@ mod tests {
         let fr = m.suspension.fr.reversals_per_sec;
         assert!((fl - 2.0).abs() < 0.3, "FL {fl}/s");
         assert!(fr < 0.1, "flat FR must not count reversals: {fr}/s");
+    }
+
+    /// A jump (all four wheels at full droop for >=0.15s) followed by a bottoming
+    /// landing: the event is counted and the landing bottoming is EXCLUDED from
+    /// bottomed_frac — one jump must not drive spring advice.
+    #[test]
+    fn jump_landing_bottoming_is_excluded() {
+        let mut frames = Vec::new();
+        let cruise = Corners { fl: 0.5, fr: 0.5, rl: 0.5, rr: 0.5 };
+        let airborne = Corners { fl: 0.03, fr: 0.03, rl: 0.03, rr: 0.03 };
+        let landing = Corners { fl: 0.99, fr: 0.99, rl: 0.5, rr: 0.5 };
+        for _ in 0..20 {
+            frames.push(TelemetryFrame { norm_suspension_travel: cruise, ..Default::default() });
+        }
+        for _ in 0..5 {
+            frames.push(TelemetryFrame { norm_suspension_travel: airborne, ..Default::default() });
+        }
+        for _ in 0..3 {
+            frames.push(TelemetryFrame { norm_suspension_travel: landing, ..Default::default() });
+        }
+        for _ in 0..20 {
+            frames.push(TelemetryFrame { norm_suspension_travel: cruise, ..Default::default() });
+        }
+        // timed() spaces frames 0.1s apart: 5 airborne frames = 0.5s > 0.15s min.
+        let m = stint_metrics(&timed(frames));
+        assert_eq!(m.jumps, 1);
+        assert_eq!(m.landing_bottomed_excluded, 6, "3 frames x 2 bottomed wheels");
+        assert_eq!(m.suspension.fl.bottomed_frac, 0.0, "landing must not count");
+    }
+
+    #[test]
+    fn surface_classified_from_rumble() {
+        let dirt: Vec<TelemetryFrame> = (0..10)
+            .map(|_| TelemetryFrame {
+                surface_rumble: Corners { fl: 0.15, fr: 0.12, rl: 0.14, rr: 0.13 },
+                ..Default::default()
+            })
+            .collect();
+        assert!(stint_metrics(&timed(dirt)).surface_loose);
+        let tarmac: Vec<TelemetryFrame> = (0..10).map(|_| TelemetryFrame::default()).collect();
+        assert!(!stint_metrics(&timed(tarmac)).surface_loose);
     }
 
     #[test]

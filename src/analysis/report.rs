@@ -124,13 +124,14 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     .unwrap();
     writeln!(
         out,
-        "car ordinal {}: class {} | PI {} | {} | {} cyl | redline {:.0}",
+        "car ordinal {}: class {} | PI {} | {} | {} cyl | redline {:.0} | surface: {}",
         m.car_ordinal,
         class_name(m.car_class),
         m.car_performance_index,
         drivetrain_name(m.drivetrain_type),
         m.num_cylinders,
         m.redline,
+        if m.surface_loose { "loose" } else { "tarmac" },
     )
     .unwrap();
 
@@ -200,6 +201,16 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
             pct(s.bottomed_frac),
             pct(s.topped_frac),
             s.reversals_per_sec,
+        )
+        .unwrap();
+    }
+
+    if m.jumps > 0 {
+        writeln!(
+            out,
+            "    airborne: {} jump/crest event(s); {} landing bottoming sample(s) \
+             excluded from the stats above",
+            m.jumps, m.landing_bottomed_excluded,
         )
         .unwrap();
     }

@@ -23,14 +23,21 @@ const UNUSED_REV_FRAC: f32 = 0.90;
 /// Suspension travel fractions.
 const BOTTOMING_FRAC: f32 = 0.03;
 const TOPPING_FRAC: f32 = 0.10;
-/// Damping calibration from a deliberate min/max A/B (tarmac, one car — first
-/// pass): healthy ~5.5-6 reversals/s; min damping read 7.3-7.6 with 17-20%
-/// topped; max damping read 2.0-2.3.
-const UNDERDAMPED_REV_PER_S: f32 = 7.0;
-/// Healthy axles read ~1-3.5% topped; min damping read 6.5-20%. Requires the
-/// reversal-rate signal to agree, which keeps false positives out.
-const UNDERDAMPED_TOPPED_FRAC: f32 = 0.05;
-const OVERDAMPED_REV_PER_S: f32 = 3.0;
+/// Damping calibration from deliberate min/max A/Bs (see plan 008). Baselines
+/// are SURFACE-driven: healthy reads ~5.5-6 reversals/s on tarmac but 12-16 on
+/// dirt, so thresholds are per-surface.
+const UNDERDAMPED_REV_TARMAC: f32 = 7.0;
+const UNDERDAMPED_TOPPED_TARMAC: f32 = 0.05;
+/// Loose-surface underdamping is UNCALIBRATED (no dirt min-damping capture yet);
+/// threshold sits well above the observed 12-16 healthy band.
+const UNDERDAMPED_REV_LOOSE: f32 = 20.0;
+const UNDERDAMPED_TOPPED_LOOSE: f32 = 0.15;
+/// Overdamping, strong form (any surface): the wheel lives at full extension
+/// instead of tracking the surface. Dirt max-damping read 66-84%; healthy dirt
+/// 3-26%, healthy tarmac 1-7%.
+const OVERDAMPED_TOPPED_FRAC: f32 = 0.40;
+/// Overdamping, mild tarmac form: suspension barely articulates.
+const OVERDAMPED_REV_TARMAC: f32 = 3.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
@@ -317,10 +324,43 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
 
 fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     let s = &overall.suspension;
+    let loose = overall.surface_loose;
+    let baseline = if loose { "~12-16 on loose surfaces" } else { "~5.5-6 on tarmac" };
+    let (under_rev, under_topped) = if loose {
+        (UNDERDAMPED_REV_LOOSE, UNDERDAMPED_TOPPED_LOOSE)
+    } else {
+        (UNDERDAMPED_REV_TARMAC, UNDERDAMPED_TOPPED_TARMAC)
+    };
+
     for (axle, a, b) in [("front", s.fl, s.fr), ("rear", s.rl, s.rr)] {
         let rev = (a.reversals_per_sec + b.reversals_per_sec) / 2.0;
         let topped = a.topped_frac.max(b.topped_frac);
-        if rev >= UNDERDAMPED_REV_PER_S && topped >= UNDERDAMPED_TOPPED_FRAC {
+
+        if topped >= OVERDAMPED_TOPPED_FRAC {
+            // Strong overdamping: the wheel lives at full extension instead of
+            // tracking the surface.
+            let mut evidence = vec![format!(
+                "{axle} wheel at full extension {:.0}% of the stint (healthy reads \
+                 under ~25% even on rough dirt)",
+                topped * 100.0,
+            )];
+            if loose && let Some(flutter) = overall.rpm_flutter {
+                evidence.push(format!(
+                    "rpm flutter {flutter:.0} rpm/s on throttle — skipping drive \
+                     wheels (roughly doubles vs healthy damping on the same surface)"
+                ));
+            }
+            recs.push(Recommendation {
+                area: "damping",
+                advice: format!(
+                    "reduce {axle} damping (rebound first): the {axle} wheels are \
+                     held off the surface instead of following it"
+                ),
+                evidence,
+                confidence: Confidence::High,
+                implied: None,
+            });
+        } else if rev >= under_rev && topped >= under_topped {
             recs.push(Recommendation {
                 area: "damping",
                 advice: format!(
@@ -330,15 +370,15 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 ),
                 evidence: vec![
                     format!(
-                        "{axle} suspension reverses direction {rev:.1}x/s \
-                         (healthy tarmac baseline ~5.5-6)"
+                        "{axle} suspension reverses direction {rev:.1}x/s (healthy \
+                         baseline {baseline})"
                     ),
                     format!("{axle} at full extension {:.1}% of the stint", topped * 100.0),
                 ],
-                confidence: Confidence::High,
+                confidence: if loose { Confidence::Medium } else { Confidence::High },
                 implied: None,
             });
-        } else if rev > 0.0 && rev <= OVERDAMPED_REV_PER_S {
+        } else if !loose && rev > 0.0 && rev <= OVERDAMPED_REV_TARMAC {
             recs.push(Recommendation {
                 area: "damping",
                 advice: format!(
@@ -347,8 +387,8 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                      off-road surfaces it will cost real grip"
                 ),
                 evidence: vec![format!(
-                    "{axle} suspension reverses direction only {rev:.1}x/s \
-                     (healthy tarmac baseline ~5.5-6)"
+                    "{axle} suspension reverses direction only {rev:.1}x/s (healthy \
+                     baseline {baseline})"
                 )],
                 confidence: Confidence::Low,
                 implied: None,
@@ -398,6 +438,12 @@ mod tests {
             lockup_frac: Some(0.5),
             suspension: Corners::default(),
             gears: Default::default(),
+            surface_rumble_avg: 0.0,
+            surface_loose: false,
+            jumps: 0,
+            landing_bottomed_excluded: 0,
+            rpm_flutter: None,
+            wheelspeed_flutter: None,
         }
     }
 
@@ -548,6 +594,44 @@ mod tests {
         assert_eq!(damping.len(), 2);
         assert!(damping.iter().all(|r| r.confidence == Confidence::Low));
         assert!(damping.iter().all(|r| r.advice.contains("softer")));
+    }
+
+    /// Regression from the real dirt captures: healthy dirt reads 12-16 rev/s and
+    /// up to ~26% topped — tarmac thresholds must not fire on it.
+    #[test]
+    fn healthy_dirt_damping_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.surface_loose = true;
+        overall.surface_rumble_avg = 0.13;
+        overall.suspension = Corners {
+            fl: susp(15.6, 0.26),
+            fr: susp(16.2, 0.21),
+            rl: susp(11.8, 0.10),
+            rr: susp(12.0, 0.09),
+        };
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "damping"), "{recs:?}");
+    }
+
+    /// The real overdamped-dirt signature: wheels at full extension most of the
+    /// stint fires the strong rule regardless of surface baseline.
+    #[test]
+    fn extreme_topped_fires_reduce_damping() {
+        let mut overall = base_metrics();
+        overall.surface_loose = true;
+        overall.rpm_flutter = Some(12000.0);
+        overall.suspension = Corners {
+            fl: susp(2.6, 0.84),
+            fr: susp(3.6, 0.74),
+            rl: susp(2.9, 0.77),
+            rr: susp(3.1, 0.66),
+        };
+        let recs = recommend(&overall, &[]);
+        let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
+        assert_eq!(damping.len(), 2);
+        assert!(damping.iter().all(|r| r.confidence == Confidence::High));
+        assert!(damping.iter().all(|r| r.advice.contains("reduce")));
+        assert!(damping[0].evidence.iter().any(|e| e.contains("rpm flutter")));
     }
 
     #[test]
