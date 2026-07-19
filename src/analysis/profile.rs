@@ -1,13 +1,22 @@
-//! Distance-binned lap profiles: every lap resampled onto a common distance axis so
-//! the same piece of road can be compared across laps and sessions, with driving
-//! mistakes detected as per-bin outliers. See docs/plans/003-comparison.md.
+//! Distance-binned lap profiles and the spliced "ideal lap" composite.
+//!
+//! Laps are resampled onto 10 m distance bins so the same piece of road lines up
+//! across laps and sessions. The ideal lap is composited by splicing laps together
+//! ONLY at points where their speeds match: between two equal-speed crossovers a
+//! lap's span is taken whole, judged on total elapsed time. This keeps a mistake's
+//! fast corner entry chained to its slow exit — a missed braking point is faster
+//! into the corner and can never be combined with a clean lap's exit, which would
+//! fabricate a physically impossible lap (docs/plans/003-comparison.md).
 
 use super::{split_laps, split_stints, LapSlice, TimedFrame};
+use std::collections::BTreeSet;
 
 pub const BIN_METERS: f32 = 10.0;
-/// A lap's bin is "dirty" (mistake: overshoot, offroad) when its average speed falls
-/// this fraction below the best across the session's laps at that bin.
-pub const OUTLIER_SPEED_FRAC: f32 = 0.10;
+/// Laps may only be spliced at bins where their speeds match within this tolerance.
+pub const SPLICE_SPEED_TOLERANCE_MPS: f32 = 2.5;
+/// A span is only taken from another lap when it beats the base by this margin —
+/// keeps the composite anchored on the real best lap instead of chasing noise.
+pub const SPLICE_MIN_GAIN_S: f32 = 0.03;
 /// A lap must start within this many seconds of its beginning to be profiled.
 const LAP_START_TOLERANCE_S: f32 = 1.0;
 
@@ -90,15 +99,79 @@ pub fn lap_profile(lap: &LapSlice) -> Option<LapProfile> {
     })
 }
 
+/// The spliced ideal lap: per-bin stats and which lap each bin came from.
+#[derive(Debug)]
+pub struct Composite {
+    pub bins: Vec<BinStats>,
+    /// Index into the session's laps, per bin.
+    pub source: Vec<usize>,
+    pub time_s: f32,
+}
+
+impl Composite {
+    /// Number of contiguous same-source spans the composite is stitched from.
+    pub fn span_count(&self) -> usize {
+        1 + self
+            .source
+            .windows(2)
+            .filter(|w| w[0] != w[1])
+            .count()
+    }
+
+    pub fn source_laps(&self) -> BTreeSet<usize> {
+        self.source.iter().copied().collect()
+    }
+}
+
+/// Build the composite over the first `shared` bins. Starts from the fastest lap;
+/// each other lap may replace spans between equal-speed crossovers, judged on the
+/// span's total time.
+pub fn build_composite(laps: &[LapProfile], shared: usize) -> Composite {
+    let base = laps
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.time_s.total_cmp(&b.1.time_s))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let mut bins: Vec<BinStats> = laps[base].bins[..shared].to_vec();
+    let mut source = vec![base; shared];
+
+    for (li, lap) in laps.iter().enumerate() {
+        if li == base {
+            continue;
+        }
+        // Splice boundaries: bins where the candidate's speed matches the composite's.
+        let mut bounds = vec![0usize];
+        bounds.extend((0..shared).filter(|b| {
+            (bins[*b].speed_avg - lap.bins[*b].speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
+        }));
+        bounds.push(shared);
+        bounds.dedup();
+
+        for w in bounds.windows(2) {
+            let (s, e) = (w[0], w[1]);
+            let current: f32 = bins[s..e].iter().map(|b| b.time_s).sum();
+            let candidate: f32 = lap.bins[s..e].iter().map(|b| b.time_s).sum();
+            if candidate < current - SPLICE_MIN_GAIN_S {
+                bins[s..e].copy_from_slice(&lap.bins[s..e]);
+                source[s..e].fill(li);
+            }
+        }
+    }
+
+    Composite {
+        time_s: bins.iter().map(|b| b.time_s).sum(),
+        bins,
+        source,
+    }
+}
+
 #[derive(Debug)]
 pub struct SessionProfile {
     pub laps: Vec<LapProfile>,
-    /// clean[lap][bin]: bin not flagged as a driving mistake.
-    pub clean: Vec<Vec<bool>>,
     /// Bins shared by every profiled lap (lap lengths differ by a few meters).
     pub shared_bins: usize,
-    /// Sum of per-bin best clean times: the composited "ideal lap".
-    pub ideal_time_s: f32,
+    pub composite: Composite,
     pub best_lap_time_s: f32,
     pub standing_start_only: bool,
 }
@@ -128,60 +201,16 @@ pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> 
     }
 
     let shared_bins = laps.iter().map(|l| l.bins.len()).min().unwrap();
-    let clean: Vec<Vec<bool>> = laps
-        .iter()
-        .map(|lap| {
-            (0..shared_bins)
-                .map(|b| {
-                    let best = laps
-                        .iter()
-                        .map(|l| l.bins[b].speed_avg)
-                        .fold(0.0f32, f32::max);
-                    lap.bins[b].speed_avg >= best * (1.0 - OUTLIER_SPEED_FRAC)
-                })
-                .collect()
-        })
-        .collect();
-
-    let ideal_time_s = (0..shared_bins)
-        .map(|b| best_clean_time(&laps, &clean, b))
-        .sum();
+    let composite = build_composite(&laps, shared_bins);
     let best_lap_time_s = laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min);
 
     Ok(SessionProfile {
-        clean,
         shared_bins,
-        ideal_time_s,
+        composite,
         best_lap_time_s,
         standing_start_only,
         laps,
     })
-}
-
-/// Best time for a bin among laps that drove it cleanly (all laps if none did).
-pub fn best_clean_time(laps: &[LapProfile], clean: &[Vec<bool>], bin: usize) -> f32 {
-    let clean_best = laps
-        .iter()
-        .zip(clean)
-        .filter(|(_, c)| c[bin])
-        .map(|(l, _)| l.bins[bin].time_s)
-        .fold(f32::INFINITY, f32::min);
-    if clean_best.is_finite() {
-        clean_best
-    } else {
-        laps.iter()
-            .map(|l| l.bins[bin].time_s)
-            .fold(f32::INFINITY, f32::min)
-    }
-}
-
-impl SessionProfile {
-    pub fn dirty_bin_count(&self) -> usize {
-        self.clean
-            .iter()
-            .map(|lap| lap.iter().filter(|c| !**c).count())
-            .sum()
-    }
 }
 
 #[cfg(test)]
@@ -189,23 +218,91 @@ mod tests {
     use super::*;
     use crate::packet::TelemetryFrame;
 
-    /// A lap at constant `speed` m/s except bins [slow_from, slow_to) at half speed.
-    /// 10 samples per second; frames carry distance, lap number, and race time.
-    fn synth_lap(
-        lap_number: u16,
-        length_m: f32,
-        speed: f32,
-        slow: Option<(f32, f32)>,
-        race_t0: f32,
-    ) -> Vec<TimedFrame> {
+    /// Hand-built lap: one bin per entry of `speeds` (10 m at v m/s -> 10/v seconds).
+    fn lap_from_speeds(lap_number: u16, speeds: &[f32]) -> LapProfile {
+        let bins: Vec<BinStats> = speeds
+            .iter()
+            .map(|v| BinStats {
+                time_s: BIN_METERS / v,
+                speed_avg: *v,
+                samples: 5,
+                ..Default::default()
+            })
+            .collect();
+        LapProfile {
+            lap_number,
+            time_s: bins.iter().map(|b| b.time_s).sum(),
+            standing_start: false,
+            bins,
+        }
+    }
+
+    /// The bug this design exists to prevent: an overshoot is FASTER into the corner
+    /// and slower out. Its fast-entry bins must never be spliced onto a clean exit.
+    #[test]
+    fn overshoot_entry_stays_chained_to_its_slow_exit() {
+        let clean = lap_from_speeds(1, &[50.0; 50]);
+        // Overshoot: carries 60 m/s through bins 10-12, crawls at 30 m/s bins 13-18.
+        let mut speeds = [50.0f32; 50];
+        speeds[10..13].fill(60.0);
+        speeds[13..19].fill(30.0);
+        let overshoot = lap_from_speeds(2, &speeds);
+        assert!(overshoot.time_s > clean.time_s, "overshoot is slower overall");
+
+        let laps = vec![clean.clone(), overshoot];
+        let c = build_composite(&laps, 50);
+        assert!(
+            c.source.iter().all(|s| *s == 0),
+            "no span of the overshoot lap is net-faster, so none may be taken: {:?}",
+            c.source
+        );
+        assert!((c.time_s - clean.time_s).abs() < 1e-4, "ideal == the clean lap");
+    }
+
+    /// A genuine sustained gain (higher speed, no compensating loss) IS adopted,
+    /// even from a lap that is slower overall elsewhere.
+    #[test]
+    fn genuine_gain_is_spliced_in() {
+        let base = lap_from_speeds(1, &[50.0; 50]);
+        let mut speeds = [50.0f32; 50];
+        speeds[20..30].fill(60.0); // genuinely quicker mid-section
+        speeds[40..48].fill(40.0); // but loses more time later -> slower overall
+        let mixed = lap_from_speeds(2, &speeds);
+        assert!(mixed.time_s > base.time_s);
+
+        let laps = vec![base.clone(), mixed];
+        let c = build_composite(&laps, 50);
+        assert!(
+            (20..30).all(|b| c.source[b] == 1),
+            "fast mid-section must come from lap 2: {:?}",
+            &c.source[18..32]
+        );
+        assert!(
+            (40..48).all(|b| c.source[b] == 0),
+            "slow section must stay with the base lap"
+        );
+        assert!(c.time_s < base.time_s - 0.2);
+        assert_eq!(c.source_laps().len(), 2);
+    }
+
+    /// Ideal can never beat the best lap through noise alone: with near-identical
+    /// laps the margin keeps the composite anchored on the base.
+    #[test]
+    fn near_identical_laps_do_not_fabricate_gains() {
+        let a = lap_from_speeds(1, &[50.0; 50]);
+        let b = lap_from_speeds(2, &[50.05; 50]); // trivially faster everywhere
+        let best = b.time_s.min(a.time_s);
+        let c = build_composite(&[a, b], 50);
+        assert!((c.time_s - best).abs() < 1e-3, "no noise-spliced ideal");
+    }
+
+    // --- frame-level tests ---
+
+    fn synth_lap(lap_number: u16, length_m: f32, speed: f32, race_t0: f32) -> Vec<TimedFrame> {
         let mut frames = Vec::new();
         let mut d = 0.0f32;
         let mut t = 0.0f32;
         while d < length_m {
-            let v = match slow {
-                Some((from, to)) if d >= from && d < to => speed / 2.0,
-                _ => speed,
-            };
             frames.push(TimedFrame {
                 recv_us: (t * 1e6) as u64,
                 frame: TelemetryFrame {
@@ -214,12 +311,12 @@ mod tests {
                     lap_number,
                     current_lap: t,
                     current_race_time: race_t0 + t,
-                    distance_traveled: 1000.0 + race_t0 * speed + d, // monotonic across laps
-                    speed: v,
+                    distance_traveled: 1000.0 + race_t0 * speed + d,
+                    speed,
                     ..Default::default()
                 },
             });
-            d += v * 0.1;
+            d += speed * 0.1;
             t += 0.1;
         }
         frames
@@ -227,56 +324,36 @@ mod tests {
 
     #[test]
     fn bins_capture_time_and_speed() {
-        let frames = synth_lap(0, 500.0, 50.0, None, 100.0);
+        let frames = synth_lap(0, 500.0, 50.0, 100.0);
         let laps = split_laps(&frames);
         let mut lap = laps.into_iter().next().unwrap();
         lap.time_s = Some(10.0); // synthetic: 500m at 50 m/s
         let p = lap_profile(&lap).unwrap();
         assert!((49..=51).contains(&p.bins.len()), "bins {}", p.bins.len());
-        // interior bins: 10m at 50 m/s = 0.2s
         let mid = &p.bins[20];
         assert!((mid.time_s - 0.2).abs() < 0.05, "bin time {}", mid.time_s);
         assert!((mid.speed_avg - 50.0).abs() < 0.1);
     }
 
     #[test]
-    fn mistake_bins_flagged_dirty_and_ideal_uses_clean_laps() {
-        // Three laps; lap B botches 100-150m (half speed). Laps must be joined into
-        // one frame series with contiguous lap numbers for split_laps.
+    fn session_profile_drops_out_lap_and_partial_lap() {
         let mut frames = Vec::new();
-        frames.extend(synth_lap(0, 500.0, 50.0, None, 0.0));
-        frames.extend(synth_lap(1, 500.0, 50.0, Some((100.0, 150.0)), 10.0));
-        frames.extend(synth_lap(2, 500.0, 50.0, None, 21.0));
-        // trailing frame so lap 2 gets a LastLap-style boundary
-        let mut end = synth_lap(3, 15.0, 50.0, None, 31.0);
-        for tf in &mut end {
+        frames.extend(synth_lap(0, 500.0, 50.0, 0.0)); // standing start (race_t 0)
+        frames.extend(synth_lap(1, 500.0, 50.0, 10.0));
+        frames.extend(synth_lap(2, 500.0, 50.0, 20.0));
+        let mut tail = synth_lap(3, 15.0, 50.0, 30.0); // partial, provides boundaries
+        for tf in &mut tail {
             tf.frame.last_lap = 10.0;
         }
-        // give laps 0/1 boundary times via the next lap's frames
-        for tf in frames.iter_mut().filter(|tf| tf.frame.lap_number == 1) {
+        for tf in frames.iter_mut().filter(|tf| tf.frame.lap_number >= 1) {
             tf.frame.last_lap = 10.0;
         }
-        for tf in frames.iter_mut().filter(|tf| tf.frame.lap_number == 2) {
-            tf.frame.last_lap = 11.0;
-        }
-        frames.extend(end);
+        frames.extend(tail);
 
-        let profile = session_profile(&frames).unwrap();
-        // Standing-start lap 0 is dropped (flying laps exist); the trailing partial
-        // lap has no boundary after it, so no authoritative time -> not profiled.
-        let numbers: Vec<u16> = profile.laps.iter().map(|l| l.lap_number).collect();
-        assert_eq!(numbers, vec![1, 2]);
-
-        let slow_lap = profile.laps.iter().position(|l| l.lap_number == 1).unwrap();
-        let dirty_bins: Vec<usize> = (0..profile.shared_bins)
-            .filter(|b| !profile.clean[slow_lap][*b])
-            .collect();
-        assert!(!dirty_bins.is_empty(), "botched segment must flag dirty bins");
-        assert!(
-            dirty_bins.iter().all(|b| (9..=16).contains(b)),
-            "dirty bins {dirty_bins:?} should sit in the 100-150m range"
-        );
-        // ideal must beat the botched lap's time
-        assert!(profile.ideal_time_s < 11.0);
+        let p = session_profile(&frames).unwrap();
+        let numbers: Vec<u16> = p.laps.iter().map(|l| l.lap_number).collect();
+        assert_eq!(numbers, vec![1, 2], "out lap and partial tail excluded");
+        assert!(!p.standing_start_only);
+        assert!(p.composite.time_s <= p.best_lap_time_s + 1e-3);
     }
 }

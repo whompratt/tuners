@@ -53,8 +53,10 @@ fn rivals_lap_boundary_fixture() {
     let t = laps[0].time_s.expect("out lap has a finished time");
     assert!((t - 100.75).abs() < 0.02, "out lap time {t}");
     assert_eq!(laps[1].time_s, None, "boundary fixture ends mid-lap");
-    // The out lap slice here is its final stretch (~150+ mph), NOT the standing start.
-    assert!(!laps[0].standing_start);
+    // Even though this slice is the out lap's final stretch, it IS the out lap:
+    // race clock and lap clock started together (~2s countdown offset).
+    assert!(laps[0].standing_start);
+    assert!(!laps[1].standing_start, "lap 2 is a flying lap");
 
     // DistanceTraveled is live in race modes and must be monotonic.
     let dists: Vec<f32> = session.frames.iter().map(|t| t.frame.distance_traveled).collect();

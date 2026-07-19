@@ -1,7 +1,7 @@
 //! A/B session comparison over distance-binned profiles: which tune is faster,
 //! where on the road, and what changed in behaviour — on clean bins only.
 
-use super::profile::{best_clean_time, SessionProfile, BIN_METERS};
+use super::profile::{SessionProfile, BIN_METERS};
 use crate::util::format_lap_time;
 use std::fmt::Write;
 
@@ -40,9 +40,7 @@ pub fn compare(a: &SessionProfile, b: &SessionProfile) -> Result<Comparison, Str
     }
 
     let bin_delta_s: Vec<f32> = (0..short)
-        .map(|bin| {
-            best_clean_time(&b.laps, &b.clean, bin) - best_clean_time(&a.laps, &a.clean, bin)
-        })
+        .map(|bin| b.composite.bins[bin].time_s - a.composite.bins[bin].time_s)
         .collect();
 
     Ok(Comparison {
@@ -56,14 +54,21 @@ pub fn render(a: &SessionProfile, b: &SessionProfile, cmp: &Comparison) -> Strin
     let mut out = String::new();
 
     for (name, p) in [("A", a), ("B", b)] {
+        let lap_names: Vec<String> = p
+            .composite
+            .source_laps()
+            .into_iter()
+            .map(|i| (p.laps[i].lap_number + 1).to_string())
+            .collect();
         writeln!(
             out,
-            "{name}: {} lap(s){} | best {} | ideal {} | {} mistake bin(s) excluded",
+            "{name}: {} lap(s){} | best {} | ideal {} ({} span(s) from lap(s) {})",
             p.laps.len(),
             if p.standing_start_only { " (standing starts)" } else { "" },
             format_lap_time(p.best_lap_time_s),
-            format_lap_time(p.ideal_time_s),
-            p.dirty_bin_count(),
+            format_lap_time(p.composite.time_s),
+            p.composite.span_count(),
+            lap_names.join(","),
         )
         .unwrap();
     }
@@ -78,7 +83,7 @@ pub fn render(a: &SessionProfile, b: &SessionProfile, cmp: &Comparison) -> Strin
         }
     };
     writeln!(out, "\n{}", verdict(cmp.best_lap_delta_s, "best lap")).unwrap();
-    writeln!(out, "{}", verdict(cmp.ideal_delta_s, "ideal lap (clean bins)")).unwrap();
+    writeln!(out, "{}", verdict(cmp.ideal_delta_s, "ideal lap (spliced)")).unwrap();
 
     // Segment breakdown: where the time comes from.
     let mut segments: Vec<(usize, f32)> = cmp
@@ -115,7 +120,7 @@ pub fn render(a: &SessionProfile, b: &SessionProfile, cmp: &Comparison) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::profile::{BinStats, LapProfile};
+    use crate::analysis::profile::{build_composite, BinStats, LapProfile};
 
     fn uniform_profile(n_bins: usize, bin_time: f32) -> SessionProfile {
         let lap = LapProfile {
@@ -127,13 +132,13 @@ mod tests {
                 n_bins
             ],
         };
+        let laps = vec![lap];
         SessionProfile {
-            clean: vec![vec![true; n_bins]],
+            composite: build_composite(&laps, n_bins),
             shared_bins: n_bins,
-            ideal_time_s: lap.time_s,
-            best_lap_time_s: lap.time_s,
+            best_lap_time_s: laps[0].time_s,
             standing_start_only: false,
-            laps: vec![lap],
+            laps,
         }
     }
 
@@ -153,8 +158,9 @@ mod tests {
         for bin in 50..55 {
             b.laps[0].bins[bin].time_s = 0.15;
         }
-        b.ideal_time_s -= 0.25;
+        b.laps[0].time_s -= 0.25;
         b.best_lap_time_s -= 0.25;
+        b.composite = build_composite(&b.laps, 100);
         let cmp = compare(&a, &b).unwrap();
         assert!((cmp.ideal_delta_s + 0.25).abs() < 1e-4);
         let rendered = render(&a, &b, &cmp);

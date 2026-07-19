@@ -66,10 +66,15 @@ pub struct LapSlice<'a> {
     /// Authoritative lap time from the next lap's `LastLap` field; None for the
     /// final (usually incomplete) lap of a stint.
     pub time_s: Option<f32>,
-    /// True when the lap began from the start of the race clock — a standing start
-    /// (rivals out lap). Its time is not comparable to flying laps.
+    /// True when this is the race's first lap — a standing start (rivals out lap).
+    /// Its time is not comparable to flying laps. Detected by the race clock and
+    /// lap clock having started together, which survives capture starting late.
     pub standing_start: bool,
 }
+
+/// Max seconds the race clock may lead the lap clock on a standing start
+/// (covers the pre-launch countdown offset, ~2s observed).
+const STANDING_START_CLOCK_OFFSET_S: f32 = 5.0;
 
 /// Split a stint into laps on `LapNumber` transitions. A stint with no transitions
 /// (free roam, where LapNumber stays 0) yields a single slice — callers should only
@@ -91,11 +96,13 @@ pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
                 .get(bounds[k + 1])
                 .map(|next| next.frame.last_lap)
                 .filter(|t| *t > 0.0);
+            let first = frames[0].frame;
             LapSlice {
-                number: frames[0].frame.lap_number,
+                number: first.lap_number,
                 frames,
                 time_s,
-                standing_start: frames[0].frame.current_race_time < 0.5,
+                standing_start: first.current_race_time - first.current_lap
+                    < STANDING_START_CLOCK_OFFSET_S,
             }
         })
         .collect()
@@ -177,6 +184,31 @@ mod tests {
         assert!(!laps[1].standing_start);
         assert_eq!(laps[1].time_s, Some(59.0));
         assert_eq!(laps[2].time_s, None, "final partial lap has no finished time");
+    }
+
+    /// Regression: capture starting shortly after launch (race clock already at
+    /// 0.58s) must still identify the out lap as a standing start.
+    #[test]
+    fn late_capture_start_still_flags_out_lap() {
+        let mut frames = Vec::new();
+        for (lap, cur0, race0, n) in [(0u16, 0.58f32, 0.58f32, 20), (1, 0.0, 95.0, 20)] {
+            for i in 0..n {
+                frames.push(TimedFrame {
+                    recv_us: 0,
+                    frame: TelemetryFrame {
+                        is_race_on: true,
+                        lap_number: lap,
+                        current_lap: cur0 + i as f32 * 0.1,
+                        current_race_time: race0 + i as f32 * 0.1,
+                        last_lap: if lap == 1 { 94.0 } else { 0.0 },
+                        ..Default::default()
+                    },
+                });
+            }
+        }
+        let laps = split_laps(&frames);
+        assert!(laps[0].standing_start, "late-started capture of the out lap");
+        assert!(!laps[1].standing_start);
     }
 
     #[test]
