@@ -5,8 +5,9 @@ analyses driving behaviour, and suggests tune adjustments (tire pressures, align
 springs/ARBs, gearing) grounded in what the car is actually doing on the road.
 
 Status: early exploration. See [docs/design.md](docs/design.md) for objectives and
-high-level design, and [docs/telemetry.md](docs/telemetry.md) for how data is collected
-and what is/isn't available.
+high-level design, [docs/telemetry.md](docs/telemetry.md) for how data is collected
+and what is/isn't available, and [docs/guide.md](docs/guide.md) for user-facing
+notes on capturing good data (rewinds, A/B protocol).
 
 ## Quick start
 
