@@ -341,13 +341,14 @@ function drawCompare(hoverBin) {
 document.getElementById('compare-wrap').addEventListener('mousemove', ev => {
   if (!cmpData) return;
   const rect = document.getElementById('compare-chart').getBoundingClientRect();
-  const { pad, plotW, bins, segs } = compareLayout();
+  // compareLayout() resizes the canvas, which CLEARS it — call it once, before
+  // drawCompare, never after.
+  const { pad, plotW, bins, segs, cum } = compareLayout();
   const px = ev.clientX - rect.left;
   if (px < pad.l || px > pad.l + plotW) { drawCompare(); cmpTip(null); return; }
   const bin = Math.round(((px - pad.l) / plotW) * (bins - 1));
   drawCompare(bin);
-  const { segs: segsNow, cum } = compareLayout();
-  const seg = segsNow[Math.floor(bin / SEG_BINS)] ?? 0;
+  const seg = segs[Math.floor(bin / SEG_BINS)] ?? 0;
   const gap = cum[bin] ?? 0; // negative = B ahead
   const tip = document.getElementById('compare-tip');
   tip.innerHTML =
