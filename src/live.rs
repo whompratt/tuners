@@ -76,23 +76,37 @@ impl SessionTail {
     }
 }
 
-/// Whether the captured laps support a trustworthy A/B comparison yet.
+/// Confidence band for the dashboard gauge, derived from the corroboration
+/// score. Cutoffs calibrated against the real session library (see plan 006):
+/// sessions the user drew tuning conclusions from should land in Good.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verdict {
-    /// Fewer than two comparable laps — nothing to splice or compare.
-    Insufficient,
-    /// Comparable, but more laps / more consistency would firm it up.
-    Usable,
-    /// Enough laps, consistent times, full route coverage.
+pub enum Band {
+    Low,
+    Ok,
     Good,
 }
 
-impl Verdict {
+/// Corroboration score at or above this reads green.
+pub const GOOD_MIN_SCORE: f32 = 0.70;
+/// At or above this reads orange; below is red.
+pub const OK_MIN_SCORE: f32 = 0.40;
+
+impl Band {
+    pub fn from_score(score: f32) -> Band {
+        if score >= GOOD_MIN_SCORE {
+            Band::Good
+        } else if score >= OK_MIN_SCORE {
+            Band::Ok
+        } else {
+            Band::Low
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
-            Verdict::Insufficient => "insufficient",
-            Verdict::Usable => "usable",
-            Verdict::Good => "good",
+            Band::Low => "low",
+            Band::Ok => "ok",
+            Band::Good => "good",
         }
     }
 }
@@ -108,16 +122,11 @@ pub struct Quality {
     pub spread_frac: f32,
     /// Distance every profiled lap covers (the comparable route length).
     pub shared_km: f32,
-    /// Shared bins over the longest lap's bins — how much of the route all
-    /// laps have in common.
-    pub coverage_frac: f32,
-    pub verdict: Verdict,
+    /// Time-weighted share of the ideal lap reproduced by a second lap
+    /// (profile::Corroboration) — the headline confidence value.
+    pub confidence: f32,
+    pub band: Band,
 }
-
-/// A trustworthy comparison wants at least this many comparable laps...
-const GOOD_MIN_LAPS: usize = 3;
-/// ...with lap times spread no wider than this fraction of the best.
-const GOOD_MAX_SPREAD: f32 = 0.03;
 
 /// Quality over the frames captured so far; None until a comparable lap exists.
 pub fn compute_quality(frames: &[TimedFrame]) -> Option<Quality> {
@@ -125,23 +134,15 @@ pub fn compute_quality(frames: &[TimedFrame]) -> Option<Quality> {
     let laps = profile.laps.len();
     let worst = profile.laps.iter().map(|l| l.time_s).fold(0.0f32, f32::max);
     let spread_frac = (worst - profile.best_lap_time_s).max(0.0) / profile.best_lap_time_s;
-    let max_bins = profile.laps.iter().map(|l| l.bins.len()).max().unwrap_or(1);
-    let coverage_frac = profile.shared_bins as f32 / max_bins as f32;
-    let verdict = if laps >= GOOD_MIN_LAPS && spread_frac <= GOOD_MAX_SPREAD {
-        Verdict::Good
-    } else if laps >= 2 {
-        Verdict::Usable
-    } else {
-        Verdict::Insufficient
-    };
+    let confidence = profile.corroboration().score;
     Some(Quality {
         laps,
         standing_only: profile.standing_start_only,
         best_lap_s: profile.best_lap_time_s,
         spread_frac,
         shared_km: profile.shared_bins as f32 * crate::analysis::profile::BIN_METERS / 1000.0,
-        coverage_frac,
-        verdict,
+        confidence,
+        band: Band::from_score(confidence),
     })
 }
 
@@ -317,26 +318,27 @@ mod tests {
     }
 
     #[test]
-    fn quality_none_without_laps_then_good_with_three() {
+    fn quality_none_without_laps_then_confident_with_agreeing_laps() {
         assert!(compute_quality(&[]).is_none());
 
         let q = compute_quality(&synth_session(3)).unwrap();
         assert_eq!(q.laps, 3, "flying laps only (out lap and partial tail dropped)");
         assert!(!q.standing_only);
-        assert_eq!(q.verdict, Verdict::Good);
+        assert!(q.confidence > 0.99, "identical laps corroborate fully: {}", q.confidence);
+        assert_eq!(q.band, Band::Good);
         assert!(q.spread_frac < 1e-3);
-        assert!(q.coverage_frac > 0.95);
         assert!((q.best_lap_s - 10.0).abs() < 1e-3);
     }
 
     #[test]
-    fn quality_single_lap_is_insufficient_two_usable() {
+    fn quality_single_lap_has_zero_confidence() {
         let q = compute_quality(&synth_session(1)).unwrap();
         assert_eq!(q.laps, 1);
-        assert_eq!(q.verdict, Verdict::Insufficient);
+        assert_eq!(q.confidence, 0.0, "nothing corroborates a lone lap");
+        assert_eq!(q.band, Band::Low);
 
         let q = compute_quality(&synth_session(2)).unwrap();
         assert_eq!(q.laps, 2);
-        assert_eq!(q.verdict, Verdict::Usable);
+        assert_eq!(q.band, Band::Good, "two agreeing laps corroborate each other");
     }
 }

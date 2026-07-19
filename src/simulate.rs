@@ -33,13 +33,22 @@ pub fn run(opts: &SimOpts) -> io::Result<()> {
 /// Synthetic lap length in in-game seconds.
 pub const LAP_S: f32 = 30.0;
 
+/// Distance covered `x` seconds into a lap: integral of the lap speed curve.
+fn lap_distance(x: f32) -> f32 {
+    30.0 * x - 60.0 * (x / 4.0).cos() + 60.0
+}
+
 /// Deterministic, vaguely-plausible car state at time `t` seconds: speed and steering
 /// oscillate, gears step, temperatures drift, laps tick over every LAP_S seconds so
 /// the analysis pipeline (lap split, profile, quality) sees real lap structure.
 /// Not physics — just non-constant values for every field group analysis cares about.
 pub fn synth_frame(t: f32) -> TelemetryFrame {
-    let speed = 30.0 + 15.0 * (t / 4.0).sin();
     let lap = (t / LAP_S) as u16;
+    let t_lap = t % LAP_S;
+    // Speed is a function of lap position — synthetic laps repeat like a real
+    // driver's do (so corroboration/quality sees consistent laps) — plus a small
+    // wobble within the splice tolerance for lap-to-lap variety.
+    let speed = 30.0 + 15.0 * (t_lap / 4.0).sin() + 0.8 * (t * 1.7).sin();
     let rpm = 3800.0 + 2600.0 * (t * 1.5).sin();
     let wheel_speed = speed / 0.35;
     let corner_wave = |phase: f32, base: f32, amp: f32| Corners {
@@ -79,8 +88,9 @@ pub fn synth_frame(t: f32) -> TelemetryFrame {
         tire_temp: corner_wave(0.5, 175.0, 20.0),
         boost: 6.0 + 6.0 * (t * 1.5).sin().max(0.0),
         fuel: (0.95 - t * 0.0002).max(0.0),
-        // Integral of the speed curve, so distance stays monotonic and consistent.
-        distance_traveled: 30.0 * t - 60.0 * (t / 4.0).cos() + 60.0,
+        // Integral of the per-lap speed curve (wobble ignored), so distance stays
+        // monotonic and every lap covers the same distance.
+        distance_traveled: lap as f32 * lap_distance(LAP_S) + lap_distance(t_lap),
         best_lap: if lap >= 1 { LAP_S } else { 0.0 },
         last_lap: if lap >= 1 { LAP_S } else { 0.0 },
         current_lap: t % LAP_S,

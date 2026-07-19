@@ -178,14 +178,14 @@ fn quality_json(q: Option<&crate::live::Quality>) -> String {
         None => "null".into(),
         Some(q) => format!(
             "{{\"laps\":{},\"standingOnly\":{},\"bestLapS\":{:.3},\"spreadPct\":{:.2},\
-             \"sharedKm\":{:.2},\"coveragePct\":{:.0},\"verdict\":\"{}\"}}",
+             \"sharedKm\":{:.2},\"confidencePct\":{:.0},\"band\":\"{}\"}}",
             q.laps,
             q.standing_only,
             q.best_lap_s,
             q.spread_frac * 100.0,
             q.shared_km,
-            q.coverage_frac * 100.0,
-            q.verdict.as_str(),
+            q.confidence * 100.0,
+            q.band.as_str(),
         ),
     }
 }

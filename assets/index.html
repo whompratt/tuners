@@ -98,9 +98,25 @@
     border: 1px solid var(--border); border-radius: 4px; padding: 2px 0;
   }
   .temps .cold { color: #3987e5; } .temps .hot { color: #e66767; }
-  #live-quality { margin-top: 10px; font-size: 12px; color: var(--ink-2); }
-  #live-quality .num { font-variant-numeric: tabular-nums; color: var(--ink); }
-  .v-good { color: #199e70; } .v-usable { color: var(--accent); } .v-insufficient { color: var(--muted); }
+  #live-quality {
+    margin-top: 12px; display: flex; align-items: center; gap: 16px;
+    border: 1px solid var(--qcolor); border-radius: 8px; padding: 10px 14px;
+    background: color-mix(in srgb, var(--qcolor) 14%, transparent);
+    --qcolor: #e66767; /* low */
+  }
+  #live-quality.q-ok { --qcolor: #c98500; }
+  #live-quality.q-good { --qcolor: #199e70; }
+  #live-quality svg { flex: none; }
+  .q-track { fill: none; stroke: var(--grid); stroke-width: 10; stroke-linecap: round; }
+  .q-fill {
+    fill: none; stroke: var(--qcolor); stroke-width: 10; stroke-linecap: round;
+    transition: stroke-dasharray 0.4s, stroke 0.4s;
+  }
+  #q-pct { fill: var(--ink); font: 600 20px system-ui; text-anchor: middle; }
+  #q-caption { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  #q-detail { font-size: 12px; color: var(--ink-2); }
+  #q-detail .num { font-variant-numeric: tabular-nums; color: var(--ink); }
+  #q-label { font-size: 12px; color: var(--ink-2); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -138,7 +154,18 @@
         <div class="readout"><div class="label">Tires °F</div>
           <div class="temps" id="lv-temps"><div>–</div><div>–</div><div>–</div><div>–</div></div></div>
       </div>
-      <div id="live-quality"></div>
+      <div id="live-quality">
+        <svg viewBox="0 0 100 62" width="120" aria-label="data confidence">
+          <path class="q-track" d="M 10 52 A 40 40 0 0 1 90 52"/>
+          <path class="q-fill" id="q-fill" d="M 10 52 A 40 40 0 0 1 90 52" stroke-dasharray="0 999"/>
+          <text id="q-pct" x="50" y="50">–</text>
+        </svg>
+        <div>
+          <div id="q-label">confidence</div>
+          <div id="q-detail">no complete laps yet</div>
+          <div id="q-caption">share of the ideal lap reproduced by a second lap</div>
+        </div>
+      </div>
     </div>
     <div id="compare-panel" style="display:none" class="panel">
       <h2 id="compare-title">A/B comparison</h2>
@@ -600,22 +627,23 @@ document.getElementById('rec-split').onclick = async () => {
 };
 live.addEventListener('quality', ev => {
   const q = JSON.parse(ev.data);
-  const el = document.getElementById('live-quality');
-  if (!q) {
-    el.innerHTML = '<span class="v-insufficient">data quality: no complete laps yet</span>';
-    return;
-  }
-  const lapWord = q.standingOnly ? 'standing run(s)' : 'flying lap(s)';
-  const verdictText = {
-    good: 'enough for a trustworthy A/B comparison',
-    usable: 'comparable — more laps would firm it up',
-    insufficient: 'keep driving — a comparison needs 2+ laps',
-  }[q.verdict] || q.verdict;
-  el.innerHTML = `data quality: <span class="num">${q.laps}</span> ${lapWord} · ` +
+  const ARC = Math.PI * 40;                   // semicircle path length (r=40)
+  const pct = q ? q.confidencePct : 0;
+  const band = q ? q.band : 'low';
+  document.getElementById('live-quality').className =
+    band === 'good' ? 'q-good' : band === 'ok' ? 'q-ok' : '';
+  document.getElementById('q-fill').setAttribute('stroke-dasharray', `${ARC * pct / 100} 999`);
+  document.getElementById('q-pct').textContent = q ? `${pct}%` : '–';
+  document.getElementById('q-label').textContent = 'confidence — ' + {
+    good: 'enough for a trustworthy A/B',
+    ok: 'usable, more laps will firm it up',
+    low: 'keep driving',
+  }[band];
+  document.getElementById('q-detail').innerHTML = !q ? 'no complete laps yet' :
+    `<span class="num">${q.laps}</span> ${q.standingOnly ? 'standing run(s)' : 'flying lap(s)'} · ` +
     `best <span class="num">${fmtLap(q.bestLapS)}</span> · ` +
     `spread <span class="num">${q.spreadPct.toFixed(1)}%</span> · ` +
-    `<span class="num">${q.sharedKm.toFixed(2)} km</span> shared (${q.coveragePct.toFixed(0)}% coverage) — ` +
-    `<span class="v-${q.verdict}">${verdictText}</span>`;
+    `<span class="num">${q.sharedKm.toFixed(2)} km</span>`;
 });
 load();
 </script>

@@ -190,6 +190,45 @@ pub struct SessionProfile {
     pub car_ordinal: i32,
 }
 
+/// How much of the composite ideal has been independently reproduced.
+///
+/// A bin is corroborated when a lap other than the one the composite took it
+/// from matches the composite's speed there, within the same tolerance the
+/// splicer uses to call two speeds equal. The score is the corroborated share
+/// of the composite weighted by bin time (a confirmed hairpin counts for more
+/// than a confirmed straight of equal length). Reproducibility, not optimality:
+/// a corner driven consistently wrong still corroborates. Monotone in laps
+/// driven — a mistake lap fails to corroborate but never lowers the score.
+#[derive(Debug)]
+pub struct Corroboration {
+    /// Per shared bin: reproduced by a second lap.
+    pub corroborated: Vec<bool>,
+    /// Time-weighted corroborated share, 0..1.
+    pub score: f32,
+}
+
+impl SessionProfile {
+    pub fn corroboration(&self) -> Corroboration {
+        let mut corroborated = vec![false; self.shared_bins];
+        let (mut time_ok, mut time_total) = (0.0f32, 0.0f32);
+        for (b, ok) in corroborated.iter_mut().enumerate() {
+            let cb = &self.composite.bins[b];
+            let src = self.composite.source[b];
+            *ok = self.laps.iter().enumerate().any(|(li, lap)| {
+                li != src && (lap.bins[b].speed_avg - cb.speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
+            });
+            time_total += cb.time_s;
+            if *ok {
+                time_ok += cb.time_s;
+            }
+        }
+        Corroboration {
+            corroborated,
+            score: if time_total > 0.0 { time_ok / time_total } else { 0.0 },
+        }
+    }
+}
+
 pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> {
     // Profiles are built from the kept timeline (rewinds erased, retries spliced
     // in), so a rewound lap arrives here as one continuous, physically consistent
@@ -339,6 +378,72 @@ mod tests {
         );
         let total: f32 = p.bins.iter().map(|b| b.time_s).sum();
         assert!((total - 10.0).abs() < 0.3, "time conserved: {total}");
+    }
+
+    fn profile_of(laps: Vec<LapProfile>) -> SessionProfile {
+        let shared = laps.iter().map(|l| l.bins.len()).min().unwrap();
+        let composite = build_composite(&laps, shared);
+        let best = laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min);
+        SessionProfile {
+            shared_bins: shared,
+            composite,
+            best_lap_time_s: best,
+            standing_start_only: false,
+            car_ordinal: 1,
+            laps,
+        }
+    }
+
+    #[test]
+    fn corroboration_zero_with_one_lap_full_with_two_agreeing() {
+        let p = profile_of(vec![lap_from_speeds(1, &[50.0; 50])]);
+        let c = p.corroboration();
+        assert_eq!(c.score, 0.0);
+        assert!(c.corroborated.iter().all(|b| !b));
+
+        let p = profile_of(vec![
+            lap_from_speeds(1, &[50.0; 50]),
+            lap_from_speeds(2, &[50.5; 50]), // within splice tolerance everywhere
+        ]);
+        let c = p.corroboration();
+        assert!(c.score > 0.999, "score {}", c.score);
+        assert!(c.corroborated.iter().all(|b| *b));
+    }
+
+    /// The user-struggle case: one segment driven three wildly different ways
+    /// stays uncorroborated and holds the score down by its time share.
+    #[test]
+    fn struggle_segment_stays_uncorroborated() {
+        let mut a = [50.0f32; 50];
+        let mut b = [50.0f32; 50];
+        let base = [50.0f32; 50]; // fastest overall -> composite base
+        a[20..30].fill(40.0);
+        b[20..30].fill(30.0);
+        let p = profile_of(vec![
+            lap_from_speeds(1, &base),
+            lap_from_speeds(2, &a),
+            lap_from_speeds(3, &b),
+        ]);
+        let c = p.corroboration();
+        assert!((20..30).all(|i| !c.corroborated[i]), "struggle bins unconfirmed");
+        assert!((0..20).chain(30..50).all(|i| c.corroborated[i]));
+        // 10 of 50 equal-time bins unconfirmed -> score ~0.8
+        assert!((c.score - 0.8).abs() < 0.02, "score {}", c.score);
+    }
+
+    /// Monotonicity: a mistake lap fails to corroborate but never lowers the
+    /// score two clean laps established.
+    #[test]
+    fn mistake_lap_does_not_lower_score() {
+        let clean = vec![lap_from_speeds(1, &[50.0; 50]), lap_from_speeds(2, &[50.2; 50])];
+        let before = profile_of(clean.clone()).corroboration().score;
+
+        let mut wild = [50.0f32; 50];
+        wild[10..25].fill(20.0); // spin: way off through a long stretch
+        let mut with_mistake = clean;
+        with_mistake.push(lap_from_speeds(3, &wild));
+        let after = profile_of(with_mistake).corroboration().score;
+        assert!(after >= before - 1e-6, "before {before} after {after}");
     }
 
     // --- frame-level tests ---
