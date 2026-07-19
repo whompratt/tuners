@@ -154,6 +154,7 @@ fn balance_rule(
         implied: Some(Change {
             family: if understeer { Family::FrontRoll } else { Family::RearRoll },
             softer: true,
+            magnitude: None,
         }),
     });
     Some(idx.signum())

@@ -81,6 +81,15 @@
   }
   #rec-split:hover { border-color: var(--accent); color: var(--ink); }
   #rec-status .rec-dot { color: #e66767; }
+  #split-form { display: flex; gap: 6px; align-items: center; }
+  #split-form select, #split-form input, #split-form button {
+    background: var(--surface); color: var(--ink-2); font: 13px system-ui;
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+  }
+  #split-form input { width: 120px; }
+  #split-form button { cursor: pointer; }
+  #split-form button:hover { border-color: var(--accent); color: var(--ink); }
+  #sf-go { border-color: var(--accent); }
   .live-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
   .live-head .dot {
     width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
@@ -146,6 +155,19 @@
         <span style="flex:1"></span>
         <span id="rec-status" style="font-size:13px;color:var(--muted)"></span>
         <button id="rec-split" style="display:none">new session — tune changed</button>
+        <span id="split-form" style="display:none">
+          <select id="sf-family">
+            <option value="front arb">front ARB</option>
+            <option value="rear arb">rear ARB</option>
+            <option value="front springs">front springs</option>
+            <option value="rear springs">rear springs</option>
+            <option value="">other (free text)</option>
+          </select>
+          <input id="sf-delta" type="number" step="0.5" placeholder="Δ (− = softer)">
+          <input id="sf-text" type="text" placeholder="what changed?" style="display:none">
+          <button id="sf-go">start new session</button>
+          <button id="sf-skip" title="split without a journal note">skip note</button>
+        </span>
       </div>
       <div class="live-body">
       <div id="live-quality">
@@ -601,7 +623,8 @@ live.addEventListener('state', ev => {
     waiting: 'armed — waiting for race telemetry',
     external: 'view-only (external capture owns the UDP port)',
   }[rec.mode] || '';
-  document.getElementById('rec-split').style.display = rec.mode === 'recording' ? '' : 'none';
+  document.getElementById('rec-split').style.display =
+    rec.mode === 'recording' && !splitFormOpen ? '' : 'none';
   if (rec.file !== lastRecFile) {             // session rotated: refresh the sidebar
     lastRecFile = rec.file;
     load();
@@ -634,10 +657,40 @@ live.addEventListener('state', ev => {
     temps[i].className = t < 160 ? 'cold' : t > 240 ? 'hot' : '';
   });
 });
-document.getElementById('rec-split').onclick = async () => {
-  await fetch('/api/record/split', { method: 'POST' });
-  // The recorder closes the file now; the next race-mode frame opens a fresh one.
+// The split button expands into a small form capturing the tune delta in
+// slider units (journal v2) — or free text — before cutting the session.
+let splitFormOpen = false;
+document.getElementById('rec-split').onclick = () => {
+  splitFormOpen = true;
+  document.getElementById('rec-split').style.display = 'none';
+  document.getElementById('split-form').style.display = '';
+  document.getElementById('sf-delta').focus();
 };
+document.getElementById('sf-family').onchange = () => {
+  const freeText = !document.getElementById('sf-family').value;
+  document.getElementById('sf-delta').style.display = freeText ? 'none' : '';
+  document.getElementById('sf-text').style.display = freeText ? '' : 'none';
+  (freeText ? document.getElementById('sf-text') : document.getElementById('sf-delta')).focus();
+};
+async function doSplit(note) {
+  const q = note ? `?note=${encodeURIComponent(note)}` : '';
+  await fetch(`/api/record/split${q}`, { method: 'POST' });
+  // The recorder closes the file now; the next race-mode frame opens a fresh
+  // one, and the note (if any) is journaled against it.
+  splitFormOpen = false;
+  document.getElementById('split-form').style.display = 'none';
+  document.getElementById('sf-delta').value = '';
+  document.getElementById('sf-text').value = '';
+}
+document.getElementById('sf-go').onclick = () => {
+  const family = document.getElementById('sf-family').value;
+  const delta = document.getElementById('sf-delta').value;
+  const note = family
+    ? (delta ? `${family} ${delta > 0 ? '+' : ''}${delta}` : '')
+    : document.getElementById('sf-text').value.trim();
+  doSplit(note);
+};
+document.getElementById('sf-skip').onclick = () => doSplit('');
 live.addEventListener('quality', ev => {
   const q = JSON.parse(ev.data);
   const ARC = Math.PI * 40;                   // semicircle path length (r=40)

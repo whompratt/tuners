@@ -21,11 +21,13 @@ USAGE:
                     history-aware advice from a tuning journal (default tune-journal.txt);
                     journal lines: <session-file> | <change since previous session>
   tuners serve    [--port 8080] [--sessions sessions] [--udp-port 20440]
+                  [--journal tune-journal.txt]
                     the app: records telemetry automatically (race mode only,
                     sessions split from the dashboard) and serves the dashboard
                     with charts, A/B compare, and a live view + quality meter.
-                    If the UDP port is busy (external capture), view-only.
-                    --udp-port 0 disables recording entirely
+                    Tune-change notes entered at a session split are appended
+                    to the journal. If the UDP port is busy (external capture),
+                    view-only. --udp-port 0 disables recording entirely
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
                     send synthetic telemetry (stand-in for the game); timescale
                     compresses in-game time for headless lap testing
@@ -148,16 +150,18 @@ fn cmd_serve(args: &[String]) -> Result<(), String> {
     let mut port: u16 = 8080;
     let mut sessions_dir = "sessions".to_string();
     let mut udp_port: u16 = 20440;
+    let mut journal = "tune-journal.txt".to_string();
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--port" => port = parse(flag, it.next())?,
             "--sessions" => sessions_dir = value(flag, it.next())?.clone(),
             "--udp-port" => udp_port = parse(flag, it.next())?,
+            "--journal" => journal = value(flag, it.next())?.clone(),
             other => return Err(format!("unknown flag '{other}' for serve")),
         }
     }
-    tuners::serve::run(port, sessions_dir, udp_port).map_err(|e| e.to_string())
+    tuners::serve::run(port, sessions_dir, udp_port, journal).map_err(|e| e.to_string())
 }
 
 fn cmd_advise(args: &[String]) -> Result<(), String> {
@@ -183,6 +187,12 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     }
 
     println!("tuning trajectory ({} sessions):", sessions.len());
+    // Slider positions relative to baseline, from v2 delta notes (plan 005).
+    let changes: Vec<_> = sessions
+        .iter()
+        .map(|(e, _, _)| e.note.as_deref().and_then(analysis::journal::parse_change))
+        .collect();
+    let positions = analysis::journal::track_positions(&changes);
     let mut last_step: Option<(analysis::journal::Change, analysis::journal::Outcome, &str)> = None;
     for i in 0..sessions.len() {
         let (entry, _, profile) = &sessions[i];
@@ -203,6 +213,13 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         }
         if let Some(note) = &entry.note {
             line.push_str(&format!("  — {note}"));
+        }
+        // Positions only when the note trail supports them (v2 delta notes);
+        // direction-only journals stay uncluttered.
+        if let (Some(f), Some(r)) = positions[i]
+            && (f != 0.0 || r != 0.0)
+        {
+            line.push_str(&format!("  [pos F {f:+.1} / R {r:+.1}]"));
         }
         if i > 0 {
             let prev = &sessions[i - 1].2;

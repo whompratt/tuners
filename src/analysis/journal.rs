@@ -11,11 +11,15 @@ pub enum Family {
     RearRoll,
 }
 
-/// A direction step on a parameter family, with no absolute value attached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A step on a parameter family. Still blind to absolute setup values: the
+/// optional magnitude is a SIGNED delta in slider units (negative = softer),
+/// which lets positions accumulate relative to baseline (plan 005 v2) without
+/// ever knowing where baseline actually sits on the slider.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Change {
     pub family: Family,
     pub softer: bool,
+    pub magnitude: Option<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -45,9 +49,11 @@ pub fn parse_journal(text: &str) -> Vec<Entry> {
         .collect()
 }
 
-/// Extract a (family, direction) from a free-text change note, e.g.
-/// "front arb softer" or "stiffened rear springs". None when it doesn't parse —
-/// the note still shows in the trajectory, it just can't modulate advice.
+/// Extract a change from a note: direction words ("front arb softer") or v2
+/// slider deltas ("front arb -2", negative = softer). None when it doesn't
+/// parse — the note still shows in the trajectory, it just can't modulate
+/// advice. A direction word wins over the number's sign ("softened front arb
+/// by 2" → -2); a bare unsigned number with no direction word stays unparsed.
 pub fn parse_change(note: &str) -> Option<Change> {
     let t = note.to_lowercase();
     let front = t.contains("front");
@@ -61,17 +67,68 @@ pub fn parse_change(note: &str) -> Option<Change> {
     if !roll {
         return None;
     }
+    let number = t
+        .split_whitespace()
+        .map(|tok| tok.trim_end_matches([',', ')', ':']))
+        .find_map(|tok| tok.parse::<f32>().ok().map(|v| (v, tok.starts_with(['+', '-']))));
     let softer = if t.contains("soft") {
         true
     } else if t.contains("stiff") {
         false
+    } else if let Some((v, true)) = number {
+        v < 0.0
     } else {
         return None;
     };
+    let magnitude = number.map(|(v, _)| if softer { -v.abs() } else { v.abs() });
     Some(Change {
         family: if front { Family::FrontRoll } else { Family::RearRoll },
         softer,
+        magnitude,
     })
+}
+
+/// Slider positions relative to baseline after each entry: (front, rear).
+/// A parsed change without a magnitude makes that family's position unknown
+/// from there on — direction alone can't say where you ended up.
+pub fn track_positions(changes: &[Option<Change>]) -> Vec<(Option<f32>, Option<f32>)> {
+    let (mut front, mut rear) = (Some(0.0f32), Some(0.0f32));
+    changes
+        .iter()
+        .map(|c| {
+            if let Some(c) = c {
+                let slot = match c.family {
+                    Family::FrontRoll => &mut front,
+                    Family::RearRoll => &mut rear,
+                };
+                *slot = match (*slot, c.magnitude) {
+                    (Some(p), Some(m)) => Some(p + m),
+                    _ => None,
+                };
+            }
+            (front, rear)
+        })
+        .collect()
+}
+
+/// Lines to append to the journal when a new session opens after a tune change.
+/// If the journal has no entries yet, the session the change was made *after*
+/// (when known) is entered first as the baseline.
+pub fn append_lines(
+    journal_text: &str,
+    prev_session: Option<&str>,
+    new_session: &str,
+    note: &str,
+) -> String {
+    let mut out = String::new();
+    if parse_journal(journal_text).is_empty()
+        && let Some(prev) = prev_session
+    {
+        out.push_str(&format!("{prev} | baseline\n"));
+    }
+    let note = note.replace(['|', '\n'], " ");
+    out.push_str(&format!("{new_session} | {}\n", note.trim()));
+    out
 }
 
 /// Ideal-lap delta below which a step's outcome is inconclusive (seconds).
@@ -115,6 +172,10 @@ pub fn reconcile(recs: &mut [Recommendation], change: Change, outcome: Outcome, 
                      still points the same way, but that step cost lap time — the \
                      optimum is between the last two setups"
                 );
+                if let Some(m) = change.magnitude {
+                    r.advice
+                        .push_str(&format!(" (go {:+.1} slider units from here)", -m / 2.0));
+                }
                 r.evidence
                     .push(format!("last step in this direction lost {d:.2}s of ideal lap"));
                 r.confidence = Confidence::High;
@@ -187,15 +248,71 @@ mod tests {
     fn change_notes_parse_family_and_direction() {
         assert_eq!(
             parse_change("front arb softer"),
-            Some(Change { family: Family::FrontRoll, softer: true })
+            Some(Change { family: Family::FrontRoll, softer: true, magnitude: None })
         );
         assert_eq!(
             parse_change("Stiffened rear springs a bit"),
-            Some(Change { family: Family::RearRoll, softer: false })
+            Some(Change { family: Family::RearRoll, softer: false, magnitude: None })
         );
         assert_eq!(parse_change("baseline"), None);
         assert_eq!(parse_change("softer springs"), None, "front/rear ambiguous");
         assert_eq!(parse_change("front and rear arb softer"), None);
+    }
+
+    #[test]
+    fn v2_notes_carry_signed_magnitudes() {
+        let c = parse_change("front arb -2").unwrap();
+        assert_eq!((c.family, c.softer, c.magnitude), (Family::FrontRoll, true, Some(-2.0)));
+        let c = parse_change("rear springs +1.5").unwrap();
+        assert_eq!((c.family, c.softer, c.magnitude), (Family::RearRoll, false, Some(1.5)));
+        // Direction word wins and signs the unsigned number.
+        let c = parse_change("softened front arb by 2").unwrap();
+        assert_eq!((c.softer, c.magnitude), (true, Some(-2.0)));
+        // Unsigned number with no direction word: still unparseable.
+        assert_eq!(parse_change("front arb 2"), None);
+        // v1 direction-only notes keep working, without magnitude.
+        let c = parse_change("front arb softer").unwrap();
+        assert_eq!(c.magnitude, None);
+    }
+
+    #[test]
+    fn positions_accumulate_until_a_magnitudeless_step() {
+        let changes: Vec<Option<Change>> = vec![
+            None, // baseline
+            parse_change("front arb -2"),
+            parse_change("front arb -2"),
+            parse_change("rear arb +1"),
+            parse_change("front arb stiffer"), // direction only -> front unknown
+        ];
+        let pos = track_positions(&changes);
+        assert_eq!(pos[0], (Some(0.0), Some(0.0)));
+        assert_eq!(pos[2], (Some(-4.0), Some(0.0)));
+        assert_eq!(pos[3], (Some(-4.0), Some(1.0)));
+        assert_eq!(pos[4], (None, Some(1.0)), "front unknown after direction-only step");
+    }
+
+    #[test]
+    fn append_seeds_baseline_only_on_empty_journal() {
+        let lines = append_lines("# comments only\n", Some("sessions/a.ftel"), "sessions/b.ftel", "front arb -2");
+        assert_eq!(lines, "sessions/a.ftel | baseline\nsessions/b.ftel | front arb -2\n");
+
+        let lines = append_lines("sessions/a.ftel | baseline\n", Some("sessions/b.ftel"), "sessions/c.ftel", "note | with pipe");
+        assert_eq!(lines, "sessions/c.ftel | note   with pipe\n");
+
+        let lines = append_lines("", None, "sessions/b.ftel", "front arb -2");
+        assert_eq!(lines, "sessions/b.ftel | front arb -2\n");
+    }
+
+    #[test]
+    fn revert_half_is_computable_with_magnitude() {
+        let mut recs = vec![balance_rec()];
+        reconcile(
+            &mut recs,
+            Change { family: Family::FrontRoll, softer: true, magnitude: Some(-2.0) },
+            Outcome::Worsened(0.3),
+            "front arb -2",
+        );
+        assert!(recs[0].advice.contains("go +1.0 slider units from here"), "{}", recs[0].advice);
     }
 
     #[test]
@@ -211,7 +328,7 @@ mod tests {
             advice: "reduce front roll stiffness".into(),
             evidence: vec!["understeer +0.3".into()],
             confidence: Confidence::High,
-            implied: Some(Change { family: Family::FrontRoll, softer: true }),
+            implied: Some(Change { family: Family::FrontRoll, softer: true, magnitude: None }),
         }
     }
 
@@ -220,7 +337,7 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: true },
+            Change { family: Family::FrontRoll, softer: true, magnitude: None },
             Outcome::Worsened(0.3),
             "front arb softer",
         );
@@ -233,7 +350,7 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: true },
+            Change { family: Family::FrontRoll, softer: true, magnitude: None },
             Outcome::Improved(-1.29),
             "front arb softer",
         );
@@ -248,7 +365,7 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: false },
+            Change { family: Family::FrontRoll, softer: false, magnitude: None },
             Outcome::Improved(-0.42),
             "front arb stiffer",
         );
@@ -261,7 +378,7 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: false },
+            Change { family: Family::FrontRoll, softer: false, magnitude: None },
             Outcome::Worsened(0.5),
             "front arb stiffer",
         );
@@ -276,7 +393,7 @@ mod tests {
         let before = recs[0].advice.clone();
         reconcile(
             &mut recs,
-            Change { family: Family::RearRoll, softer: false },
+            Change { family: Family::RearRoll, softer: false, magnitude: None },
             Outcome::Worsened(0.3),
             "rear arb stiffer",
         );

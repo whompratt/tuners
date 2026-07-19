@@ -202,6 +202,11 @@ pub struct RecorderStatus {
     pub file: Option<PathBuf>,
     pub packets: u64,
     pub split_requested: bool,
+    /// Tune-change note from the dashboard, journaled against the NEXT session
+    /// that opens (journal lines describe the change since the previous session).
+    pub pending_note: Option<String>,
+    /// Most recently closed session — the baseline seed for an empty journal.
+    pub last_closed: Option<PathBuf>,
 }
 
 pub type SharedRecorder = Arc<Mutex<RecorderStatus>>;
@@ -212,7 +217,30 @@ pub fn new_shared() -> SharedRecorder {
         file: None,
         packets: 0,
         split_requested: false,
+        pending_note: None,
+        last_closed: None,
     }))
+}
+
+/// Append a dashboard tune-change note to the journal against the session that
+/// just opened, seeding the previous session as baseline when the journal is new.
+fn journal_note(journal: &std::path::Path, prev: Option<&std::path::Path>, new: &std::path::Path, note: &str) {
+    let text = std::fs::read_to_string(journal).unwrap_or_default();
+    let lines = crate::analysis::journal::append_lines(
+        &text,
+        prev.map(|p| p.to_string_lossy()).as_deref(),
+        &new.to_string_lossy(),
+        note,
+    );
+    let write = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(journal)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, lines.as_bytes()));
+    match write {
+        Ok(()) => println!("journal: {}", lines.trim_end().replace('\n', "; ")),
+        Err(e) => eprintln!("cannot write journal {}: {e}", journal.display()),
+    }
 }
 
 fn unix_micros() -> u64 {
@@ -225,7 +253,7 @@ fn unix_micros() -> u64 {
 /// Bind the UDP port and record forever. On bind failure, marks the status
 /// External and returns — the caller's tailer still serves the live view of
 /// whatever an external capture writes.
-pub fn run_recorder(port: u16, out_dir: PathBuf, shared: SharedRecorder) {
+pub fn run_recorder(port: u16, out_dir: PathBuf, journal: PathBuf, shared: SharedRecorder) {
     let socket = match UdpSocket::bind(("0.0.0.0", port)) {
         Ok(s) => s,
         Err(e) => {
@@ -277,10 +305,16 @@ pub fn run_recorder(port: u16, out_dir: PathBuf, shared: SharedRecorder) {
                     match SessionWriter::create(&path) {
                         Ok(w) => {
                             writer = Some(w);
-                            let mut s = shared.lock().unwrap();
-                            s.mode = RecorderMode::Recording;
-                            s.file = Some(path);
-                            s.packets = 0;
+                            let (note, last_closed) = {
+                                let mut s = shared.lock().unwrap();
+                                s.mode = RecorderMode::Recording;
+                                s.file = Some(path.clone());
+                                s.packets = 0;
+                                (s.pending_note.take(), s.last_closed.clone())
+                            };
+                            if let Some(note) = note {
+                                journal_note(&journal, last_closed.as_deref(), &path, &note);
+                            }
                         }
                         Err(e) => eprintln!("cannot create session file {}: {e}", path.display()),
                     }
@@ -298,7 +332,7 @@ pub fn run_recorder(port: u16, out_dir: PathBuf, shared: SharedRecorder) {
                     writer = None;
                     let mut s = shared.lock().unwrap();
                     s.mode = RecorderMode::Waiting;
-                    s.file = None;
+                    s.last_closed = s.file.take();
                 }
             }
         }

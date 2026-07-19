@@ -6,7 +6,12 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 
-pub fn run(port: u16, sessions_dir: String, udp_port: u16) -> std::io::Result<()> {
+pub fn run(
+    port: u16,
+    sessions_dir: String,
+    udp_port: u16,
+    journal: String,
+) -> std::io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     println!("tuners dashboard: http://127.0.0.1:{port}/  (Ctrl+C to stop)");
     let live: crate::live::SharedLive = Default::default();
@@ -18,8 +23,11 @@ pub fn run(port: u16, sessions_dir: String, udp_port: u16) -> std::io::Result<()
     let recorder = crate::record::new_shared();
     if udp_port != 0 {
         let out_dir = std::path::PathBuf::from(sessions_dir.clone());
+        let journal = std::path::PathBuf::from(journal);
         let recorder = recorder.clone();
-        std::thread::spawn(move || crate::record::run_recorder(udp_port, out_dir, recorder));
+        std::thread::spawn(move || {
+            crate::record::run_recorder(udp_port, out_dir, journal, recorder)
+        });
     } else {
         recorder.lock().unwrap().mode =
             crate::record::RecorderMode::External("disabled (--udp-port 0)".into());
@@ -64,8 +72,11 @@ fn handle(
         serve_sse(stream, live, recorder);
         return;
     }
-    let (status, content_type, body) = if method == "POST" && target == "/api/record/split" {
-        recorder.lock().unwrap().split_requested = true;
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let (status, content_type, body) = if method == "POST" && path == "/api/record/split" {
+        let mut r = recorder.lock().unwrap();
+        r.split_requested = true;
+        r.pending_note = query_param(query, "note").filter(|n| !n.trim().is_empty());
         ("200 OK", "application/json", "{\"ok\":true}".to_string())
     } else {
         respond(target, sessions_dir)
