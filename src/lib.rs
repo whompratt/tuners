@@ -7,5 +7,6 @@ pub mod record;
 pub mod replay;
 pub mod serve;
 pub mod stint;
+pub mod tuning;
 pub mod simulate;
 pub mod util;

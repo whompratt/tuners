@@ -75,11 +75,23 @@
   pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; }
   .placeholder { color: var(--muted); }
   #live-panel.stale { opacity: 0.55; }
-  #rec-split {
+  #rec-split, .btn {
     background: none; border: 1px solid var(--border); border-radius: 6px;
     color: var(--ink-2); font: 13px system-ui; padding: 5px 12px; cursor: pointer;
   }
-  #rec-split:hover { border-color: var(--accent); color: var(--ink); }
+  #rec-split:hover, .btn:hover { border-color: var(--accent); color: var(--ink); }
+  .btn-go { border-color: var(--accent); }
+  .form-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px 14px;
+  }
+  .form-grid label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .form-grid input, .form-grid select {
+    width: 100%; background: var(--page); color: var(--ink-2); font: 14px system-ui;
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+  }
+  #tune-summary .kv { margin-right: 14px; white-space: nowrap; }
+  #tune-summary .kv b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
   #rec-status .rec-dot { color: #e66767; }
   #split-form { display: flex; gap: 6px; align-items: center; }
   #split-form select, #split-form input, #split-form button {
@@ -146,6 +158,40 @@
     <div id="sessions"></div>
   </aside>
   <main>
+    <div id="session-panel" class="panel">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <h2 id="session-title" style="margin:0">Tuning session</h2>
+        <span id="session-sub" style="color:var(--muted);font-size:13px"></span>
+        <span style="flex:1"></span>
+        <button id="session-edit" class="btn">set up session</button>
+        <button id="tune-edit" class="btn" style="display:none">enter tune</button>
+      </div>
+      <div id="tune-summary" style="margin-top:8px;font-size:13px;color:var(--ink-2)"></div>
+      <form id="session-form" style="display:none;margin-top:12px" onsubmit="return false">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
+          Pick the car this session is about — stints from other cars are still
+          recorded, but stay outside the session.
+        </div>
+        <div class="form-grid" id="session-fields"></div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button id="session-save" class="btn btn-go">save session</button>
+          <button id="session-cancel" class="btn">cancel</button>
+        </div>
+      </form>
+      <form id="tune-form" style="display:none;margin-top:12px" onsubmit="return false">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
+          Enter the tune as it is in the game (all fields optional). Saving a
+          changed tune journals the difference automatically and starts a new
+          stint — change one thing at a time to keep steps attributable.
+        </div>
+        <div class="form-grid" id="tune-fields"></div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <button id="tune-save" class="btn btn-go">save tune</button>
+          <button id="tune-cancel" class="btn">cancel</button>
+          <span id="tune-msg" style="font-size:13px;color:var(--accent)"></span>
+        </div>
+      </form>
+    </div>
     <div id="live-panel" class="panel" style="display:none">
       <div class="live-head">
         <span class="dot"></span>
@@ -606,6 +652,116 @@ window.addEventListener('resize', () => {
   if (cmpData) drawCompare();
 });
 
+// --- tuning session: the campaign (one car, facts, tune revisions) ---
+const TUNE_FIELDS = [
+  ['tire_psi_f', 'front tire psi'], ['tire_psi_r', 'rear tire psi'],
+  ['final_drive', 'final drive'],
+  ['camber_f', 'front camber'], ['camber_r', 'rear camber'],
+  ['toe_f', 'front toe'], ['toe_r', 'rear toe'], ['caster', 'caster'],
+  ['arb_f', 'front ARB'], ['arb_r', 'rear ARB'],
+  ['springs_f', 'front springs'], ['springs_r', 'rear springs'],
+  ['ride_height_f', 'front ride height'], ['ride_height_r', 'rear ride height'],
+  ['rebound_f', 'front rebound'], ['rebound_r', 'rear rebound'],
+  ['bump_f', 'front bump'], ['bump_r', 'rear bump'],
+  ['aero_f', 'front aero'], ['aero_r', 'rear aero'],
+  ['brake_balance', 'brake balance %'], ['brake_pressure', 'brake pressure %'],
+  ['diff_accel', 'diff accel %'], ['diff_decel', 'diff decel %'],
+  ['diff_center', 'center diff %'],
+];
+const FACT_FIELDS = [
+  ['front_weight_pct', 'front weight %'], ['weight_lb', 'weight (lb)'],
+  ['tire_compound', 'tire compound'], ['abs', 'ABS (on/off)'],
+  ['tcs', 'TCS (on/off)'], ['stability', 'stability (on/off)'],
+];
+let sessionData = null;
+const $ = id => document.getElementById(id);
+
+async function loadSession() {
+  sessionData = await fetch('/api/session').then(r => r.json());
+  renderSession();
+  // Scope the stint list to the session's car by default.
+  const filter = document.getElementById('car-filter');
+  if (sessionData && sessionData.car != null
+      && [...filter.options].some(o => o.value === String(sessionData.car))) {
+    filter.value = String(sessionData.car);
+    renderSessions();
+  }
+}
+function renderSession() {
+  const s = sessionData;
+  const active = s && s.car != null;
+  $('session-title').textContent = active
+    ? `Tuning session — ${s.carName || `car #${s.car}`}` : 'Tuning session';
+  $('session-sub').textContent = active
+    ? (s.revisions ? `tune revision ${s.revisions}` : 'no tune entered yet')
+    : 'none active — pick a car and enter what the telemetry can\'t see';
+  $('session-edit').textContent = active ? 'session settings' : 'set up session';
+  $('tune-edit').style.display = active ? '' : 'none';
+  $('tune-edit').textContent = s && s.latest ? 'new tune revision' : 'enter baseline tune';
+  const facts = active ? Object.entries(s.facts) : [];
+  const latest = s && s.latest ? Object.entries(s.latest) : [];
+  $('tune-summary').innerHTML =
+    facts.map(([k, v]) => `<span class="kv">${label(FACT_FIELDS, k)} <b>${v}</b></span>`).join('') +
+    (latest.length && facts.length ? '<br>' : '') +
+    latest.map(([k, v]) => `<span class="kv">${label(TUNE_FIELDS, k)} <b>${v}</b></span>`).join('');
+}
+const label = (fields, key) => (fields.find(([k]) => k === key) || [key, key])[1];
+
+function openSessionForm() {
+  const wrap = $('session-fields');
+  const cars = new Map();
+  for (const st of allSessions) cars.set(st.car, st.carName || `car #${st.car}`);
+  const cur = sessionData && sessionData.car;
+  wrap.innerHTML =
+    `<div><label>car (from recorded stints)</label><select id="ss-car">` +
+    [...cars].map(([o, n]) => `<option value="${o}" ${o === cur ? 'selected' : ''}>${n}</option>`).join('') +
+    `</select></div>` +
+    `<div><label>or car ordinal (manual)</label><input id="ss-car-manual" type="number" ${cur && !cars.has(cur) ? `value="${cur}"` : ''}></div>` +
+    FACT_FIELDS.map(([k, l]) =>
+      `<div><label>${l}</label><input id="ss-${k}" value="${(sessionData && sessionData.facts[k]) || ''}"></div>`
+    ).join('');
+  $('session-form').style.display = '';
+  $('tune-form').style.display = 'none';
+}
+$('session-edit').onclick = openSessionForm;
+$('session-cancel').onclick = () => $('session-form').style.display = 'none';
+$('session-save').onclick = async () => {
+  const body = new URLSearchParams();
+  body.set('car', $('ss-car-manual').value || $('ss-car').value);
+  for (const [k] of FACT_FIELDS) body.set(k, $(`ss-${k}`).value);
+  await fetch('/api/session', { method: 'POST', body });
+  $('session-form').style.display = 'none';
+  loadSession();
+};
+
+function openTuneForm() {
+  const latest = (sessionData && sessionData.latest) || {};
+  $('tune-fields').innerHTML = TUNE_FIELDS.map(([k, l]) =>
+    `<div><label>${l}</label><input id="tf-${k}" type="number" step="any" value="${latest[k] || ''}"></div>`
+  ).join('');
+  $('tune-msg').textContent = '';
+  $('tune-form').style.display = '';
+  $('session-form').style.display = 'none';
+  $('session-panel').scrollIntoView({ behavior: 'smooth' });
+}
+$('tune-edit').onclick = openTuneForm;
+$('tune-cancel').onclick = () => $('tune-form').style.display = 'none';
+$('tune-save').onclick = async () => {
+  const body = new URLSearchParams();
+  for (const [k] of TUNE_FIELDS) {
+    const v = $(`tf-${k}`).value;
+    if (v !== '') body.set(k, v);
+  }
+  const resp = await fetch('/api/session/tune', { method: 'POST', body });
+  if (!resp.ok) { $('tune-msg').textContent = await resp.text(); return; }
+  const r = await resp.json();
+  $('tune-msg').textContent = r.note
+    ? `journaled: ${r.note} — attaches to the next stint`
+    : r.changed ? 'baseline tune saved' : 'no change from the last revision';
+  if (r.changed) setTimeout(() => { $('tune-form').style.display = 'none'; }, 1800);
+  loadSession();
+};
+
 // --- live view: SSE from the session `tuners capture` is recording now ---
 const STALE_MS = 3000;
 const live = new EventSource('/api/live');
@@ -668,6 +824,9 @@ live.addEventListener('state', ev => {
 // slider units (journal v2) — or free text — before cutting the session.
 let splitFormOpen = false;
 document.getElementById('rec-split').onclick = () => {
+  // With a session tune on file, the tune form IS the change capture — the
+  // journal note comes from the diff. The inline delta form is blind-mode only.
+  if (sessionData && sessionData.latest) { openTuneForm(); return; }
   splitFormOpen = true;
   document.getElementById('rec-split').style.display = 'none';
   document.getElementById('split-form').style.display = '';
@@ -725,7 +884,7 @@ live.addEventListener('quality', ev => {
     'sections of track are driven the same way at least twice; sections driven differently ' +
     'every lap stay unconfirmed. Green from 75%.';
 });
-load();
+load().then(loadSession);
 </script>
 </body>
 </html>

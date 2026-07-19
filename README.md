@@ -8,17 +8,20 @@ driving mistakes, and a history-aware tuning journal.
 ## Use
 
 Run `tuners serve`, open http://127.0.0.1:8080/, drive. The server records
-telemetry automatically (race mode only — menus and free roam are skipped),
-shows a live view with a data-quality meter, and cuts session files on its own
-(car change, long idle). After editing your tune, click **new session** in the
-dashboard so the next stint lands in a fresh session for A/B comparison.
+telemetry automatically (race mode only — menus and free roam are skipped) and
+cuts stint files on its own (car change, long idle). In the dashboard, set up a
+**tuning session** for the car you're working on (facts like front weight %,
+plus the current tune), then drive; a live view shows a confidence gauge that
+tells you when you've driven enough. After editing the tune in-game, enter the
+new values — the change is journaled automatically and the next stint starts
+fresh, ready for A/B comparison and history-aware advice (`tuners advise`).
 
 ## Commands
 
 ```
 tuners serve      the app: auto-recording + web dashboard (charts, A/B compare,
                   reports, live view + data-quality meter)
-tuners capture    record a session manually (serve then falls back to view-only)
+tuners capture    record a stint manually (serve then falls back to view-only)
 tuners analyze    per-stint observations: tires, grip, suspension, damping, gearing, laps
 tuners compare    tune A/B: lap-time delta, where it comes from, mistakes excluded
 tuners recommend  directional tune advice with evidence (blind mode)

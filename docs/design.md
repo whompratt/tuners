@@ -109,6 +109,16 @@ the change; if A' ≈ A the delta was the tune, if A' ≈ B it was the driver.
 Recommendations built on A/B evidence should state this caveat when sessions were
 driven back-to-back on a fresh track/car combo.
 
+## Terminology: session vs stint
+
+- A **stint** is one continuous recording (.ftel file), cut automatically by the
+  recorder (race-mode gating, car change, long idle, or a tune save).
+- A **(tuning) session** is the user-level unit of work: one *explicitly chosen*
+  car being tuned — car facts telemetry can't see, the tune itself revision by
+  revision (tune-session.txt), and the stints driven along the way (tied to tune
+  changes by the journal). Stints from other cars are still recorded but live
+  outside the session; the dashboard scopes to the session's car.
+
 ## Tune input model
 
 The app iterates on the *user's existing tune* rather than generating one from scratch
@@ -135,6 +145,13 @@ field is optional and recommendation quality degrades gracefully:
   which side actually got worked (turn-direction balance is derivable from
   telemetry lateral-G history).
 
+**Baseline tune**: a session starts from whatever tune the car currently has —
+stock counts; the baseline revision is simply "what's in the sliders now" and
+iteration proceeds from there. Suggesting a starting tune from car stats
+(weight, drivetrain, PI — the way community tuning calculators do) is a
+deliberate stretch goal: collect common recommendations and reverse-engineer
+existing calculators first. Recorded under Open questions.
+
 With no manual input at all ("blind" = the empty form), the app still produces
 **directional deltas** with explanations ("drop front pressure ~1 psi"; "soften front
 ARB"), phrased to survive unknown limits ("if already at minimum, do X instead").
@@ -151,3 +168,6 @@ the user fills in more.
   (weight, weight distribution, stock gearing) keyed by ordinal.
 - Packet-layout residuals (trailing byte, byte order, tire temp units) — tracked in
   [telemetry.md](telemetry.md).
+- **Suggested baseline tunes** from car stats for cars the user has no tune for
+  (stretch): gather community rules of thumb / reverse-engineer existing tuning
+  calculators; v1 iterates on the car's current tune instead.

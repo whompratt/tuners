@@ -21,7 +21,7 @@ USAGE:
                     history-aware advice from a tuning journal (default tune-journal.txt);
                     journal lines: <stint-file> | <change since previous stint>
   tuners serve    [--port 8080] [--sessions sessions] [--udp-port 20440]
-                  [--journal tune-journal.txt]
+                  [--journal tune-journal.txt] [--session tune-session.txt]
                     the app: records telemetry automatically (race mode only,
                     sessions split from the dashboard) and serves the dashboard
                     with charts, A/B compare, and a live view + quality meter.
@@ -151,6 +151,7 @@ fn cmd_serve(args: &[String]) -> Result<(), String> {
     let mut sessions_dir = "sessions".to_string();
     let mut udp_port: u16 = 20440;
     let mut journal = "tune-journal.txt".to_string();
+    let mut session = "tune-session.txt".to_string();
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         match flag.as_str() {
@@ -158,10 +159,11 @@ fn cmd_serve(args: &[String]) -> Result<(), String> {
             "--sessions" => sessions_dir = value(flag, it.next())?.clone(),
             "--udp-port" => udp_port = parse(flag, it.next())?,
             "--journal" => journal = value(flag, it.next())?.clone(),
+            "--session" => session = value(flag, it.next())?.clone(),
             other => return Err(format!("unknown flag '{other}' for serve")),
         }
     }
-    tuners::serve::run(port, sessions_dir, udp_port, journal).map_err(|e| e.to_string())
+    tuners::serve::run(port, sessions_dir, udp_port, journal, session).map_err(|e| e.to_string())
 }
 
 fn cmd_advise(args: &[String]) -> Result<(), String> {
@@ -173,7 +175,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     let text = std::fs::read_to_string(journal_path).map_err(|e| format!("{journal_path}: {e}"))?;
     let entries = analysis::journal::parse_journal(&text);
     if entries.is_empty() {
-        return Err(format!("{journal_path}: no sessions listed"));
+        return Err(format!("{journal_path}: no stints listed"));
     }
 
     // Load and profile every session, in journal (chronological) order.
@@ -186,7 +188,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         sessions.push((entry, session, profile));
     }
 
-    println!("tuning trajectory ({} sessions):", sessions.len());
+    println!("tuning trajectory ({} stints):", sessions.len());
     // Slider positions relative to baseline, from v2 delta notes (plan 005).
     let changes: Vec<_> = sessions
         .iter()
@@ -263,6 +265,40 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     let mut recs = analysis::recommend::recommend(&overall, &per_lap);
     if let Some((change, outcome, note)) = last_step {
         analysis::journal::reconcile(&mut recs, change, outcome, note);
+    }
+
+    // With a tuning session on file, advice can cite the absolute values behind
+    // each directional call (design.md: inputs upgrade the recommendations).
+    let tune = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
+    if let Some(rev) = tune.latest() {
+        let vals: Vec<String> = rev
+            .values
+            .iter()
+            .map(|(k, v)| format!("{} {v}", tuners::tuning::field_phrase(k)))
+            .collect();
+        println!(
+            "\ncurrent tune (tune-session.txt, revision {}): {}",
+            tune.revisions.len(),
+            vals.join(", "),
+        );
+        for r in &mut recs {
+            let Some(implied) = r.implied else { continue };
+            let keys: [&str; 2] = match implied.family {
+                analysis::journal::Family::FrontRoll => ["arb_f", "springs_f"],
+                analysis::journal::Family::RearRoll => ["arb_r", "springs_r"],
+            };
+            let known: Vec<String> = keys
+                .iter()
+                .filter_map(|k| {
+                    rev.values
+                        .get(*k)
+                        .map(|v| format!("{} = {v}", tuners::tuning::field_phrase(k)))
+                })
+                .collect();
+            if !known.is_empty() {
+                r.evidence.push(format!("current setting: {}", known.join(", ")));
+            }
+        }
     }
     println!("\nadvice for {}:\n", last_entry.path);
     print!("{}", analysis::report::render_recommendations(&recs));

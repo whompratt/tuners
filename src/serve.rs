@@ -2,7 +2,7 @@
 //! dependencies (docs/plans/006-dashboard.md). Handlers are pure functions so a
 //! swap to a real framework later is mechanical.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 
@@ -11,6 +11,7 @@ pub fn run(
     sessions_dir: String,
     udp_port: u16,
     journal: String,
+    session_file: String,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     println!("tuners dashboard: http://127.0.0.1:{port}/  (Ctrl+C to stop)");
@@ -34,10 +35,11 @@ pub fn run(
     }
     for stream in listener.incoming() {
         let dir = sessions_dir.clone();
+        let session_file = session_file.clone();
         if let Ok(stream) = stream {
             let live = live.clone();
             let recorder = recorder.clone();
-            std::thread::spawn(move || handle(stream, &dir, &live, &recorder));
+            std::thread::spawn(move || handle(stream, &dir, &live, &recorder, &session_file));
         }
     }
     Ok(())
@@ -48,6 +50,7 @@ fn handle(
     sessions_dir: &str,
     live: &crate::live::SharedLive,
     recorder: &crate::record::SharedRecorder,
+    session_file: &str,
 ) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
@@ -57,15 +60,26 @@ fn handle(
     if reader.read_line(&mut request_line).is_err() {
         return;
     }
-    // Drain headers; GET-only server, bodies ignored.
+    // Drain headers, keeping Content-Length so POST bodies can be read.
+    let mut content_length = 0usize;
     loop {
         let mut header = String::new();
         match reader.read_line(&mut header) {
             Ok(0) | Err(_) => break,
             Ok(_) if header == "\r\n" || header == "\n" => break,
-            Ok(_) => {}
+            Ok(_) => {
+                if let Some(v) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+                    content_length = v.trim().parse().unwrap_or(0);
+                }
+            }
         }
     }
+    let mut body_bytes = vec![0u8; content_length.min(1 << 20)];
+    if !body_bytes.is_empty() && reader.read_exact(&mut body_bytes).is_err() {
+        return;
+    }
+    let request_body = String::from_utf8_lossy(&body_bytes).into_owned();
+
     let method = request_line.split_whitespace().next().unwrap_or("GET");
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
     if target.split('?').next() == Some("/api/live") {
@@ -73,13 +87,24 @@ fn handle(
         return;
     }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let (status, content_type, body) = if method == "POST" && path == "/api/record/split" {
-        let mut r = recorder.lock().unwrap();
-        r.split_requested = true;
-        r.pending_note = query_param(query, "note").filter(|n| !n.trim().is_empty());
-        ("200 OK", "application/json", "{\"ok\":true}".to_string())
-    } else {
-        respond(target, sessions_dir)
+    let session_path = Path::new(session_file);
+    let (status, content_type, body) = match (method, path) {
+        ("POST", "/api/record/split") => {
+            let mut r = recorder.lock().unwrap();
+            r.split_requested = true;
+            r.pending_note = query_param(query, "note").filter(|n| !n.trim().is_empty());
+            ("200 OK", "application/json", "{\"ok\":true}".to_string())
+        }
+        ("POST", "/api/session") => session_post(&form_params(&request_body), session_path),
+        ("POST", "/api/session/tune") => {
+            tune_post(&form_params(&request_body), session_path, recorder)
+        }
+        ("GET", "/api/session") => (
+            "200 OK",
+            "application/json",
+            session_json(&crate::tuning::TuningSession::load(session_path)),
+        ),
+        _ => respond(target, sessions_dir),
     };
     let _ = write!(
         stream,
@@ -167,6 +192,129 @@ fn live_state_json(s: &crate::live::LiveState) -> String {
         }
     };
     format!("{{\"file\":{file},\"ageMs\":{age_ms},\"frame\":{frame}}}")
+}
+
+/// application/x-www-form-urlencoded body → decoded (key, value) pairs.
+fn form_params(body: &str) -> Vec<(String, String)> {
+    body.split('&')
+        .filter_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            Some((
+                percent_decode(&k.replace('+', " ")),
+                percent_decode(&v.replace('+', " ")),
+            ))
+        })
+        .collect()
+}
+
+fn json_str(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// The tuning session for the dashboard: car, facts, latest tune revision.
+fn session_json(s: &crate::tuning::TuningSession) -> String {
+    let car = s.car.map_or("null".into(), |c| c.to_string());
+    let name = s
+        .car
+        .and_then(crate::cars::car_name)
+        .map_or("null".into(), json_str);
+    let map = |m: &std::collections::BTreeMap<String, String>| {
+        let pairs: Vec<String> = m
+            .iter()
+            .map(|(k, v)| format!("{}:{}", json_str(k), json_str(v)))
+            .collect();
+        format!("{{{}}}", pairs.join(","))
+    };
+    let latest = s
+        .latest()
+        .map_or("null".into(), |rev| map(&rev.values));
+    format!(
+        "{{\"car\":{car},\"carName\":{name},\"facts\":{},\"revisions\":{},\"latest\":{latest}}}",
+        map(&s.facts),
+        s.revisions.len(),
+    )
+}
+
+/// Create/update the session: car + facts (revisions kept unless reset=1).
+fn session_post(
+    params: &[(String, String)],
+    path: &Path,
+) -> (&'static str, &'static str, String) {
+    let reset = params.iter().any(|(k, v)| k == "reset" && v == "1");
+    let mut s = if reset {
+        crate::tuning::TuningSession::default()
+    } else {
+        crate::tuning::TuningSession::load(path)
+    };
+    for (k, v) in params {
+        match k.as_str() {
+            "reset" => {}
+            "car" => s.car = v.parse().ok(),
+            _ if v.trim().is_empty() => {
+                s.facts.remove(k);
+            }
+            _ => {
+                s.facts.insert(k.clone(), v.trim().to_string());
+            }
+        }
+    }
+    match s.save(path) {
+        Ok(()) => ("200 OK", "application/json", session_json(&s)),
+        Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string()),
+    }
+}
+
+/// Save a new tune revision. The journal note is derived by diffing against the
+/// previous revision; a changed tune also cuts the stint (the note journals
+/// against the next stint that opens). The first revision is the baseline —
+/// stored, no note, no cut.
+fn tune_post(
+    params: &[(String, String)],
+    path: &Path,
+    recorder: &crate::record::SharedRecorder,
+) -> (&'static str, &'static str, String) {
+    let mut s = crate::tuning::TuningSession::load(path);
+    let mut rev = crate::tuning::Revision {
+        stamp: crate::util::utc_stamp(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        ),
+        ..Default::default()
+    };
+    for (k, v) in params {
+        let v = v.trim();
+        if !v.is_empty() && crate::tuning::FIELDS.iter().any(|(key, _)| key == k) {
+            rev.values.insert(k.clone(), v.to_string());
+        }
+    }
+    if rev.values.is_empty() {
+        return ("400 Bad Request", "text/plain; charset=utf-8", "empty tune".into());
+    }
+    let note = s
+        .latest()
+        .map(|prev| crate::tuning::diff_note(prev, &rev))
+        .unwrap_or_default();
+    let first = s.revisions.is_empty();
+    if !first && note.is_empty() {
+        return ("200 OK", "application/json", "{\"ok\":true,\"note\":null,\"changed\":false}".into());
+    }
+    s.revisions.push(rev);
+    if let Err(e) = s.save(path) {
+        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+    }
+    if !first {
+        let mut r = recorder.lock().unwrap();
+        r.split_requested = true;
+        r.pending_note = Some(note.clone());
+    }
+    let note_json = if first { "null".into() } else { json_str(&note) };
+    (
+        "200 OK",
+        "application/json",
+        format!("{{\"ok\":true,\"note\":{note_json},\"changed\":true}}"),
+    )
 }
 
 /// Recorder status for the `state` SSE event.
