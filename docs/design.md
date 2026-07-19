@@ -145,7 +145,9 @@ the user fills in more.
 
 ## Open questions
 
-- **Car metadata**: is there a usable community dataset of FH6 cars (weight, weight
-  distribution, stock gearing) keyed by `CarOrdinal`, and is bundling it legally fine?
+- **Car metadata**: car *identity* is solved — a community, telemetry-verified
+  `CarOrdinal` → name dataset is bundled (`assets/car-ordinals.tsv`, source and
+  date in its header; factual ID mapping, attribution kept). Still open: specs
+  (weight, weight distribution, stock gearing) keyed by ordinal.
 - Packet-layout residuals (trailing byte, byte order, tire temp units) — tracked in
   [telemetry.md](telemetry.md).

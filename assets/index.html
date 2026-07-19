@@ -42,6 +42,12 @@
   }
   .ab button.on-a { border-color: #3987e5; color: #3987e5; }
   .ab button.on-b { border-color: #199e70; color: #199e70; }
+  #car-filter {
+    width: 100%; margin-bottom: 10px; padding: 6px 8px;
+    background: var(--surface); color: var(--ink-2);
+    border: 1px solid var(--border); border-radius: 6px; font: 13px system-ui;
+  }
+  .session .car { color: var(--accent); font-size: 12px; }
   main { flex: 1; padding: 16px 24px; overflow: auto; }
   .panel {
     background: var(--surface); border: 1px solid var(--border);
@@ -68,6 +74,7 @@
 <body>
   <aside>
     <h1>tuners <span>FH6 tuning assistant</span></h1>
+    <select id="car-filter"></select>
     <div id="sessions"></div>
   </aside>
   <main>
@@ -102,19 +109,46 @@ const fmtLap = s => {
   return m > 0 ? `${m}:${sec}` : (r / 1000).toFixed(3);
 };
 
+let allSessions = [];
 async function load() {
-  const list = document.getElementById('sessions');
-  const sessions = await fetch('/api/sessions').then(r => r.json());
-  if (!sessions.length) {
-    list.innerHTML = '<div class="placeholder">no .ftel sessions found — record one with `tuners capture`</div>';
+  allSessions = await fetch('/api/sessions').then(r => r.json());
+  const filter = document.getElementById('car-filter');
+  if (!allSessions.length) {
+    document.getElementById('sessions').innerHTML =
+      '<div class="placeholder">no .ftel sessions found — record one with `tuners capture`</div>';
+    filter.style.display = 'none';
     return;
   }
-  for (const s of sessions.reverse()) {
+  const carLabel = s => s.carName || `car #${s.car}`;
+  const cars = new Map(); // ordinal -> label, insertion-ordered
+  for (const s of allSessions) cars.set(s.car, carLabel(s));
+  filter.innerHTML = `<option value="all">all cars (${allSessions.length} sessions)</option>` +
+    [...cars].map(([ord, label]) => `<option value="${ord}">${label}</option>`).join('');
+  // default: the latest session's car (list is filename-sorted = chronological)
+  filter.value = String(allSessions[allSessions.length - 1].car);
+  filter.onchange = renderSessions;
+  renderSessions();
+}
+
+function renderSessions() {
+  const filter = document.getElementById('car-filter').value;
+  const list = document.getElementById('sessions');
+  list.innerHTML = '';
+  const shown = allSessions.filter(s => filter === 'all' || String(s.car) === filter);
+  if (!shown.length) {
+    list.innerHTML = '<div class="placeholder">no sessions for this car</div>';
+    return;
+  }
+  for (const s of [...shown].reverse()) {
     const el = document.createElement('div');
     el.className = 'session';
-    el.innerHTML = `${s.file.split('/').pop()}<br><span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>` +
+    el.innerHTML = `${s.file.split('/').pop()}<br>` +
+      `<span class="car">${s.carName || `car #${s.car}`}</span> · ` +
+      `<span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>` +
       `<span class="ab"><button data-side="a" title="compare as A">A</button>` +
       `<button data-side="b" title="compare as B">B</button></span>`;
+    if (s.file === sel.a) el.querySelector('[data-side=a]').classList.add('on-a');
+    if (s.file === sel.b) el.querySelector('[data-side=b]').classList.add('on-b');
     el.onclick = () => show(s.file, el);
     el.querySelectorAll('.ab button').forEach(btn => {
       btn.onclick = ev => { ev.stopPropagation(); pick(btn.dataset.side, s.file, btn); };

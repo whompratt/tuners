@@ -124,8 +124,8 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     .unwrap();
     writeln!(
         out,
-        "car ordinal {}: class {} | PI {} | {} | {} cyl | redline {:.0} | surface: {}",
-        m.car_ordinal,
+        "{}: class {} | PI {} | {} | {} cyl | redline {:.0} | surface: {}",
+        crate::cars::car_label(m.car_ordinal),
         class_name(m.car_class),
         m.car_performance_index,
         drivetrain_name(m.drivetrain_type),

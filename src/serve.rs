@@ -221,12 +221,33 @@ fn sessions_json(dir: &str) -> String {
         paths.sort();
         for p in paths {
             let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-            // Session filenames are our own ASCII naming scheme; no JSON escaping
-            // needed until user-provided paths appear.
-            rows.push(format!("{{\"file\":\"{}\",\"bytes\":{bytes}}}", p.display()));
+            let car = session_car(&p).unwrap_or(0);
+            let name = crate::cars::car_name(car).unwrap_or("");
+            // Session filenames are our own ASCII naming scheme, and car names in
+            // the bundled dataset contain no quotes/backslashes.
+            rows.push(format!(
+                "{{\"file\":\"{}\",\"bytes\":{bytes},\"car\":{car},\"carName\":\"{name}\"}}",
+                p.display(),
+            ));
         }
     }
     format!("[{}]", rows.join(","))
+}
+
+/// First car seen driving in the session (bounded scan — the file may open with
+/// menu frames, but driving starts within moments in every real capture).
+fn session_car(path: &Path) -> Option<i32> {
+    let mut reader = crate::session::SessionReader::open(path).ok()?;
+    for _ in 0..20_000 {
+        let (_, payload) = reader.next_packet().ok()??;
+        if let Ok(frame) = crate::packet::decode(&payload)
+            && frame.is_race_on
+            && frame.car_ordinal != 0
+        {
+            return Some(frame.car_ordinal);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
