@@ -62,6 +62,7 @@ pub fn lap_profile(lap: &LapSlice) -> Option<LapProfile> {
     let mut samples = vec![0u32; n_bins];
 
     let mut prev_race_t = first.current_race_time;
+    let mut prev_bin: Option<usize> = None;
     for tf in lap.frames {
         let f = &tf.frame;
         let d = f.distance_traveled - first.distance_traveled;
@@ -69,12 +70,23 @@ pub fn lap_profile(lap: &LapSlice) -> Option<LapProfile> {
         let dt_s = (f.current_race_time - prev_race_t).clamp(0.0, 1.0);
         prev_race_t = f.current_race_time;
 
-        time[bin] += dt_s;
-        speed[bin] += f.speed;
-        slip_f[bin] += (f.tire_combined_slip.fl.abs() + f.tire_combined_slip.fr.abs()) / 2.0;
-        slip_r[bin] += (f.tire_combined_slip.rl.abs() + f.tire_combined_slip.rr.abs()) / 2.0;
-        brake[bin] += (f.brake >= 128) as u32;
-        samples[bin] += 1;
+        // DistanceTraveled is route-spline progress and can snap forward 10-20m in
+        // one frame (see telemetry.md); spread such a hop across the bins it
+        // crossed so none are left empty (they'd read as phantom 0-speed bins).
+        let start = match prev_bin {
+            Some(pb) if bin > pb + 1 => pb + 1,
+            _ => bin,
+        };
+        prev_bin = Some(bin);
+        let share = dt_s / (bin - start + 1) as f32;
+        for b in start..=bin {
+            time[b] += share;
+            speed[b] += f.speed;
+            slip_f[b] += (f.tire_combined_slip.fl.abs() + f.tire_combined_slip.fr.abs()) / 2.0;
+            slip_r[b] += (f.tire_combined_slip.rl.abs() + f.tire_combined_slip.rr.abs()) / 2.0;
+            brake[b] += (f.brake >= 128) as u32;
+            samples[b] += 1;
+        }
     }
 
     let bins = (0..n_bins)
@@ -298,6 +310,28 @@ mod tests {
         let best = b.time_s.min(a.time_s);
         let c = build_composite(&[a, b], 50);
         assert!((c.time_s - best).abs() < 1e-3, "no noise-spliced ideal");
+    }
+
+    /// A route-spline snap (DistanceTraveled leaping several bins in one frame)
+    /// must not leave empty bins — they'd chart as phantom 0-speed dips.
+    #[test]
+    fn distance_snap_leaves_no_empty_bins() {
+        let mut frames = synth_lap(0, 500.0, 50.0, 100.0);
+        // Inject a 30m forward snap partway through the lap.
+        let snap_at = frames.len() / 2;
+        for tf in &mut frames[snap_at..] {
+            tf.frame.distance_traveled += 30.0;
+        }
+        let laps = split_laps(&frames);
+        let mut lap = laps.into_iter().next().unwrap();
+        lap.time_s = Some(10.0);
+        let p = lap_profile(&lap).unwrap();
+        assert!(
+            p.bins.iter().all(|b| b.samples > 0 && b.speed_avg > 0.0),
+            "no empty bins after a snap"
+        );
+        let total: f32 = p.bins.iter().map(|b| b.time_s).sum();
+        assert!((total - 10.0).abs() < 0.3, "time conserved: {total}");
     }
 
     // --- frame-level tests ---

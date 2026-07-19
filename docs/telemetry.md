@@ -89,6 +89,12 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 - **`DistanceTraveled` is always 0.0 in free roam** but live and monotonic in race
   modes (rivals: ~5950 m/lap observed). Integrating `Speed` over `TimestampMS` works
   everywhere.
+- **`DistanceTraveled` is route-spline progress, not an odometer**: it can snap
+  forward 10-21 m in a single frame with zero world-position change (observed on a
+  dirt route, at the same route sections every lap — likely where the driven line
+  diverges from the route spline). Snap points are lap-consistent, so distance
+  binning stays aligned, but bins crossed by a snap get no frames and must be
+  back-filled (profile binning spreads the hop across the crossed bins).
 - **Lap semantics (verified in a rivals session)**: `LapNumber` is 0-based and lap 0
   is the standing-start out lap (~6.5s slower than flying laps in the observed
   session — never compare it to them). `CurrentLap` resets to 0 at each boundary;
