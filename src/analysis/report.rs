@@ -182,7 +182,11 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         _ => writeln!(out, "    no significant cornering in this stint").unwrap(),
     }
 
-    writeln!(out, "\n  suspension (normalized travel avg | bottomed | topped)").unwrap();
+    writeln!(
+        out,
+        "\n  suspension (normalized travel avg | bottomed | topped | reversals/s)"
+    )
+    .unwrap();
     for (label, s) in [
         ("FL", m.suspension.fl),
         ("FR", m.suspension.fr),
@@ -191,10 +195,11 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     ] {
         writeln!(
             out,
-            "    {label} {:.2} | {} | {}",
+            "    {label} {:.2} | {} | {} | {:.1}/s",
             s.avg,
             pct(s.bottomed_frac),
             pct(s.topped_frac),
+            s.reversals_per_sec,
         )
         .unwrap();
     }

@@ -17,6 +17,9 @@ const TOPPED: f32 = 0.03;
 const LIMITER: f32 = 0.98;
 /// Gear values outside real forward gears: 0 = reverse, 11 = mid-shift sentinel.
 const MAX_REAL_GEAR: u8 = 10;
+/// Suspension travel must move this far (meters) since the last extreme for a
+/// direction change to count as a reversal — filters sensor jitter.
+const OSC_MIN_TRAVEL_M: f32 = 0.002;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TempStats {
@@ -28,7 +31,13 @@ pub struct TempStats {
 pub struct SuspensionStats {
     pub avg: f32,
     pub bottomed_frac: f32,
+    /// Also the airborne-wheel proxy: no airborne flag exists in the packet, but a
+    /// fully-extended wheel is unloaded (matters for rally rebound tuning).
     pub topped_frac: f32,
+    /// Amplitude-filtered travel direction reversals per second — the damping
+    /// signal. Road texture drives ~5.5/s baseline (observed, tarmac, healthy
+    /// damping); underdamped ringing adds 2 reversals per cycle on top.
+    pub reversals_per_sec: f32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -90,6 +99,12 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut susp_sum = [0.0f32; 4];
     let mut susp_bottomed = [0usize; 4];
     let mut susp_topped = [0usize; 4];
+    let mut osc_reversals = [0u32; 4];
+    let mut osc_extreme = frames
+        .first()
+        .map(|t| t.frame.suspension_travel_meters.to_array())
+        .unwrap_or_default();
+    let mut osc_dir = [0i8; 4];
     let mut cornering = 0usize;
     let mut front_slip_sum = 0.0f32;
     let mut rear_slip_sum = 0.0f32;
@@ -121,6 +136,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         let temps = f.tire_temp.to_array();
         let slips = f.tire_combined_slip.to_array();
         let travel = f.norm_suspension_travel.to_array();
+        let travel_m = f.suspension_travel_meters.to_array();
         for i in 0..4 {
             temp_sum[i] += temps[i];
             temp_max[i] = temp_max[i].max(temps[i]);
@@ -128,6 +144,19 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             susp_sum[i] += travel[i];
             susp_bottomed[i] += (travel[i] >= BOTTOMED) as usize;
             susp_topped[i] += (travel[i] <= TOPPED) as usize;
+
+            let delta = travel_m[i] - osc_extreme[i];
+            if osc_dir[i] >= 0 && delta < -OSC_MIN_TRAVEL_M {
+                osc_reversals[i] += 1;
+                osc_dir[i] = -1;
+                osc_extreme[i] = travel_m[i];
+            } else if osc_dir[i] <= 0 && delta > OSC_MIN_TRAVEL_M {
+                osc_reversals[i] += 1;
+                osc_dir[i] = 1;
+                osc_extreme[i] = travel_m[i];
+            } else if (osc_dir[i] >= 0 && delta > 0.0) || (osc_dir[i] <= 0 && delta < 0.0) {
+                osc_extreme[i] = travel_m[i];
+            }
         }
 
         if f.acceleration[0].abs() > CORNERING_LAT_ACCEL {
@@ -208,11 +237,15 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         wheelspin_frac: (throttle_samples > 0)
             .then(|| wheelspin as f32 / throttle_samples as f32),
         lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),
-        suspension: Corners {
-            fl: susp_stats(susp_sum[0], susp_bottomed[0], susp_topped[0], n),
-            fr: susp_stats(susp_sum[1], susp_bottomed[1], susp_topped[1], n),
-            rl: susp_stats(susp_sum[2], susp_bottomed[2], susp_topped[2], n),
-            rr: susp_stats(susp_sum[3], susp_bottomed[3], susp_topped[3], n),
+        suspension: {
+            let duration = stint_seconds(frames).max(0.1);
+            let stats = |i: usize| SuspensionStats {
+                avg: susp_sum[i] / n as f32,
+                bottomed_frac: susp_bottomed[i] as f32 / n as f32,
+                topped_frac: susp_topped[i] as f32 / n as f32,
+                reversals_per_sec: osc_reversals[i] as f32 / duration,
+            };
+            Corners { fl: stats(0), fr: stats(1), rl: stats(2), rr: stats(3) }
         },
         gears: GearStats {
             time_frac,
@@ -225,13 +258,6 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     }
 }
 
-fn susp_stats(sum: f32, bottomed: usize, topped: usize, n: usize) -> SuspensionStats {
-    SuspensionStats {
-        avg: sum / n as f32,
-        bottomed_frac: bottomed as f32 / n as f32,
-        topped_frac: topped as f32 / n as f32,
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -323,6 +349,33 @@ mod tests {
         assert!((m.suspension.fl.bottomed_frac - 0.3).abs() < 1e-5);
         assert!((m.suspension.rr.topped_frac - 0.5).abs() < 1e-5);
         assert_eq!(m.suspension.fr.bottomed_frac, 0.0);
+    }
+
+    /// A 10 Hz sine of 5mm amplitude sampled at 10 samples/cycle: two reversals
+    /// per cycle -> ~20/s. A flat signal counts none.
+    #[test]
+    fn suspension_oscillation_rate() {
+        let frames: Vec<TelemetryFrame> = (0..500)
+            .map(|i| {
+                let t = i as f32 * 0.01; // timed() overrides race_t; keep our own phase
+                TelemetryFrame {
+                    suspension_travel_meters: Corners {
+                        fl: 0.05 + 0.005 * (t * 10.0 * std::f32::consts::TAU).sin(),
+                        fr: 0.05,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })
+            .collect();
+        // timed() spaces frames 0.1s apart -> 500 frames = 49.9s; our sine phase
+        // advances 0.01s/frame, so effective ring frequency in stint time is 1 Hz
+        // at 10 samples per cycle -> 2 reversals/s expected on FL.
+        let m = stint_metrics(&timed(frames));
+        let fl = m.suspension.fl.reversals_per_sec;
+        let fr = m.suspension.fr.reversals_per_sec;
+        assert!((fl - 2.0).abs() < 0.3, "FL {fl}/s");
+        assert!(fr < 0.1, "flat FR must not count reversals: {fr}/s");
     }
 
     #[test]
