@@ -1,0 +1,326 @@
+//! Per-stint metric computation. All thresholds are named constants so tuning them
+//! later is a one-line change with tests to catch regressions.
+
+use super::{stint_seconds, TimedFrame};
+use crate::packet::Corners;
+
+/// |normalized slip| above this = the tire has lost grip (per the packet spec).
+pub const SLIP_LIMIT: f32 = 1.0;
+/// Lateral acceleration (m/s²) above which a sample counts as cornering.
+const CORNERING_LAT_ACCEL: f32 = 4.0;
+/// Pedal inputs are 0–255; above this counts as "on".
+const PEDAL_ON: u8 = 128;
+/// Normalized suspension travel bounds treated as bottomed / topped out.
+const BOTTOMED: f32 = 0.97;
+const TOPPED: f32 = 0.03;
+/// Fraction of redline treated as "on the limiter".
+const LIMITER: f32 = 0.98;
+/// Gear values outside real forward gears: 0 = reverse, 11 = mid-shift sentinel.
+const MAX_REAL_GEAR: u8 = 10;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TempStats {
+    pub avg: f32,
+    pub max: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SuspensionStats {
+    pub avg: f32,
+    pub bottomed_frac: f32,
+    pub topped_frac: f32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GearStats {
+    /// (gear, fraction of stint samples), real forward gears only, ascending.
+    pub time_frac: Vec<(u8, f32)>,
+    pub top_gear: u8,
+    pub upshifts: u32,
+    pub avg_upshift_rpm: Option<f32>,
+    pub limiter_frac: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct StintMetrics {
+    pub samples: usize,
+    pub duration_s: f32,
+    pub distance_m: f32,
+    pub avg_speed: f32,
+    pub max_speed: f32,
+    pub car_ordinal: i32,
+    pub car_class: i32,
+    pub car_performance_index: i32,
+    pub drivetrain_type: i32,
+    pub num_cylinders: i32,
+    pub redline: f32,
+    pub tire_temp: Corners<TempStats>,
+    /// Fraction of samples with |combined slip| > SLIP_LIMIT, per corner.
+    pub slip_frac: Corners<f32>,
+    /// mean |front slip angle| − mean |rear slip angle| over cornering samples.
+    /// Positive = front washes out first (understeer tendency). None if no cornering.
+    pub understeer_index: Option<f32>,
+    pub cornering_frac: f32,
+    /// Drive-wheel spin as a fraction of on-throttle samples. None if never on throttle.
+    pub wheelspin_frac: Option<f32>,
+    /// Any-wheel lockup as a fraction of on-brake samples. None if never on brake.
+    pub lockup_frac: Option<f32>,
+    pub suspension: Corners<SuspensionStats>,
+    pub gears: GearStats,
+}
+
+pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
+    let n = frames.len().max(1);
+    let first = frames.first().map(|t| t.frame).unwrap_or_default();
+
+    let mut speed_sum = 0.0f32;
+    let mut max_speed = 0.0f32;
+    let mut temp_sum = [0.0f32; 4];
+    let mut temp_max = [0.0f32; 4];
+    let mut slip_count = [0usize; 4];
+    let mut susp_sum = [0.0f32; 4];
+    let mut susp_bottomed = [0usize; 4];
+    let mut susp_topped = [0usize; 4];
+    let mut cornering = 0usize;
+    let mut front_slip_sum = 0.0f32;
+    let mut rear_slip_sum = 0.0f32;
+    let mut throttle_samples = 0usize;
+    let mut wheelspin = 0usize;
+    let mut brake_samples = 0usize;
+    let mut lockup = 0usize;
+    let mut gear_counts = [0usize; MAX_REAL_GEAR as usize + 1]; // index = gear, [0] unused
+    let mut limiter = 0usize;
+    let mut upshift_rpm_sum = 0.0f32;
+    let mut upshifts = 0u32;
+    let mut prev_real_gear: Option<(u8, f32)> = None; // (gear, rpm while in it)
+    // DistanceTraveled is always 0 outside races (see telemetry.md), so distance is
+    // integrated from speed over in-game timestamps instead.
+    let mut distance_m = 0.0f32;
+    let mut prev_ts: Option<u32> = None;
+
+    for tf in frames {
+        let f = &tf.frame;
+        speed_sum += f.speed;
+        max_speed = max_speed.max(f.speed);
+        if let Some(prev) = prev_ts {
+            let dt_ms = f.timestamp_ms.wrapping_sub(prev).min(1000);
+            distance_m += f.speed * dt_ms as f32 / 1000.0;
+        }
+        prev_ts = Some(f.timestamp_ms);
+
+        let temps = f.tire_temp.to_array();
+        let slips = f.tire_combined_slip.to_array();
+        let travel = f.norm_suspension_travel.to_array();
+        for i in 0..4 {
+            temp_sum[i] += temps[i];
+            temp_max[i] = temp_max[i].max(temps[i]);
+            slip_count[i] += (slips[i].abs() > SLIP_LIMIT) as usize;
+            susp_sum[i] += travel[i];
+            susp_bottomed[i] += (travel[i] >= BOTTOMED) as usize;
+            susp_topped[i] += (travel[i] <= TOPPED) as usize;
+        }
+
+        if f.acceleration[0].abs() > CORNERING_LAT_ACCEL {
+            cornering += 1;
+            front_slip_sum += (f.tire_slip_angle.fl.abs() + f.tire_slip_angle.fr.abs()) / 2.0;
+            rear_slip_sum += (f.tire_slip_angle.rl.abs() + f.tire_slip_angle.rr.abs()) / 2.0;
+        }
+
+        if f.accel >= PEDAL_ON {
+            throttle_samples += 1;
+            let ratios = f.tire_slip_ratio;
+            let spinning = match f.drivetrain_type {
+                0 => ratios.fl > SLIP_LIMIT || ratios.fr > SLIP_LIMIT,
+                1 => ratios.rl > SLIP_LIMIT || ratios.rr > SLIP_LIMIT,
+                _ => ratios.to_array().iter().any(|r| *r > SLIP_LIMIT),
+            };
+            wheelspin += spinning as usize;
+        }
+        if f.brake >= PEDAL_ON {
+            brake_samples += 1;
+            lockup += f
+                .tire_slip_ratio
+                .to_array()
+                .iter()
+                .any(|r| *r < -SLIP_LIMIT) as usize;
+        }
+
+        if (1..=MAX_REAL_GEAR).contains(&f.gear) {
+            gear_counts[f.gear as usize] += 1;
+            if let Some((prev, prev_rpm)) = prev_real_gear
+                && f.gear > prev
+            {
+                upshift_rpm_sum += prev_rpm;
+                upshifts += 1;
+            }
+            prev_real_gear = Some((f.gear, f.current_engine_rpm));
+        }
+        if f.engine_max_rpm > 0.0 && f.current_engine_rpm >= LIMITER * f.engine_max_rpm {
+            limiter += 1;
+        }
+    }
+
+    let frac = |count: usize| count as f32 / n as f32;
+    let corners_from = |vals: [f32; 4]| Corners { fl: vals[0], fr: vals[1], rl: vals[2], rr: vals[3] };
+
+    let time_frac: Vec<(u8, f32)> = (1..=MAX_REAL_GEAR)
+        .filter(|g| gear_counts[*g as usize] > 0)
+        .map(|g| (g, frac(gear_counts[g as usize])))
+        .collect();
+    let top_gear = time_frac.last().map(|(g, _)| *g).unwrap_or(0);
+
+    StintMetrics {
+        samples: frames.len(),
+        duration_s: stint_seconds(frames),
+        distance_m,
+        avg_speed: speed_sum / n as f32,
+        max_speed,
+        car_ordinal: first.car_ordinal,
+        car_class: first.car_class,
+        car_performance_index: first.car_performance_index,
+        drivetrain_type: first.drivetrain_type,
+        num_cylinders: first.num_cylinders,
+        redline: first.engine_max_rpm,
+        tire_temp: Corners {
+            fl: TempStats { avg: temp_sum[0] / n as f32, max: temp_max[0] },
+            fr: TempStats { avg: temp_sum[1] / n as f32, max: temp_max[1] },
+            rl: TempStats { avg: temp_sum[2] / n as f32, max: temp_max[2] },
+            rr: TempStats { avg: temp_sum[3] / n as f32, max: temp_max[3] },
+        },
+        slip_frac: corners_from(std::array::from_fn(|i| frac(slip_count[i]))),
+        understeer_index: (cornering > 0)
+            .then(|| (front_slip_sum - rear_slip_sum) / cornering as f32),
+        cornering_frac: frac(cornering),
+        wheelspin_frac: (throttle_samples > 0)
+            .then(|| wheelspin as f32 / throttle_samples as f32),
+        lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),
+        suspension: Corners {
+            fl: susp_stats(susp_sum[0], susp_bottomed[0], susp_topped[0], n),
+            fr: susp_stats(susp_sum[1], susp_bottomed[1], susp_topped[1], n),
+            rl: susp_stats(susp_sum[2], susp_bottomed[2], susp_topped[2], n),
+            rr: susp_stats(susp_sum[3], susp_bottomed[3], susp_topped[3], n),
+        },
+        gears: GearStats {
+            time_frac,
+            top_gear,
+            upshifts,
+            avg_upshift_rpm: (upshifts > 0).then(|| upshift_rpm_sum / upshifts as f32),
+            limiter_frac: frac(limiter),
+        },
+    }
+}
+
+fn susp_stats(sum: f32, bottomed: usize, topped: usize, n: usize) -> SuspensionStats {
+    SuspensionStats {
+        avg: sum / n as f32,
+        bottomed_frac: bottomed as f32 / n as f32,
+        topped_frac: topped as f32 / n as f32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packet::TelemetryFrame;
+
+    fn timed(frames: Vec<TelemetryFrame>) -> Vec<TimedFrame> {
+        frames
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut frame)| {
+                frame.is_race_on = true;
+                frame.timestamp_ms = i as u32 * 100;
+                TimedFrame { recv_us: i as u64 * 100_000, frame }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn wheelspin_counts_drive_wheels_only() {
+        // RWD car: front slip must not count as wheelspin, rear slip must.
+        let mut frames = Vec::new();
+        for i in 0..10 {
+            frames.push(TelemetryFrame {
+                drivetrain_type: 1,
+                accel: 255,
+                tire_slip_ratio: Corners {
+                    fl: 2.0, // front always sliding — irrelevant for RWD
+                    fr: 2.0,
+                    rl: if i < 4 { 1.5 } else { 0.2 },
+                    rr: 0.0,
+                },
+                ..Default::default()
+            });
+        }
+        let m = stint_metrics(&timed(frames));
+        assert_eq!(m.wheelspin_frac, Some(0.4));
+    }
+
+    #[test]
+    fn understeer_index_positive_when_front_slips_more() {
+        let frames: Vec<TelemetryFrame> = (0..10)
+            .map(|_| TelemetryFrame {
+                acceleration: [6.0, 0.0, 0.0], // cornering
+                tire_slip_angle: Corners { fl: 0.8, fr: 0.8, rl: 0.4, rr: 0.4 },
+                ..Default::default()
+            })
+            .collect();
+        let m = stint_metrics(&timed(frames));
+        let idx = m.understeer_index.unwrap();
+        assert!((idx - 0.4).abs() < 1e-5, "index {idx}");
+        assert_eq!(m.cornering_frac, 1.0);
+    }
+
+    #[test]
+    fn upshift_rpm_recorded_across_shift_sentinel() {
+        // 2nd at 9000 rpm -> gear 11 (mid-shift) -> 3rd: one upshift at 9000.
+        let frames = vec![
+            TelemetryFrame { gear: 2, current_engine_rpm: 8000.0, ..Default::default() },
+            TelemetryFrame { gear: 2, current_engine_rpm: 9000.0, ..Default::default() },
+            TelemetryFrame { gear: 11, current_engine_rpm: 8200.0, ..Default::default() },
+            TelemetryFrame { gear: 3, current_engine_rpm: 6500.0, ..Default::default() },
+        ];
+        let m = stint_metrics(&timed(frames));
+        assert_eq!(m.gears.upshifts, 1);
+        assert_eq!(m.gears.avg_upshift_rpm, Some(9000.0));
+        assert_eq!(m.gears.top_gear, 3);
+        // gear 11 must not appear in time fractions
+        assert!(m.gears.time_frac.iter().all(|(g, _)| *g <= 10));
+    }
+
+    #[test]
+    fn suspension_bottoming_fraction() {
+        let frames: Vec<TelemetryFrame> = (0..10)
+            .map(|i| TelemetryFrame {
+                norm_suspension_travel: Corners {
+                    fl: if i < 3 { 0.99 } else { 0.5 },
+                    fr: 0.5,
+                    rl: 0.5,
+                    rr: if i < 5 { 0.01 } else { 0.5 },
+                },
+                ..Default::default()
+            })
+            .collect();
+        let m = stint_metrics(&timed(frames));
+        assert!((m.suspension.fl.bottomed_frac - 0.3).abs() < 1e-5);
+        assert!((m.suspension.rr.topped_frac - 0.5).abs() < 1e-5);
+        assert_eq!(m.suspension.fr.bottomed_frac, 0.0);
+    }
+
+    #[test]
+    fn lockup_fraction_of_braking_time() {
+        let mut frames = Vec::new();
+        for i in 0..10 {
+            frames.push(TelemetryFrame {
+                brake: if i < 5 { 255 } else { 0 },
+                tire_slip_ratio: Corners {
+                    fl: if i < 2 { -1.5 } else { 0.0 },
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+        }
+        let m = stint_metrics(&timed(frames));
+        assert_eq!(m.lockup_frac, Some(0.4)); // 2 lockup samples of 5 braking
+    }
+}

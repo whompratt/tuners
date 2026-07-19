@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod capture;
 pub mod packet;
 pub mod replay;

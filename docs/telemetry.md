@@ -86,6 +86,8 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 - Send rate matches frame rate as documented (~168 Hz observed on a 165 Hz setup).
 - Setup gotcha: the game only starts honouring a newly configured Data Out target
   after a **full game restart**.
+- **`DistanceTraveled` is always 0.0 in free roam** (likely race-only). Distance must
+  be integrated from `Speed` over `TimestampMS`.
 
 ## Still to verify
 

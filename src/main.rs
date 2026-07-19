@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
-use tuners::{capture, replay, simulate};
+use tuners::{analysis, capture, replay, simulate};
 
 const USAGE: &str = "\
 tuners — FH6 tuning assistant (telemetry capture spike)
@@ -11,6 +11,8 @@ USAGE:
                     listen for Data Out packets, record a session, show live status
   tuners replay   <session-file>
                     decode a recorded session and print a summary (exits non-zero on errors)
+  tuners analyze  <session-file>
+                    per-stint tuning observations: tires, grip, suspension, gearing
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60]
                     send synthetic telemetry (stand-in for the game)
 ";
@@ -34,6 +36,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
     match cmd.as_str() {
         "capture" => cmd_capture(&args[1..]),
         "replay" => cmd_replay(&args[1..]),
+        "analyze" => cmd_analyze(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
@@ -70,6 +73,29 @@ fn cmd_replay(args: &[String]) -> Result<(), String> {
         [path] => replay::run(path.as_ref()),
         _ => Err("usage: tuners replay <session-file>".into()),
     }
+}
+
+fn cmd_analyze(args: &[String]) -> Result<(), String> {
+    let [path] = args else {
+        return Err("usage: tuners analyze <session-file>".into());
+    };
+    let session = analysis::Session::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
+    if session.decode_errors > 0 {
+        eprintln!("warning: {} packets failed to decode", session.decode_errors);
+    }
+    let stints = analysis::split_stints(&session.frames, 5.0);
+    if stints.is_empty() {
+        return Err(format!(
+            "no driving stints of 5s or longer found ({} frames total)",
+            session.frames.len()
+        ));
+    }
+    println!("{path}: {} stint(s)\n", stints.len());
+    for (i, stint) in stints.iter().enumerate() {
+        let metrics = analysis::metrics::stint_metrics(stint);
+        println!("{}", analysis::report::render_stint(i + 1, &metrics));
+    }
+    Ok(())
 }
 
 fn cmd_simulate(args: &[String]) -> Result<(), String> {
