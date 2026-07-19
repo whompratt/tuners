@@ -17,27 +17,27 @@
   * { box-sizing: border-box; margin: 0; }
   body {
     background: var(--page); color: var(--ink-2);
-    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
     display: flex; height: 100vh;
   }
   aside {
     width: 320px; min-width: 240px; border-right: 1px solid var(--border);
     padding: 16px; overflow-y: auto;
   }
-  aside h1 { font-size: 16px; color: var(--ink); margin-bottom: 12px; }
-  aside h1 span { color: var(--muted); font-weight: normal; font-size: 12px; }
+  aside h1 { font-size: 18px; color: var(--ink); margin-bottom: 12px; }
+  aside h1 span { color: var(--muted); font-weight: normal; font-size: 13px; }
   .session {
     padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
-    margin-bottom: 8px; cursor: pointer; word-break: break-all; font-size: 13px;
+    margin-bottom: 8px; cursor: pointer; word-break: break-all; font-size: 14px;
     position: relative;
   }
   .session:hover { border-color: var(--accent); }
   .session.active { border-color: var(--accent); background: var(--surface); }
-  .session .size { color: var(--muted); font-size: 12px; }
+  .session .size { color: var(--muted); font-size: 13px; }
   .ab { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
   .ab button {
     background: none; border: 1px solid var(--border); border-radius: 4px;
-    color: var(--muted); font: 600 11px system-ui; width: 22px; height: 20px;
+    color: var(--muted); font: 600 12px system-ui; width: 24px; height: 22px;
     cursor: pointer; padding: 0;
   }
   .ab button.on-a { border-color: #3987e5; color: #3987e5; }
@@ -45,12 +45,12 @@
   #car-filter {
     width: 100%; margin-bottom: 10px; padding: 6px 8px;
     background: var(--surface); color: var(--ink-2);
-    border: 1px solid var(--border); border-radius: 6px; font: 13px system-ui;
+    border: 1px solid var(--border); border-radius: 6px; font: 14px system-ui;
   }
-  .session .car { color: var(--accent); font-size: 12px; }
+  .session .car { color: var(--accent); font-size: 13px; }
   .sector {
     border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px;
-    font-size: 12px;
+    font-size: 13px;
   }
   .sector .num { font-variant-numeric: tabular-nums; color: var(--ink); }
   main { flex: 1; padding: 16px 24px; overflow: auto; }
@@ -59,25 +59,25 @@
     border-radius: 8px; padding: 16px; margin-bottom: 16px;
     position: relative;
   }
-  .panel h2 { font-size: 13px; color: var(--ink-2); font-weight: 600; margin-bottom: 8px; }
-  .legend-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; font-size: 12px; }
+  .panel h2 { font-size: 15px; color: var(--ink-2); font-weight: 600; margin-bottom: 8px; }
+  .legend-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; font-size: 13px; }
   .chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   #canvas-wrap { position: relative; }
   canvas { width: 100%; display: block; }
   .tip {
     position: absolute; pointer-events: none; display: none;
     background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-    padding: 6px 10px; font-size: 12px; color: var(--ink-2); white-space: nowrap;
+    padding: 6px 10px; font-size: 13px; color: var(--ink-2); white-space: nowrap;
     box-shadow: 0 2px 8px rgba(0,0,0,0.5); z-index: 2;
   }
   .tip .t-head { color: var(--muted); margin-bottom: 2px; }
   .tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
-  pre { white-space: pre-wrap; font: 13px/1.45 ui-monospace, Consolas, monospace; }
+  pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; }
   .placeholder { color: var(--muted); }
   #live-panel.stale { opacity: 0.55; }
   #rec-split {
     background: none; border: 1px solid var(--border); border-radius: 6px;
-    color: var(--ink-2); font: 12px system-ui; padding: 4px 10px; cursor: pointer;
+    color: var(--ink-2); font: 13px system-ui; padding: 5px 12px; cursor: pointer;
   }
   #rec-split:hover { border-color: var(--accent); color: var(--ink); }
   #rec-status .rec-dot { color: #e66767; }
@@ -88,37 +88,40 @@
   }
   #live-panel:not(.stale) .live-head .dot { background: #199e70; }
   .live-row { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: flex-end; }
-  .readout .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-  .readout .value { font-size: 26px; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
-  .readout .unit { font-size: 12px; color: var(--muted); }
-  .readout.minor .value { font-size: 16px; }
-  .temps { display: grid; grid-template-columns: repeat(2, 52px); gap: 3px; }
+  .readout .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .readout .value { font-size: 40px; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .readout .unit { font-size: 14px; color: var(--muted); }
+  .readout.minor .value { font-size: 26px; }
+  .temps { display: grid; grid-template-columns: repeat(2, 68px); gap: 4px; }
   .temps div {
-    text-align: center; font-size: 12px; font-variant-numeric: tabular-nums;
-    border: 1px solid var(--border); border-radius: 4px; padding: 2px 0;
+    text-align: center; font-size: 16px; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--border); border-radius: 4px; padding: 4px 0;
   }
   .temps .cold { color: #3987e5; } .temps .hot { color: #e66767; }
-  .live-body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
-  .live-body .live-row { flex: 1; min-width: 320px; }
+  .live-body { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 36px; }
+  .live-body .live-row { flex: 1; min-width: 380px; }
   #live-quality {
-    flex: none; display: flex; align-items: center; gap: 16px;
-    border: 1px solid var(--qcolor); border-radius: 8px; padding: 10px 14px;
+    flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px;
+    border: 1px solid var(--qcolor); border-radius: 10px; padding: 14px 22px 12px;
     background: color-mix(in srgb, var(--qcolor) 14%, transparent);
     --qcolor: #e66767; /* low */
+    position: relative; cursor: default;
   }
   #live-quality.q-ok { --qcolor: #c98500; }
   #live-quality.q-good { --qcolor: #199e70; }
-  #live-quality svg { flex: none; }
   .q-track { fill: none; stroke: var(--grid); stroke-width: 10; stroke-linecap: round; }
   .q-fill {
     fill: none; stroke: var(--qcolor); stroke-width: 10; stroke-linecap: round;
     transition: stroke-dasharray 0.4s, stroke 0.4s;
   }
   #q-pct { fill: var(--ink); font: 600 20px system-ui; text-anchor: middle; }
-  #q-caption { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  #q-detail { font-size: 12px; color: var(--ink-2); }
-  #q-detail .num { font-variant-numeric: tabular-nums; color: var(--ink); }
-  #q-label { font-size: 12px; color: var(--ink-2); font-weight: 600; }
+  #q-label { font-size: 15px; color: var(--ink); font-weight: 600; text-align: center; }
+  #q-tip {
+    display: none; position: absolute; top: 100%; left: 0; margin-top: 8px;
+    white-space: normal; width: 340px; z-index: 3; line-height: 1.5;
+  }
+  #q-tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
+  #live-quality:hover #q-tip { display: block; }
 </style>
 </head>
 <body>
@@ -132,24 +135,21 @@
       <div class="live-head">
         <span class="dot"></span>
         <h2 style="margin:0">Live</h2>
-        <span id="live-file" style="font-size:12px;color:var(--muted)"></span>
-        <span id="live-status" style="font-size:12px;color:var(--muted)"></span>
+        <span id="live-file" style="font-size:13px;color:var(--muted)"></span>
+        <span id="live-status" style="font-size:13px;color:var(--muted)"></span>
         <span style="flex:1"></span>
-        <span id="rec-status" style="font-size:12px;color:var(--muted)"></span>
+        <span id="rec-status" style="font-size:13px;color:var(--muted)"></span>
         <button id="rec-split" style="display:none">new session — tune changed</button>
       </div>
       <div class="live-body">
       <div id="live-quality">
-        <svg viewBox="0 0 100 62" width="120" aria-label="data confidence">
+        <svg viewBox="0 0 100 62" width="190" aria-label="data confidence">
           <path class="q-track" d="M 10 52 A 40 40 0 0 1 90 52"/>
           <path class="q-fill" id="q-fill" d="M 10 52 A 40 40 0 0 1 90 52" stroke-dasharray="0 999"/>
           <text id="q-pct" x="50" y="50">–</text>
         </svg>
-        <div>
-          <div id="q-label">confidence</div>
-          <div id="q-detail">no complete laps yet</div>
-          <div id="q-caption">share of the ideal lap reproduced by a second lap</div>
-        </div>
+        <div id="q-label">confidence</div>
+        <div id="q-tip" class="tip"></div>
       </div>
       <div class="live-row">
         <div class="readout"><div class="label">Speed</div>
@@ -173,7 +173,7 @@
     </div>
     <div id="compare-panel" style="display:none" class="panel">
       <h2 id="compare-title">A/B comparison</h2>
-      <div id="compare-summary" style="font-size:12px;color:var(--ink-2);margin-bottom:8px"></div>
+      <div id="compare-summary" style="font-size:13px;color:var(--ink-2);margin-bottom:8px"></div>
       <div id="compare-sectors" class="legend-row"></div>
       <div id="compare-legend" class="legend-row"></div>
       <div id="compare-wrap" style="position:relative">
@@ -328,7 +328,7 @@ function compareLayout() {
   canvas.width = cssW * dpr; canvas.height = cssH * dpr;
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const pad = { l: 46, r: 12, t: 8, b: 24 };
+  const pad = { l: 56, r: 12, t: 8, b: 26 };
   const bins = cmpData.delta.length;
   const speedH = 210, gapH = 24, barsH = 80, cumH = 140;
   const segs = [];
@@ -357,7 +357,7 @@ function drawCompare(hoverBin) {
   const cum0 = cumTop + cumH / 2;
   const yCum = d => cum0 - (-d / cumMax) * (cumH / 2); // up = B ahead (delta sum negative)
   ctx.clearRect(0, 0, cssW, L.cssH);
-  ctx.font = '11px system-ui, sans-serif';
+  ctx.font = '13px system-ui, sans-serif';
 
   ctx.lineWidth = 1;
   for (let g = 0; g <= yMax; g += 40) {
@@ -484,7 +484,7 @@ function layout() {
   canvas.width = cssW * dpr; canvas.height = cssH * dpr;
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const pad = { l: 46, r: 12, t: 8, b: 26 };
+  const pad = { l: 56, r: 12, t: 8, b: 28 };
   const bins = Math.max(...lapData.laps.map(l => l.speeds.length));
   const maxMph = Math.max(...lapData.laps.flatMap(l => l.speeds)) * MPH;
   return { ctx, cssW, cssH, pad,
@@ -499,7 +499,7 @@ function drawChart(hoverBin) {
   const y = mph => pad.t + plotH - (mph / yMax) * plotH;
   ctx.clearRect(0, 0, cssW, cssH);
 
-  ctx.font = '11px system-ui, sans-serif';
+  ctx.font = '13px system-ui, sans-serif';
   ctx.lineWidth = 1;
   for (let g = 0; g <= yMax; g += 40) {           // horizontal grid + labels
     ctx.strokeStyle = css('--grid');
@@ -639,15 +639,19 @@ live.addEventListener('quality', ev => {
   document.getElementById('q-fill').setAttribute('stroke-dasharray', `${ARC * pct / 100} 999`);
   document.getElementById('q-pct').textContent = q ? `${pct}%` : '–';
   document.getElementById('q-label').textContent = 'confidence — ' + {
-    good: 'enough for a trustworthy A/B',
-    ok: 'usable, more laps will firm it up',
+    good: 'enough for A/B',
+    ok: 'nearly there',
     low: 'keep driving',
   }[band];
-  document.getElementById('q-detail').innerHTML = !q ? 'no complete laps yet' :
+  const detail = !q ? 'No complete laps yet.' :
     `<span class="num">${q.laps}</span> ${q.standingOnly ? 'standing run(s)' : 'flying lap(s)'} · ` +
     `best <span class="num">${fmtLap(q.bestLapS)}</span> · ` +
     `spread <span class="num">${q.spreadPct.toFixed(1)}%</span> · ` +
-    `<span class="num">${q.sharedKm.toFixed(2)} km</span>`;
+    `<span class="num">${q.sharedKm.toFixed(2)} km</span><br>`;
+  document.getElementById('q-tip').innerHTML = detail +
+    'Confidence is the share of the ideal lap reproduced by a second lap. It rises when ' +
+    'sections of track are driven the same way at least twice; sections driven differently ' +
+    'every lap stay unconfirmed. Green from 75%.';
 });
 load();
 </script>
