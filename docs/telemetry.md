@@ -95,6 +95,27 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   `LastLap`/`BestLap` update exactly at the boundary, so a finished lap's
   authoritative time is read from the first frames of the *next* lap.
 
+## Rewinds, restarts, collisions (verified 2026-07-19, deliberate-rewind capture)
+
+- **A rewind appears as a race-off gap** (zeroed `IsRaceOn=0` packets, like a menu),
+  and on resume the state is rewound: race clock, lap clock, distance, and
+  `LapNumber` all step back. Rewinding over the finish line replays the lap
+  transition identically (same race_t, same distance).
+- Gap classification by race clock on resume: **unchanged = pause, stepped back =
+  rewind, near zero = restart**. (A pause mid-lap still leaks up to ~1s of phantom
+  time into one bin via `TimestampMS`, which keeps running — known minor issue.)
+- Race-start artifacts: `DistanceTraveled` goes briefly **negative** (spawn is ~27 m
+  behind the start line) and `CurrentLap` resets when the line is actually crossed
+  (~3 s after launch).
+- **Smashable collisions** (breakables: trees, cones) are directly telemetered via
+  `SmashableVelDiff`/`SmashableMass`, but observed values are tiny (0.0–0.2 m/s,
+  mass often 0) — a weak, informational signal.
+- **Wall/barrier hits are not telemetered** (they invalidate laps in-game). Not
+  currently inferred; candidate heuristic is single-frame accel spikes beyond
+  braking capability. Splicing self-protects on time (collisions cost speed), but a
+  route where wall-bouncing is net-faster would make a spliced ideal
+  leaderboard-illegal — revisit if observed in practice.
+
 ## Still to verify
 
 - Whether `NumCylinders == 0` reliably identifies EVs (needs a capture in an EV).

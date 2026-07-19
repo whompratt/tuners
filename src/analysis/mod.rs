@@ -41,22 +41,31 @@ impl Session {
 /// Contiguous `IsRaceOn` runs at least `min_seconds` long (by in-game time).
 /// Menu/pause frames are zeroed by the game, so they carry no information.
 pub fn split_stints(frames: &[TimedFrame], min_seconds: f32) -> Vec<&[TimedFrame]> {
+    split_stint_ranges(frames, min_seconds)
+        .into_iter()
+        .map(|r| &frames[r])
+        .collect()
+}
+
+/// Index ranges of stints, for callers that need positions in the full session
+/// (e.g. to match stint starts against rewind-resume points).
+pub fn split_stint_ranges(frames: &[TimedFrame], min_seconds: f32) -> Vec<std::ops::Range<usize>> {
     let mut stints = Vec::new();
     let mut start = None;
     for (i, tf) in frames.iter().enumerate() {
         match (tf.frame.is_race_on, start) {
             (true, None) => start = Some(i),
             (false, Some(s)) => {
-                stints.push(&frames[s..i]);
+                stints.push(s..i);
                 start = None;
             }
             _ => {}
         }
     }
     if let Some(s) = start {
-        stints.push(&frames[s..]);
+        stints.push(s..frames.len());
     }
-    stints.retain(|s| stint_seconds(s) >= min_seconds);
+    stints.retain(|r| stint_seconds(&frames[r.clone()]) >= min_seconds);
     stints
 }
 
@@ -107,6 +116,59 @@ pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
             }
         })
         .collect()
+}
+
+/// What a race-off gap in the stream turned out to be, judged by the race clock
+/// on resume: unchanged = pause, moved backwards = rewind, near zero = restart.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GapKind {
+    Pause,
+    Rewind { race_t_before: f32, race_t_after: f32 },
+    Restart,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SessionGap {
+    /// Index of the first race-on frame after the gap.
+    pub resume_frame: usize,
+    /// Lap number driving resumed on.
+    pub resume_lap: u16,
+    pub kind: GapKind,
+}
+
+/// Race clock below this on resume = the session was restarted, not rewound.
+const RESTART_RACE_T_S: f32 = 5.0;
+/// Race clock must step back at least this far to call a gap a rewind.
+const REWIND_MIN_STEP_S: f32 = 0.25;
+
+/// Classify every race-off gap in a session. Rewound laps are already excluded
+/// from profiling structurally (the gap splits the stint and the resumed slice
+/// starts mid-lap); this exists so reports can say so honestly.
+pub fn classify_gaps(frames: &[TimedFrame]) -> Vec<SessionGap> {
+    let mut gaps = Vec::new();
+    let mut last_on: Option<f32> = None;
+    let mut in_gap = false;
+    for (i, tf) in frames.iter().enumerate() {
+        let f = &tf.frame;
+        if !f.is_race_on {
+            in_gap = last_on.is_some();
+            continue;
+        }
+        if in_gap {
+            let race_t_before = last_on.unwrap();
+            let kind = if f.current_race_time < RESTART_RACE_T_S {
+                GapKind::Restart
+            } else if f.current_race_time < race_t_before - REWIND_MIN_STEP_S {
+                GapKind::Rewind { race_t_before, race_t_after: f.current_race_time }
+            } else {
+                GapKind::Pause
+            };
+            gaps.push(SessionGap { resume_frame: i, resume_lap: f.lap_number, kind });
+            in_gap = false;
+        }
+        last_on = Some(f.current_race_time);
+    }
+    gaps
 }
 
 /// In-game duration of a frame slice, tolerant of TimestampMS overflow.
@@ -185,6 +247,129 @@ mod tests {
         assert!(!laps[1].standing_start);
         assert_eq!(laps[1].time_s, Some(59.0));
         assert_eq!(laps[2].time_s, None, "final partial lap has no finished time");
+    }
+
+    fn racing(race_t: f32, lap: u16) -> TimedFrame {
+        TimedFrame {
+            recv_us: 0,
+            frame: TelemetryFrame {
+                is_race_on: true,
+                current_race_time: race_t,
+                lap_number: lap,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn gap_frame() -> TimedFrame {
+        TimedFrame { recv_us: 0, frame: TelemetryFrame::default() }
+    }
+
+    /// The three race-off gap kinds, using the signature observed in the real
+    /// rewind capture: pause resumes with the clock unchanged, rewind with it
+    /// stepped back, restart with it near zero.
+    #[test]
+    fn gaps_classified_by_race_clock() {
+        let mut frames = Vec::new();
+        frames.extend((0..10).map(|i| racing(100.0 + i as f32 * 0.1, 3)));
+        frames.push(gap_frame()); // pause
+        frames.extend((0..10).map(|i| racing(100.9 + i as f32 * 0.1, 3)));
+        frames.push(gap_frame()); // rewind: clock steps back 377.5 -> 376.5 style
+        frames.extend((0..10).map(|i| racing(95.0 + i as f32 * 0.1, 3)));
+        frames.push(gap_frame()); // restart
+        frames.extend((0..10).map(|i| racing(0.5 + i as f32 * 0.1, 0)));
+
+        let gaps = classify_gaps(&frames);
+        assert_eq!(gaps.len(), 3);
+        assert_eq!(gaps[0].kind, GapKind::Pause);
+        assert!(matches!(gaps[1].kind, GapKind::Rewind { .. }));
+        assert_eq!(gaps[1].resume_lap, 3);
+        assert_eq!(gaps[2].kind, GapKind::Restart);
+    }
+
+    /// A rewound lap attempt must never reach the ideal composite: the gap splits
+    /// the stint and the resumed slice starts mid-lap, which profiling rejects.
+    #[test]
+    fn rewound_attempt_is_structurally_unprofileable() {
+        // Completed lap 1 (with boundary), then lap 2 begins, rewind mid-lap,
+        // lap 2 resumes mid-lap and completes.
+        let mut frames = Vec::new();
+        for i in 0..100 {
+            frames.push(TimedFrame {
+                recv_us: 0,
+                frame: TelemetryFrame {
+                    is_race_on: true,
+                    timestamp_ms: i * 100,
+                    lap_number: 1,
+                    current_lap: i as f32 * 0.1,
+                    current_race_time: 100.0 + i as f32 * 0.1,
+                    distance_traveled: 1000.0 + i as f32 * 5.0,
+                    speed: 50.0,
+                    ..Default::default()
+                },
+            });
+        }
+        // lap 2 first attempt: 4s in, then rewind
+        for i in 0..40 {
+            frames.push(TimedFrame {
+                recv_us: 0,
+                frame: TelemetryFrame {
+                    is_race_on: true,
+                    timestamp_ms: 10_000 + i * 100,
+                    lap_number: 2,
+                    current_lap: i as f32 * 0.1,
+                    current_race_time: 110.0 + i as f32 * 0.1,
+                    last_lap: 10.0,
+                    distance_traveled: 1500.0 + i as f32 * 5.0,
+                    speed: 50.0,
+                    ..Default::default()
+                },
+            });
+        }
+        frames.push(gap_frame());
+        // Adversarial resume: the rewind lands 0.8s into lap 2 — INSIDE the
+        // mid-lap start tolerance — and lap 3 follows, giving lap 2 a boundary
+        // time. Without the explicit rewind guard this attempt would be profiled.
+        for i in 0..92 {
+            frames.push(TimedFrame {
+                recv_us: 0,
+                frame: TelemetryFrame {
+                    is_race_on: true,
+                    timestamp_ms: 20_000 + i * 100,
+                    lap_number: 2,
+                    current_lap: 0.8 + i as f32 * 0.1,
+                    current_race_time: 110.8 + i as f32 * 0.1,
+                    last_lap: 10.0,
+                    distance_traveled: 1504.0 + i as f32 * 5.0,
+                    speed: 50.0,
+                    ..Default::default()
+                },
+            });
+        }
+        for i in 0..20 {
+            frames.push(TimedFrame {
+                recv_us: 0,
+                frame: TelemetryFrame {
+                    is_race_on: true,
+                    timestamp_ms: 30_000 + i * 100,
+                    lap_number: 3,
+                    current_lap: i as f32 * 0.1,
+                    current_race_time: 120.0 + i as f32 * 0.1,
+                    last_lap: 10.0, // lap 2's finished (but rewound) time
+                    distance_traveled: 1964.0 + i as f32 * 5.0,
+                    speed: 50.0,
+                    ..Default::default()
+                },
+            });
+        }
+
+        let gaps = classify_gaps(&frames);
+        assert_eq!(gaps.len(), 1);
+        assert!(matches!(gaps[0].kind, GapKind::Rewind { .. }));
+
+        let profile = crate::analysis::profile::session_profile(&frames).unwrap();
+        let numbers: Vec<u16> = profile.laps.iter().map(|l| l.lap_number).collect();
+        assert_eq!(numbers, vec![1], "rewound lap 2 must not be profiled: {numbers:?}");
     }
 
     /// Regression: capture starting shortly after launch (race clock already at

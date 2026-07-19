@@ -97,6 +97,20 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
         ));
     }
     println!("{path}: {} stint(s)\n", stints.len());
+    for gap in analysis::classify_gaps(&session.frames) {
+        match gap.kind {
+            analysis::GapKind::Rewind { race_t_before, race_t_after } => println!(
+                "note: rewind on lap {} (race clock {:.1}s -> {:.1}s) — rewound lap \
+                 attempts are excluded from ideal/compare",
+                gap.resume_lap + 1,
+                race_t_before,
+                race_t_after,
+            ),
+            analysis::GapKind::Restart => println!("note: session restart detected"),
+            analysis::GapKind::Pause => {}
+        }
+    }
+    println!();
     for (i, stint) in stints.iter().enumerate() {
         let metrics = analysis::metrics::stint_metrics(stint);
         println!("{}", analysis::report::render_stint(i + 1, &metrics));

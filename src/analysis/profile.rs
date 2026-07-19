@@ -8,8 +8,8 @@
 //! into the corner and can never be combined with a clean lap's exit, which would
 //! fabricate a physically impossible lap (docs/plans/003-comparison.md).
 
-use super::{split_laps, split_stints, LapSlice, TimedFrame};
-use std::collections::BTreeSet;
+use super::{classify_gaps, split_laps, split_stint_ranges, GapKind, LapSlice, TimedFrame};
+use std::collections::{BTreeSet, HashSet};
 
 pub const BIN_METERS: f32 = 10.0;
 /// Laps may only be spliced at bins where their speeds match within this tolerance.
@@ -177,10 +177,23 @@ pub struct SessionProfile {
 }
 
 pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> {
+    // A stint that begins at a rewind-resume continues a rewound lap: its first
+    // lap slice must not be profiled even when the rewind landed early enough in
+    // the lap to pass the mid-lap start check.
+    let rewind_resumes: HashSet<usize> = classify_gaps(frames)
+        .iter()
+        .filter(|g| matches!(g.kind, GapKind::Rewind { .. }))
+        .map(|g| g.resume_frame)
+        .collect();
+
     let mut laps: Vec<LapProfile> = Vec::new();
-    for stint in split_stints(frames, 5.0) {
-        for lap in split_laps(stint) {
-            if let Some(p) = lap_profile(&lap) {
+    for range in split_stint_ranges(frames, 5.0) {
+        let after_rewind = rewind_resumes.contains(&range.start);
+        for (k, lap) in split_laps(&frames[range]).iter().enumerate() {
+            if after_rewind && k == 0 {
+                continue;
+            }
+            if let Some(p) = lap_profile(lap) {
                 laps.push(p);
             }
         }
