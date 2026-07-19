@@ -103,11 +103,13 @@ pub fn judge(ideal_delta_s: f32) -> Outcome {
 /// optimum forever (some understeer is lap-time-optimal).
 pub fn reconcile(recs: &mut [Recommendation], change: Change, outcome: Outcome, note: &str) {
     for r in recs.iter_mut() {
-        if r.implied != Some(change) {
+        let Some(implied) = r.implied else { continue };
+        if implied.family != change.family {
             continue;
         }
-        match outcome {
-            Outcome::Worsened(d) => {
+        let same_direction = implied.softer == change.softer;
+        match (same_direction, outcome) {
+            (true, Outcome::Worsened(d)) => {
                 r.advice = format!(
                     "revert about half of the last change (\"{note}\"): the behaviour \
                      still points the same way, but that step cost lap time — the \
@@ -117,21 +119,47 @@ pub fn reconcile(recs: &mut [Recommendation], change: Change, outcome: Outcome, 
                     .push(format!("last step in this direction lost {d:.2}s of ideal lap"));
                 r.confidence = Confidence::High;
             }
-            Outcome::Improved(d) => {
+            (true, Outcome::Improved(d)) => {
                 r.evidence.push(format!(
                     "last step in this direction gained {:.2}s — a similar or smaller \
                      step is reasonable",
                     -d,
                 ));
             }
-            Outcome::Unclear(d) => {
+            (true, Outcome::Unclear(d)) => {
                 r.confidence = Confidence::Low;
                 r.evidence.push(format!(
                     "last step in this direction was inconclusive ({d:+.2}s ideal) — \
                      match lap counts or run A-B-A before stepping again"
                 ));
             }
-            Outcome::NotComparable => {}
+            // The last step moved AGAINST this advice and gained: the optimum is
+            // bracketed. The behavioural signal will keep pointing the same way
+            // forever — the residual behaviour is likely the fast setup.
+            (false, Outcome::Improved(d)) => {
+                r.advice = format!(
+                    "hold this setting: the last change (\"{note}\") moved against \
+                     this advice and still gained {:.2}s — the optimum is likely \
+                     bracketed, and the remaining behaviour may simply be what the \
+                     fast setup feels like",
+                    -d,
+                );
+                r.confidence = Confidence::Medium;
+                r.evidence.push(
+                    "behaviour alone would keep pushing past the optimum; \
+                     trust the measured outcomes here"
+                        .into(),
+                );
+            }
+            (false, Outcome::Worsened(d)) => {
+                r.evidence.push(format!(
+                    "last change (\"{note}\") moved against this advice and lost \
+                     {d:.2}s — stepping back this way (smaller step) is supported by \
+                     both behaviour and history",
+                ));
+                r.confidence = Confidence::High;
+            }
+            (false, Outcome::Unclear(_)) | (_, Outcome::NotComparable) => {}
         }
     }
 }
@@ -211,6 +239,35 @@ mod tests {
         );
         assert!(recs[0].advice.contains("reduce front roll stiffness"));
         assert!(recs[0].evidence.iter().any(|e| e.contains("gained 1.29s")));
+    }
+
+    /// The convergence case from the real trajectory: advice says soften, the last
+    /// step stiffened and GAINED — the optimum is bracketed, so hold.
+    #[test]
+    fn opposite_direction_gain_means_hold() {
+        let mut recs = vec![balance_rec()];
+        reconcile(
+            &mut recs,
+            Change { family: Family::FrontRoll, softer: false },
+            Outcome::Improved(-0.42),
+            "front arb stiffer",
+        );
+        assert!(recs[0].advice.contains("hold this setting"), "{}", recs[0].advice);
+        assert_eq!(recs[0].confidence, Confidence::Medium);
+    }
+
+    #[test]
+    fn opposite_direction_loss_reinforces_advice() {
+        let mut recs = vec![balance_rec()];
+        reconcile(
+            &mut recs,
+            Change { family: Family::FrontRoll, softer: false },
+            Outcome::Worsened(0.5),
+            "front arb stiffer",
+        );
+        assert!(recs[0].advice.contains("reduce front roll stiffness"));
+        assert_eq!(recs[0].confidence, Confidence::High);
+        assert!(recs[0].evidence.iter().any(|e| e.contains("moved against this advice and lost")));
     }
 
     #[test]
