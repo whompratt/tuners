@@ -23,6 +23,14 @@ const UNUSED_REV_FRAC: f32 = 0.90;
 /// Suspension travel fractions.
 const BOTTOMING_FRAC: f32 = 0.03;
 const TOPPING_FRAC: f32 = 0.10;
+/// Damping calibration from a deliberate min/max A/B (tarmac, one car — first
+/// pass): healthy ~5.5-6 reversals/s; min damping read 7.3-7.6 with 17-20%
+/// topped; max damping read 2.0-2.3.
+const UNDERDAMPED_REV_PER_S: f32 = 7.0;
+/// Healthy axles read ~1-3.5% topped; min damping read 6.5-20%. Requires the
+/// reversal-rate signal to agree, which keeps false positives out.
+const UNDERDAMPED_TOPPED_FRAC: f32 = 0.05;
+const OVERDAMPED_REV_PER_S: f32 = 3.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
@@ -62,6 +70,7 @@ pub fn recommend(overall: &StintMetrics, per_lap: &[StintMetrics]) -> Vec<Recomm
     traction_rule(overall, &mut recs);
     gearing_rule(overall, &mut recs);
     suspension_rule(overall, &mut recs);
+    damping_rule(overall, &mut recs);
 
     recs.sort_by_key(|r| std::cmp::Reverse(r.confidence));
     recs
@@ -306,6 +315,48 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     }
 }
 
+fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
+    let s = &overall.suspension;
+    for (axle, a, b) in [("front", s.fl, s.fr), ("rear", s.rl, s.rr)] {
+        let rev = (a.reversals_per_sec + b.reversals_per_sec) / 2.0;
+        let topped = a.topped_frac.max(b.topped_frac);
+        if rev >= UNDERDAMPED_REV_PER_S && topped >= UNDERDAMPED_TOPPED_FRAC {
+            recs.push(Recommendation {
+                area: "damping",
+                advice: format!(
+                    "increase {axle} damping (rebound especially): the {axle} wheels \
+                     oscillate and spend long stretches at full extension — bouncing \
+                     off the surface costs grip everywhere"
+                ),
+                evidence: vec![
+                    format!(
+                        "{axle} suspension reverses direction {rev:.1}x/s \
+                         (healthy tarmac baseline ~5.5-6)"
+                    ),
+                    format!("{axle} at full extension {:.1}% of the stint", topped * 100.0),
+                ],
+                confidence: Confidence::High,
+                implied: None,
+            });
+        } else if rev > 0.0 && rev <= OVERDAMPED_REV_PER_S {
+            recs.push(Recommendation {
+                area: "damping",
+                advice: format!(
+                    "consider softer {axle} damping: the {axle} suspension barely \
+                     articulates. On smooth tarmac this costs little; on bumpy or \
+                     off-road surfaces it will cost real grip"
+                ),
+                evidence: vec![format!(
+                    "{axle} suspension reverses direction only {rev:.1}x/s \
+                     (healthy tarmac baseline ~5.5-6)"
+                )],
+                confidence: Confidence::Low,
+                implied: None,
+            });
+        }
+    }
+}
+
 fn axle_temps(m: &StintMetrics) -> (f32, f32) {
     (
         (m.tire_temp.fl.avg + m.tire_temp.fr.avg) / 2.0,
@@ -466,6 +517,45 @@ mod tests {
         let recs = recommend(&overall, &[]);
         let susp = recs.iter().find(|r| r.area == "suspension").unwrap();
         assert!(susp.advice.contains("rear springs"), "{}", susp.advice);
+    }
+
+    fn susp(reversals: f32, topped: f32) -> crate::analysis::metrics::SuspensionStats {
+        crate::analysis::metrics::SuspensionStats {
+            avg: 0.4,
+            bottomed_frac: 0.0,
+            topped_frac: topped,
+            reversals_per_sec: reversals,
+        }
+    }
+
+    #[test]
+    fn underdamped_axle_gets_more_damping_advice() {
+        let mut overall = base_metrics();
+        overall.suspension = Corners { fl: susp(7.5, 0.18), fr: susp(7.4, 0.19), rl: susp(5.6, 0.03), rr: susp(5.5, 0.03) };
+        let recs = recommend(&overall, &[]);
+        let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
+        assert_eq!(damping.len(), 1, "only the front fires");
+        assert!(damping[0].advice.contains("increase front damping"), "{}", damping[0].advice);
+        assert_eq!(damping[0].confidence, Confidence::High);
+    }
+
+    #[test]
+    fn overdamped_axle_gets_low_confidence_softening_advice() {
+        let mut overall = base_metrics();
+        overall.suspension = Corners { fl: susp(2.1, 0.05), fr: susp(2.3, 0.06), rl: susp(2.0, 0.02), rr: susp(2.2, 0.02) };
+        let recs = recommend(&overall, &[]);
+        let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
+        assert_eq!(damping.len(), 2);
+        assert!(damping.iter().all(|r| r.confidence == Confidence::Low));
+        assert!(damping.iter().all(|r| r.advice.contains("softer")));
+    }
+
+    #[test]
+    fn healthy_damping_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.suspension = Corners { fl: susp(5.8, 0.03), fr: susp(5.6, 0.03), rl: susp(5.9, 0.01), rr: susp(5.5, 0.01) };
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "damping"));
     }
 
     #[test]
