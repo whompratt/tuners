@@ -18,6 +18,8 @@ const WHEELSPIN_MED: f32 = 0.08;
 const WHEELSPIN_HIGH: f32 = 0.15;
 /// Time on the rev limiter worth reacting to.
 const LIMITER_FRAC: f32 = 0.02;
+/// Top gear never reaching this fraction of redline = final drive too long.
+const UNUSED_REV_FRAC: f32 = 0.90;
 /// Suspension travel fractions.
 const BOTTOMING_FRAC: f32 = 0.03;
 const TOPPING_FRAC: f32 = 0.10;
@@ -208,27 +210,60 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
 }
 
 fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
-    if overall.gears.limiter_frac < LIMITER_FRAC {
+    let g = &overall.gears;
+    if g.limiter_frac >= LIMITER_FRAC {
+        let mut evidence = vec![format!(
+            "on the rev limiter {:.1}% of the stint (redline {:.0} rpm)",
+            g.limiter_frac * 100.0,
+            overall.redline,
+        )];
+        if let Some(rpm) = g.avg_upshift_rpm {
+            evidence.push(format!("average upshift at {rpm:.0} rpm"));
+        }
+        evidence.push(format!("top gear used: {}", g.top_gear));
+        recs.push(Recommendation {
+            area: "gearing",
+            advice: "lengthen the final drive (or the gears that hit the limiter) so the \
+                     engine stays below redline at the route's top speeds"
+                .into(),
+            evidence,
+            confidence: Confidence::Medium,
+            implied: None,
+        });
         return;
     }
-    let mut evidence = vec![format!(
-        "on the rev limiter {:.1}% of the stint (redline {:.0} rpm)",
-        overall.gears.limiter_frac * 100.0,
-        overall.redline,
-    )];
-    if let Some(rpm) = overall.gears.avg_upshift_rpm {
-        evidence.push(format!("average upshift at {rpm:.0} rpm"));
+
+    // Telemetry-only signal in the other direction: the top of the rev range goes
+    // unused, so the whole gear stack is longer than the route needs.
+    if g.top_gear == 0 || overall.redline <= 0.0 {
+        return;
     }
-    evidence.push(format!("top gear used: {}", overall.gears.top_gear));
-    recs.push(Recommendation {
-        area: "gearing",
-        advice: "lengthen the final drive (or the gears that hit the limiter) so the \
-                 engine stays below redline at the route's top speeds"
-            .into(),
-        evidence,
-        confidence: Confidence::Medium,
-        implied: None,
-    });
+    if g.top_gear_max_rpm < UNUSED_REV_FRAC * overall.redline {
+        let top_time = g
+            .time_frac
+            .last()
+            .map(|(_, f)| *f)
+            .unwrap_or(0.0);
+        recs.push(Recommendation {
+            area: "gearing",
+            advice: "shorten the final drive: the top of the rev range goes unused, so \
+                     every gear is longer than the route needs — shorter gearing gives \
+                     more acceleration at no top-speed cost. (Ignore if this route just \
+                     lacks a flat-out section.)"
+                .into(),
+            evidence: vec![format!(
+                "highest rpm in top gear ({}) was {:.0} — {:.0}% of the {:.0} redline, \
+                 with {:.1}% of the stint spent there and no limiter time",
+                g.top_gear,
+                g.top_gear_max_rpm,
+                100.0 * g.top_gear_max_rpm / overall.redline,
+                overall.redline,
+                top_time * 100.0,
+            )],
+            confidence: Confidence::Medium,
+            implied: None,
+        });
+    }
 }
 
 fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
@@ -392,8 +427,36 @@ mod tests {
     fn limiter_time_triggers_final_drive_advice() {
         let mut overall = base_metrics();
         overall.gears.limiter_frac = 0.05;
+        overall.gears.top_gear = 6;
+        overall.gears.top_gear_max_rpm = 7900.0;
         let recs = recommend(&overall, &[]);
-        assert!(recs.iter().any(|r| r.area == "gearing" && r.advice.contains("final drive")));
+        let gearing = recs.iter().find(|r| r.area == "gearing").unwrap();
+        assert!(gearing.advice.contains("lengthen the final drive"), "{}", gearing.advice);
+    }
+
+    /// The inverse gap caught on real data: no limiter time and the top gear never
+    /// gets near redline -> the whole stack is too long, shorten the final drive.
+    #[test]
+    fn unused_rev_range_suggests_shorter_final_drive() {
+        let mut overall = base_metrics();
+        overall.gears.limiter_frac = 0.0;
+        overall.gears.top_gear = 6;
+        overall.gears.top_gear_max_rpm = 6400.0; // 80% of the 8000 redline
+        overall.gears.time_frac = vec![(4, 0.5), (5, 0.4), (6, 0.03)];
+        let recs = recommend(&overall, &[]);
+        let gearing = recs.iter().find(|r| r.area == "gearing").unwrap();
+        assert!(gearing.advice.contains("shorten the final drive"), "{}", gearing.advice);
+        assert!(gearing.evidence[0].contains("80%"), "{}", gearing.evidence[0]);
+    }
+
+    #[test]
+    fn healthy_rev_usage_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.gears.limiter_frac = 0.0;
+        overall.gears.top_gear = 6;
+        overall.gears.top_gear_max_rpm = 7600.0; // 95% of redline, no clipping
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "gearing"));
     }
 
     #[test]

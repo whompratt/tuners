@@ -36,6 +36,9 @@ pub struct GearStats {
     /// (gear, fraction of stint samples), real forward gears only, ascending.
     pub time_frac: Vec<(u8, f32)>,
     pub top_gear: u8,
+    /// Highest rpm reached while in the top gear used — low vs redline means the
+    /// top of the rev range goes unused (final drive likely too long).
+    pub top_gear_max_rpm: f32,
     pub upshifts: u32,
     pub avg_upshift_rpm: Option<f32>,
     pub limiter_frac: f32,
@@ -95,6 +98,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut brake_samples = 0usize;
     let mut lockup = 0usize;
     let mut gear_counts = [0usize; MAX_REAL_GEAR as usize + 1]; // index = gear, [0] unused
+    let mut gear_max_rpm = [0.0f32; MAX_REAL_GEAR as usize + 1];
     let mut limiter = 0usize;
     let mut upshift_rpm_sum = 0.0f32;
     let mut upshifts = 0u32;
@@ -153,6 +157,8 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
 
         if (1..=MAX_REAL_GEAR).contains(&f.gear) {
             gear_counts[f.gear as usize] += 1;
+            gear_max_rpm[f.gear as usize] =
+                gear_max_rpm[f.gear as usize].max(f.current_engine_rpm);
             if let Some((prev, prev_rpm)) = prev_real_gear
                 && f.gear > prev
             {
@@ -211,6 +217,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         gears: GearStats {
             time_frac,
             top_gear,
+            top_gear_max_rpm: gear_max_rpm[top_gear as usize],
             upshifts,
             avg_upshift_rpm: (upshifts > 0).then(|| upshift_rpm_sum / upshifts as f32),
             limiter_frac: frac(limiter),

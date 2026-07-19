@@ -48,6 +48,22 @@ the journal notices when a repeated direction *stops paying* and tells you to
 revert half instead. The tool never needs your actual slider values, only the
 direction of each change.
 
+## Was it the tune, or was it you?
+
+Separating hardware gains from driver gains is genuinely hard, and the tool is
+explicit about it rather than pretending otherwise. Signals it uses (and you can
+read yourself):
+
+- **Balance moving with pace = driver.** Drivers adapt inputs toward the feel
+  they like, so per-axle grip usage creeping up while lap times fall usually
+  means growing commitment, not a hardware change. The advise trajectory shows
+  both so the pattern is visible.
+- **Balance moving without a matching pace change = hardware.** A setup change
+  that shifts the front/rear grip split while your pace and commitment stay flat
+  is the hardware talking.
+- **When in doubt: A-B-A**, and more sessions. Every extra session sharpens the
+  separation; single-pair comparisons are always partly confounded.
+
 ## Capturing sessions worth comparing
 
 - Rivals (or any restartable race mode) is the intended loop: identical conditions

@@ -124,6 +124,16 @@ field is optional and recommendation quality degrades gracefully:
   assists in use (ABS/TCS/stability — invisible in telemetry but they reshape what
   slip observations mean; e.g. with ABS, sustained braking slip is normal, not lockup).
 - **Nice-to-have**: engine position, body type.
+- **Manual IMO tire temps (future, for camber)**: telemetry only carries one temp
+  per tire, but the in-game HUD shows inner/middle/outer — the signal camber
+  advice needs, so the UI should accept them as manual input. Big caveat when
+  interpreting: **corner-direction asymmetry**. On a tight track with mostly
+  right-handers, the mostly-loaded side (front-left) develops a meaningful IMO
+  spread while the rarely-loaded side (front-right) reads "strange" — near-ideal
+  camber on the loaded side can coexist with odd numbers on the other, and
+  symmetric-looking targets would misadvise. IMO interpretation must weight by
+  which side actually got worked (turn-direction balance is derivable from
+  telemetry lateral-G history).
 
 With no manual input at all ("blind" = the empty form), the app still produces
 **directional deltas** with explanations ("drop front pressure ~1 psi"; "soften front

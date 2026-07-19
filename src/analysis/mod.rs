@@ -188,7 +188,9 @@ pub fn stint_seconds(frames: &[TimedFrame]) -> f32 {
 /// retry is the data that matters (leaderboard validity is irrelevant), so frames
 /// superseded by a rewind (race clock >= the resume point) are dropped and the
 /// retry is spliced on. Pauses are stitched over; restarts start a new segment.
-/// Segments shorter than `min_seconds` on the race clock are dropped.
+/// Segments shorter than `min_seconds` on the race clock are dropped, as are
+/// segments where the car never moves (sitting on track before ducking into the
+/// setup menu produces a race-on stint of pure zeroes).
 pub fn driving_segments(frames: &[TimedFrame], min_seconds: f32) -> Vec<Vec<TimedFrame>> {
     let mut segments: Vec<Vec<TimedFrame>> = Vec::new();
     let mut current: Vec<TimedFrame> = Vec::new();
@@ -220,9 +222,15 @@ pub fn driving_segments(frames: &[TimedFrame], min_seconds: f32) -> Vec<Vec<Time
     if !current.is_empty() {
         segments.push(current);
     }
-    segments.retain(|s| stint_seconds(s) >= min_seconds);
+    segments.retain(|s| {
+        stint_seconds(s) >= min_seconds
+            && s.iter().any(|f| f.frame.speed > MIN_DRIVING_SPEED_MPS)
+    });
     segments
 }
+
+/// A segment must exceed this speed at least once to count as driving (~11 mph).
+const MIN_DRIVING_SPEED_MPS: f32 = 5.0;
 
 #[cfg(test)]
 mod tests {
@@ -304,9 +312,31 @@ mod tests {
                 is_race_on: true,
                 current_race_time: race_t,
                 lap_number: lap,
+                speed: 50.0,
                 ..Default::default()
             },
         }
+    }
+
+    /// A race-on stint where the car never moves (waiting on track, then ducking
+    /// into the setup menu — which restarts the race clock) is not driving and
+    /// must not reach the user.
+    #[test]
+    fn stationary_stints_are_dropped() {
+        let mut frames: Vec<TimedFrame> = (0..300)
+            .map(|i| {
+                let mut tf = racing(i as f32 * 0.1, 0);
+                tf.frame.speed = 0.0;
+                tf
+            })
+            .collect();
+        frames.push(gap_frame());
+        // setup menu resets the race clock -> restart -> separate segment
+        frames.extend((0..300).map(|i| racing(0.5 + i as f32 * 0.1, 0)));
+
+        let segments = driving_segments(&frames, 5.0);
+        assert_eq!(segments.len(), 1, "only the moving stint survives");
+        assert!(segments[0].iter().all(|f| f.frame.speed > 0.0));
     }
 
     fn gap_frame() -> TimedFrame {
