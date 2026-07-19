@@ -13,6 +13,8 @@ USAGE:
                     decode a recorded session and print a summary (exits non-zero on errors)
   tuners analyze  <session-file>
                     per-stint tuning observations: tires, grip, suspension, gearing
+  tuners compare  <session-A> <session-B>
+                    tune A/B: lap-time delta, where it comes from, mistakes excluded
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60]
                     send synthetic telemetry (stand-in for the game)
 ";
@@ -37,6 +39,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "capture" => cmd_capture(&args[1..]),
         "replay" => cmd_replay(&args[1..]),
         "analyze" => cmd_analyze(&args[1..]),
+        "compare" => cmd_compare(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
@@ -99,6 +102,22 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
             println!("{}", analysis::report::render_laps(&laps));
         }
     }
+    Ok(())
+}
+
+fn cmd_compare(args: &[String]) -> Result<(), String> {
+    let [path_a, path_b] = args else {
+        return Err("usage: tuners compare <session-A> <session-B>".into());
+    };
+    let load = |path: &String| -> Result<_, String> {
+        let session = analysis::Session::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
+        analysis::profile::session_profile(&session.frames).map_err(|e| format!("{path}: {e}"))
+    };
+    let a = load(path_a)?;
+    let b = load(path_b)?;
+    let cmp = analysis::compare::compare(&a, &b)?;
+    println!("A = {path_a}\nB = {path_b}\n");
+    print!("{}", analysis::compare::render(&a, &b, &cmp));
     Ok(())
 }
 

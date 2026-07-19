@@ -1,7 +1,9 @@
 //! Session analysis: recorded frames → tuning-relevant observations.
 //! Metrics are measured facts only; prescriptive advice lives elsewhere.
 
+pub mod compare;
 pub mod metrics;
+pub mod profile;
 pub mod report;
 
 use crate::packet::{self, TelemetryFrame};

@@ -104,7 +104,8 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         writeln!(out, "    wheelspin on throttle: {}", pct(w)).unwrap();
     }
     if let Some(l) = m.lockup_frac {
-        writeln!(out, "    lockup under braking:  {}", pct(l)).unwrap();
+        // With ABS on, sustained slip at the limit is normal threshold braking.
+        writeln!(out, "    braking at/over slip limit: {}", pct(l)).unwrap();
     }
     match m.understeer_index {
         Some(idx) => writeln!(

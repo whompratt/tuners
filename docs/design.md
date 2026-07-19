@@ -94,7 +94,9 @@ field is optional and recommendation quality degrades gracefully:
   redline, observed peak power/torque, gear count and effective ratios, EV heuristic
   via cylinder count. Pre-fill these; let the user correct.
 - **High-value manual inputs**: tuning goal, weight, front weight %, tire compound,
-  suspension type, current tune values, slider limits (springs, ride height, aero).
+  suspension type, current tune values, slider limits (springs, ride height, aero),
+  assists in use (ABS/TCS/stability — invisible in telemetry but they reshape what
+  slip observations mean; e.g. with ABS, sustained braking slip is normal, not lockup).
 - **Nice-to-have**: engine position, body type.
 
 With no manual input at all ("blind" = the empty form), the app still produces
