@@ -48,6 +48,11 @@
     border: 1px solid var(--border); border-radius: 6px; font: 13px system-ui;
   }
   .session .car { color: var(--accent); font-size: 12px; }
+  .sector {
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px;
+    font-size: 12px;
+  }
+  .sector .num { font-variant-numeric: tabular-nums; color: var(--ink); }
   main { flex: 1; padding: 16px 24px; overflow: auto; }
   .panel {
     background: var(--surface); border: 1px solid var(--border);
@@ -81,9 +86,10 @@
     <div id="compare-panel" style="display:none" class="panel">
       <h2 id="compare-title">A/B comparison</h2>
       <div id="compare-summary" style="font-size:12px;color:var(--ink-2);margin-bottom:8px"></div>
+      <div id="compare-sectors" class="legend-row"></div>
       <div id="compare-legend" class="legend-row"></div>
       <div id="compare-wrap" style="position:relative">
-        <canvas id="compare-chart" height="380"></canvas>
+        <canvas id="compare-chart" height="530"></canvas>
         <div id="compare-tip" class="tip"></div>
       </div>
     </div>
@@ -197,39 +203,71 @@ async function updateCompare() {
     `<span><span class="chip" style="background:${c}"></span>${tag}: ${s.file.split('/').pop()} — ` +
     `best <span class="num">${fmtLap(s.best)}</span>, ideal <span class="num">${fmtLap(s.ideal)}</span> (${s.laps} laps)</span>`
   ).join('');
+  renderSectors();
   drawCompare();
+}
+
+// Garage61-style sector gaps: thirds of the route, A's ideal sector time plus
+// B's delta, tinted by the gainer's identity color with intensity ~ magnitude.
+const N_SECTORS = 3;
+function renderSectors() {
+  const bins = cmpData.delta.length;
+  const per = Math.ceil(bins / N_SECTORS);
+  const sectors = [];
+  for (let s = 0; s < N_SECTORS; s++) {
+    const lo = s * per, hi = Math.min((s + 1) * per, bins);
+    sectors.push({
+      aTime: cmpData.timesA.slice(lo, hi).reduce((x, y) => x + y, 0),
+      delta: cmpData.delta.slice(lo, hi).reduce((x, y) => x + y, 0),
+    });
+  }
+  const maxAbs = Math.max(0.01, ...sectors.map(s => Math.abs(s.delta)));
+  document.getElementById('compare-sectors').innerHTML = sectors.map((s, i) => {
+    const gain = s.delta < 0 ? 'B' : 'A';                 // negative: B quicker
+    const color = s.delta < 0 ? '25,158,112' : '57,135,229';
+    const alpha = 0.12 + 0.45 * (Math.abs(s.delta) / maxAbs);
+    return `<span class="sector" style="background:rgba(${color},${alpha.toFixed(2)})">` +
+      `S${i + 1} · A <span class="num">${s.aTime.toFixed(3)}s</span> · ` +
+      `${gain} <span class="num">−${Math.abs(s.delta).toFixed(3)}s</span></span>`;
+  }).join('');
 }
 
 const SEG_BINS = 25; // 250m segments for the delta bars
 function compareLayout() {
   const canvas = document.getElementById('compare-chart');
   const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth, cssH = 380;
+  const cssW = canvas.clientWidth, cssH = 530;
   canvas.width = cssW * dpr; canvas.height = cssH * dpr;
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const pad = { l: 46, r: 12, t: 8, b: 24 };
   const bins = cmpData.delta.length;
-  const speedH = 220, gapH = 26;
-  const deltaH = cssH - pad.t - speedH - gapH - pad.b;
+  const speedH = 210, gapH = 24, barsH = 80, cumH = 140;
   const segs = [];
   for (let s = 0; s < bins; s += SEG_BINS) {
     segs.push(cmpData.delta.slice(s, s + SEG_BINS).reduce((x, y) => x + y, 0));
   }
-  return { ctx, cssW, cssH, pad, bins, speedH, gapH, deltaH,
+  const cum = [];
+  let acc = 0;
+  for (const d of cmpData.delta) { acc += d; cum.push(acc); }
+  return { ctx, cssW, cssH, pad, bins, speedH, gapH, barsH, cumH,
     plotW: cssW - pad.l - pad.r,
     yMax: Math.ceil(Math.max(...cmpData.speedsA, ...cmpData.speedsB) * MPH / 20) * 20,
-    segs, segMax: Math.max(0.05, ...segs.map(Math.abs)) };
+    segs, segMax: Math.max(0.05, ...segs.map(Math.abs)),
+    cum, cumMax: Math.max(0.1, ...cum.map(Math.abs)) };
 }
 
 function drawCompare(hoverBin) {
   const L = compareLayout();
-  const { ctx, cssW, pad, bins, plotW, yMax, speedH, gapH, deltaH, segs, segMax } = L;
+  const { ctx, cssW, pad, bins, plotW, yMax, speedH, gapH, barsH, cumH, segs, segMax, cum, cumMax } = L;
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const x = bin => pad.l + (bin / (bins - 1)) * plotW;
   const ySpeed = mph => pad.t + speedH - (mph / yMax) * speedH;
-  const delta0 = pad.t + speedH + gapH + deltaH / 2;
-  const yDelta = d => delta0 - (d / segMax) * (deltaH / 2);
+  const bars0 = pad.t + speedH + gapH + barsH / 2;
+  const yBars = d => bars0 - (d / segMax) * (barsH / 2);
+  const cumTop = pad.t + speedH + gapH + barsH + gapH;
+  const cum0 = cumTop + cumH / 2;
+  const yCum = d => cum0 - (-d / cumMax) * (cumH / 2); // up = B ahead (delta sum negative)
   ctx.clearRect(0, 0, cssW, L.cssH);
   ctx.font = '11px system-ui, sans-serif';
 
@@ -250,22 +288,45 @@ function drawCompare(hoverBin) {
     ctx.stroke();
   });
 
-  // delta bars: one per 250m, colored by whichever side gains there
+  // Per-250m delta bars, in the color of the FASTER setup through that segment.
   ctx.strokeStyle = css('--baseline');
-  ctx.beginPath(); ctx.moveTo(pad.l, delta0); ctx.lineTo(cssW - pad.r, delta0); ctx.stroke();
-  ctx.fillStyle = css('--muted'); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  ctx.fillText(`+${segMax.toFixed(2)}s`, pad.l - 8, yDelta(segMax));
-  ctx.fillText(`-${segMax.toFixed(2)}s`, pad.l - 8, yDelta(-segMax));
+  ctx.beginPath(); ctx.moveTo(pad.l, bars0); ctx.lineTo(cssW - pad.r, bars0); ctx.stroke();
   segs.forEach((d, i) => {
     const x0 = x(i * SEG_BINS), x1 = x(Math.min((i + 1) * SEG_BINS, bins - 1));
-    ctx.fillStyle = d < 0 ? '#199e70' : '#3987e5'; // negative: B faster
-    const y0 = yDelta(Math.max(d, 0)), y1 = yDelta(Math.min(d, 0));
+    ctx.fillStyle = d < 0 ? '#199e70' : '#3987e5'; // negative: B took less time
+    const y0 = yBars(Math.max(d, 0)), y1 = yBars(Math.min(d, 0));
     ctx.fillRect(x0 + 1, y0, Math.max(1, x1 - x0 - 2), Math.max(1, y1 - y0));
   });
   ctx.fillStyle = css('--muted'); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText('Δ per 250 m (bar colored by who gains)', pad.l, pad.t + speedH + gapH / 2);
+  ctx.fillText('Δ per 250 m — bar in the color of the faster setup there', pad.l, pad.t + speedH + gapH / 2);
+  ctx.textAlign = 'right';
+  ctx.fillText(`±${segMax.toFixed(2)}s`, pad.l - 8, bars0);
 
-  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  // Cumulative gap: A is the flat reference line; the curve is B relative to it
+  // (above the line = B ahead). Fill tinted by whoever is ahead.
+  ctx.fillStyle = css('--muted'); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('cumulative gap — A flat, curve = B (above line: B ahead)', pad.l, cumTop - gapH / 2);
+  ctx.strokeStyle = '#3987e5'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.l, cum0); ctx.lineTo(cssW - pad.r, cum0); ctx.stroke();
+  ctx.fillStyle = css('--muted'); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.fillText(`+${cumMax.toFixed(2)}s`, pad.l - 8, yCum(-cumMax));
+  ctx.fillText(`-${cumMax.toFixed(2)}s`, pad.l - 8, yCum(cumMax));
+  ctx.beginPath();
+  cum.forEach((d, b) => b ? ctx.lineTo(x(b), yCum(d)) : ctx.moveTo(x(b), yCum(d)));
+  ctx.strokeStyle = '#199e70'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+  // sign-split fill between curve and reference
+  for (const sign of [1, -1]) {
+    ctx.beginPath(); ctx.moveTo(x(0), cum0);
+    cum.forEach((d, b) => {
+      const v = sign > 0 ? Math.min(d, 0) : Math.max(d, 0); // d<0 = B ahead
+      ctx.lineTo(x(b), yCum(v));
+    });
+    ctx.lineTo(x(bins - 1), cum0); ctx.closePath();
+    ctx.fillStyle = sign > 0 ? 'rgba(25,158,112,0.18)' : 'rgba(57,135,229,0.18)';
+    ctx.fill();
+  }
+
+  ctx.fillStyle = css('--muted'); ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   const kmMax = bins * cmpData.binMeters / 1000;
   for (let km = 0; km <= kmMax; km += 1) {
     ctx.fillText(`${km} km`, x(km * 1000 / cmpData.binMeters), L.cssH - pad.b + 6);
@@ -285,13 +346,16 @@ document.getElementById('compare-wrap').addEventListener('mousemove', ev => {
   if (px < pad.l || px > pad.l + plotW) { drawCompare(); cmpTip(null); return; }
   const bin = Math.round(((px - pad.l) / plotW) * (bins - 1));
   drawCompare(bin);
-  const seg = segs[Math.floor(bin / SEG_BINS)] ?? 0;
+  const { segs: segsNow, cum } = compareLayout();
+  const seg = segsNow[Math.floor(bin / SEG_BINS)] ?? 0;
+  const gap = cum[bin] ?? 0; // negative = B ahead
   const tip = document.getElementById('compare-tip');
   tip.innerHTML =
     `<div class="t-head">${(bin * cmpData.binMeters / 1000).toFixed(2)} km</div>` +
     `<div><span class="chip" style="background:#3987e5"></span>A <span class="num">${(cmpData.speedsA[bin] * MPH).toFixed(0)} mph</span></div>` +
     `<div><span class="chip" style="background:#199e70"></span>B <span class="num">${(cmpData.speedsB[bin] * MPH).toFixed(0)} mph</span></div>` +
-    `<div>this 250 m: <span class="num">${seg < 0 ? 'B' : 'A'} +${Math.abs(seg).toFixed(2)}s</span></div>`;
+    `<div>this 250 m: <span class="num">${seg < 0 ? 'B' : 'A'} quicker by ${Math.abs(seg).toFixed(2)}s</span></div>` +
+    `<div>gap so far: <span class="num">${gap < 0 ? 'B' : 'A'} ahead by ${Math.abs(gap).toFixed(2)}s</span></div>`;
   tip.style.display = 'block';
   const wrap = document.getElementById('compare-wrap').getBoundingClientRect();
   tip.style.left = px > wrap.width - 200 ? `${px - tip.offsetWidth - 12}px` : `${px + 12}px`;

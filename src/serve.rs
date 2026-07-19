@@ -168,13 +168,18 @@ fn compare_json(a_path: &Path, b_path: &Path) -> Result<String, String> {
         )
     };
     let delta: Vec<String> = cmp.bin_delta_s.iter().map(|d| format!("{d:.4}")).collect();
+    let times_a: Vec<String> = pa.composite.bins[..shared]
+        .iter()
+        .map(|bin| format!("{:.4}", bin.time_s))
+        .collect();
     Ok(format!(
-        "{{\"binMeters\":{:.0},\"a\":{},\"b\":{},\"speedsA\":[{}],\"speedsB\":[{}],\"delta\":[{}],\"unequalLaps\":{},\"carMismatch\":{}}}",
+        "{{\"binMeters\":{:.0},\"a\":{},\"b\":{},\"speedsA\":[{}],\"speedsB\":[{}],\"timesA\":[{}],\"delta\":[{}],\"unequalLaps\":{},\"carMismatch\":{}}}",
         crate::analysis::profile::BIN_METERS,
         side(a_path, &pa),
         side(b_path, &pb),
         speeds(&pa),
         speeds(&pb),
+        times_a.join(","),
         delta.join(","),
         pa.laps.len() != pb.laps.len(),
         cmp.car_mismatch,
