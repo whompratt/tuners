@@ -87,7 +87,6 @@
     align-self: center;
   }
   #live-panel:not(.stale) .live-head .dot { background: #199e70; }
-  .live-row { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: flex-end; }
   .readout .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
   .readout .value { font-size: 40px; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
   .readout .unit { font-size: 14px; color: var(--muted); }
@@ -99,7 +98,14 @@
   }
   .temps .cold { color: #3987e5; } .temps .hot { color: #e66767; }
   .live-body { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 36px; }
-  .live-body .live-row { flex: 1; min-width: 380px; }
+  .live-grid {
+    flex: 1; min-width: 380px; align-items: center;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px 20px;
+  }
+  .readout .sub { font-size: 16px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .readout .trow { font-size: 18px; color: var(--muted); line-height: 1.6; }
+  .readout .trow .num { font-size: 21px; color: var(--ink); font-variant-numeric: tabular-nums; }
   #live-quality {
     flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px;
     border: 1px solid var(--qcolor); border-radius: 10px; padding: 14px 22px 12px;
@@ -151,20 +157,19 @@
         <div id="q-label">confidence</div>
         <div id="q-tip" class="tip"></div>
       </div>
-      <div class="live-row">
+      <div class="live-grid">
         <div class="readout"><div class="label">Speed</div>
           <div class="value"><span id="lv-speed">–</span> <span class="unit">mph</span></div></div>
         <div class="readout"><div class="label">Gear</div>
-          <div class="value" id="lv-gear">–</div></div>
-        <div class="readout"><div class="label">RPM</div>
-          <div class="value"><span id="lv-rpm">–</span> <span class="unit" id="lv-maxrpm"></span></div></div>
-        <div class="readout minor"><div class="label">Lap</div>
-          <div class="value" id="lv-lap">–</div></div>
-        <div class="readout minor"><div class="label">Last</div>
-          <div class="value" id="lv-last">–</div></div>
-        <div class="readout minor"><div class="label">Best</div>
-          <div class="value" id="lv-best">–</div></div>
-        <div class="readout minor"><div class="label">Fuel</div>
+          <div class="value" id="lv-gear">–</div>
+          <div class="sub"><span id="lv-rpm">–</span><span id="lv-maxrpm"></span> rpm</div></div>
+        <div class="readout"><div class="label">Lap</div>
+          <div class="value" id="lv-lap">–</div>
+          <div class="sub" id="lv-laptime"></div></div>
+        <div class="readout"><div class="label">Lap times</div>
+          <div class="trow">last <span class="num" id="lv-last">–</span></div>
+          <div class="trow">best <span class="num" id="lv-best">–</span></div></div>
+        <div class="readout"><div class="label">Fuel</div>
           <div class="value" id="lv-fuel">–</div></div>
         <div class="readout"><div class="label">Tires °F</div>
           <div class="temps" id="lv-temps"><div>–</div><div>–</div><div>–</div><div>–</div></div></div>
@@ -611,11 +616,15 @@ live.addEventListener('state', ev => {
   const f = s.frame;
   if (!f) return;
   const set = (id, v) => document.getElementById(id).textContent = v;
+  const fmtClock = s => s >= 60
+    ? `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`
+    : `${s.toFixed(1)}s`;
   set('lv-speed', (f.speedMps * MPH).toFixed(0));
   set('lv-gear', f.gear === 0 ? 'R' : f.gear === 11 ? '–' : f.gear); // 0 = reverse, 11 = transient glitch
   set('lv-rpm', f.rpm.toFixed(0));
-  set('lv-maxrpm', `/ ${f.maxRpm.toFixed(0)}`);
-  set('lv-lap', `${f.lapNumber + 1} · ${f.currentLapS.toFixed(1)}s`);
+  set('lv-maxrpm', ` / ${f.maxRpm.toFixed(0)}`);
+  set('lv-lap', f.lapNumber + 1);
+  set('lv-laptime', fmtClock(f.currentLapS));
   set('lv-last', f.lastLapS > 0 ? fmtLap(f.lastLapS) : '–');
   set('lv-best', f.bestLapS > 0 ? fmtLap(f.bestLapS) : '–');
   set('lv-fuel', `${(f.fuel * 100).toFixed(0)}%`);
@@ -636,7 +645,10 @@ live.addEventListener('quality', ev => {
   const band = q ? q.band : 'low';
   document.getElementById('live-quality').className =
     band === 'good' ? 'q-good' : band === 'ok' ? 'q-ok' : '';
-  document.getElementById('q-fill').setAttribute('stroke-dasharray', `${ARC * pct / 100} 999`);
+  const fill = document.getElementById('q-fill');
+  fill.setAttribute('stroke-dasharray', `${ARC * pct / 100} 999`);
+  // At 0% the rounded line cap would still draw a dot at the arc start.
+  fill.style.visibility = pct > 0 ? 'visible' : 'hidden';
   document.getElementById('q-pct').textContent = q ? `${pct}%` : '–';
   document.getElementById('q-label').textContent = 'confidence — ' + {
     good: 'enough for A/B',
