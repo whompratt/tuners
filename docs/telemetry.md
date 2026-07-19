@@ -72,13 +72,24 @@ Wheel quads are ordered FL, FR, RL, RR.
 FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (after
 `NumCylinders`); lacks `TireWear` and `TrackOrdinal`.
 
-## To verify against a real capture
+## Verified against a real capture (2026-07-19, `fixtures/real-01.ftel`)
 
-- **Declared fields sum to 323 bytes, but the stated total is 324** — expect one
-  trailing undocumented byte (the FH4/FH5 format had the same quirk). Decoder should
-  accept 324-byte datagrams and log, not crash, on other sizes.
-- Byte order (assumed little-endian) and tire temp units (assumed °F).
-- Whether `NumCylinders == 0` reliably identifies EVs.
+- Every datagram is exactly **324 bytes**; the undocumented trailing byte (offset 323)
+  is always **0** — treat as padding.
+- **Little-endian** confirmed; **tire temps are °F** (~200 peak under load).
+- **The official "data is only sent while driving" note is wrong in practice**: the
+  game keeps streaming packets in menus/pauses with `IsRaceOn = 0` and everything
+  except `TimestampMS` zeroed. Filter on `IsRaceOn`, not on packet presence.
+- **`Gear` = 0 is reverse, and 11 appears transiently mid-drive** (a handful of
+  frames, likely a neutral/mid-shift sentinel) — analysis must not treat 11 as a
+  real gear.
+- Send rate matches frame rate as documented (~168 Hz observed on a 165 Hz setup).
+- Setup gotcha: the game only starts honouring a newly configured Data Out target
+  after a **full game restart**.
+
+## Still to verify
+
+- Whether `NumCylinders == 0` reliably identifies EVs (needs a capture in an EV).
 
 ## What the packet gives us for free (no user input needed)
 
