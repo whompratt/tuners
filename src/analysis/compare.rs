@@ -73,6 +73,15 @@ pub fn render(a: &SessionProfile, b: &SessionProfile, cmp: &Comparison) -> Strin
         .unwrap();
     }
 
+    if a.laps.len() != b.laps.len() {
+        writeln!(
+            out,
+            "note: unequal lap counts — the session with more laps gives its ideal \
+             more material, biasing the ideal comparison in its favor",
+        )
+        .unwrap();
+    }
+
     let verdict = |d: f32, label: &str| {
         if d.abs() < 0.01 {
             format!("{label}: even")

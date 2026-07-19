@@ -35,6 +35,10 @@ Two things worth knowing:
   every session, lap times, and live distance data.
 - 3+ flying laps per session give the ideal-lap splicer real material; the out lap
   is detected and excluded automatically on circuits.
+- **Drive a similar number of laps in sessions you'll compare**: the session with
+  more laps gives its ideal more material, biasing the ideal-vs-ideal verdict in
+  its favor (`compare` warns when counts differ). Adjacent segments all moving the
+  same way is a stronger setup signal than the ideal total.
 - When A/B-testing a tune change, remember the driver-learning confounder: you get
   faster at a track regardless of the tune. For a verdict you trust, re-run tune A
   afterwards (A-B-A) — if it matches the first A run, the delta was the tune.
