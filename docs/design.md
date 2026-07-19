@@ -83,6 +83,17 @@ no flying laps at all, so every run is a standing start and runs compare only to
 other runs of the same route). Cross-session comparison — same car/track, tune A vs
 tune B — is where recommendations get their evidence.
 
+**The driver-learning confounder.** Across an iterative tuning session the driver
+learns the car and track and gets faster regardless of the tune, so raw
+best-lap-vs-best-lap deltas systematically flatter whichever tune was driven later.
+The spliced ideal partially controls for this (it extracts the best *executed*
+version of each section, discounting one-off mistakes and inconsistency), but it
+cannot remove it: learning also raises the ceiling the ideal converges to. When a
+verdict matters, the honest protocol is **A-B-A**: re-run the original tune after
+the change; if A' ≈ A the delta was the tune, if A' ≈ B it was the driver.
+Recommendations built on A/B evidence should state this caveat when sessions were
+driven back-to-back on a fresh track/car combo.
+
 ## Tune input model
 
 The app iterates on the *user's existing tune* rather than generating one from scratch
