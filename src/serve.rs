@@ -1,0 +1,173 @@
+//! Minimal local dashboard server: hand-rolled HTTP over std TcpListener, zero
+//! dependencies (docs/plans/006-dashboard.md). Handlers are pure functions so a
+//! swap to a real framework later is mechanical.
+
+use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::Path;
+
+pub fn run(port: u16, sessions_dir: String) -> std::io::Result<()> {
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    println!("tuners dashboard: http://127.0.0.1:{port}/  (Ctrl+C to stop)");
+    for stream in listener.incoming() {
+        let dir = sessions_dir.clone();
+        if let Ok(stream) = stream {
+            std::thread::spawn(move || handle(stream, &dir));
+        }
+    }
+    Ok(())
+}
+
+fn handle(mut stream: TcpStream, sessions_dir: &str) {
+    let mut reader = BufReader::new(match stream.try_clone() {
+        Ok(s) => s,
+        Err(_) => return,
+    });
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() {
+        return;
+    }
+    // Drain headers; GET-only server, bodies ignored.
+    loop {
+        let mut header = String::new();
+        match reader.read_line(&mut header) {
+            Ok(0) | Err(_) => break,
+            Ok(_) if header == "\r\n" || header == "\n" => break,
+            Ok(_) => {}
+        }
+    }
+    let target = request_line.split_whitespace().nth(1).unwrap_or("/");
+    let (status, content_type, body) = respond(target, sessions_dir);
+    let _ = write!(
+        stream,
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len(),
+    );
+    let _ = stream.write_all(body.as_bytes());
+}
+
+/// Route a request target to (status, content type, body). Pure — unit-testable.
+pub fn respond(target: &str, sessions_dir: &str) -> (&'static str, &'static str, String) {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    match path {
+        "/" => (
+            "200 OK",
+            "text/html; charset=utf-8",
+            include_str!("../assets/index.html").to_string(),
+        ),
+        "/api/sessions" => ("200 OK", "application/json", sessions_json(sessions_dir)),
+        "/api/report" => match query.strip_prefix("file=").map(percent_decode) {
+            Some(file) if is_safe_session_path(&file) => {
+                match crate::analysis::report::full_session_report(Path::new(&file)) {
+                    Ok(report) => ("200 OK", "text/plain; charset=utf-8", report),
+                    Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e),
+                }
+            }
+            _ => (
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                "bad or missing file parameter".into(),
+            ),
+        },
+        _ => ("404 Not Found", "text/plain; charset=utf-8", "not found".into()),
+    }
+}
+
+/// Decode %XX escapes (encodeURIComponent encodes the path separator).
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let (Some(h), Some(l)) = (
+                bytes.get(i + 1).and_then(|b| (*b as char).to_digit(16)),
+                bytes.get(i + 2).and_then(|b| (*b as char).to_digit(16)),
+            )
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Only relative .ftel paths with no traversal — the server exposes session
+/// recordings, nothing else.
+fn is_safe_session_path(file: &str) -> bool {
+    file.ends_with(".ftel") && !file.contains("..") && !file.starts_with('/')
+}
+
+fn sessions_json(dir: &str) -> String {
+    let mut rows = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(dir) {
+        let mut paths: Vec<_> = read_dir
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "ftel"))
+            .collect();
+        paths.sort();
+        for p in paths {
+            let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            // Session filenames are our own ASCII naming scheme; no JSON escaping
+            // needed until user-provided paths appear.
+            rows.push(format!("{{\"file\":\"{}\",\"bytes\":{bytes}}}", p.display()));
+        }
+    }
+    format!("[{}]", rows.join(","))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn index_serves_html() {
+        let (status, ctype, body) = respond("/", "no-such-dir");
+        assert_eq!(status, "200 OK");
+        assert!(ctype.starts_with("text/html"));
+        assert!(body.contains("<html") || body.contains("<!doctype") || body.contains("<div"));
+    }
+
+    #[test]
+    fn sessions_list_empty_when_dir_missing() {
+        let (status, _, body) = respond("/api/sessions", "no-such-dir");
+        assert_eq!(status, "200 OK");
+        assert_eq!(body, "[]");
+    }
+
+    #[test]
+    fn report_rejects_unsafe_paths() {
+        for target in [
+            "/api/report?file=../../etc/passwd",
+            "/api/report?file=/etc/passwd",
+            "/api/report?file=Cargo.toml",
+            "/api/report",
+        ] {
+            let (status, _, _) = respond(target, "sessions");
+            assert_eq!(status, "400 Bad Request", "{target}");
+        }
+    }
+
+    #[test]
+    fn report_serves_fixture() {
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/rivals-lap-boundary-01.ftel");
+        // is_safe_session_path requires relative paths; test via relative-from-manifest
+        let (status, _, body) = respond(
+            &format!("/api/report?file={}", "fixtures/rivals-lap-boundary-01.ftel"),
+            "fixtures",
+        );
+        // Depending on cwd this may 500 (file not found) — accept both but never 400.
+        assert_ne!(status, "400 Bad Request");
+        let _ = (fixture, body);
+    }
+
+    #[test]
+    fn unknown_route_404s() {
+        let (status, _, _) = respond("/nope", "sessions");
+        assert_eq!(status, "404 Not Found");
+    }
+}

@@ -20,6 +20,8 @@ USAGE:
   tuners advise   [journal-file]
                     history-aware advice from a tuning journal (default tune-journal.txt);
                     journal lines: <session-file> | <change since previous session>
+  tuners serve    [--port 8080] [--sessions sessions]
+                    local web dashboard: session list + reports in the browser
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60]
                     send synthetic telemetry (stand-in for the game)
 ";
@@ -47,6 +49,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "compare" => cmd_compare(&args[1..]),
         "recommend" => cmd_recommend(&args[1..]),
         "advise" => cmd_advise(&args[1..]),
+        "serve" => cmd_serve(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
@@ -89,40 +92,7 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
     let [path] = args else {
         return Err("usage: tuners analyze <session-file>".into());
     };
-    let session = analysis::Session::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
-    if session.decode_errors > 0 {
-        eprintln!("warning: {} packets failed to decode", session.decode_errors);
-    }
-    let segments = analysis::driving_segments(&session.frames, 5.0);
-    if segments.is_empty() {
-        return Err(format!(
-            "no driving stints of 5s or longer found ({} frames total)",
-            session.frames.len()
-        ));
-    }
-    println!("{path}: {} stint(s)\n", segments.len());
-    for gap in analysis::classify_gaps(&session.frames) {
-        match gap.kind {
-            analysis::GapKind::Rewind { race_t_before, race_t_after } => println!(
-                "note: rewind on lap {} (race clock {:.1}s -> {:.1}s) — superseded \
-                 driving erased, the kept retry counts",
-                gap.resume_lap + 1,
-                race_t_before,
-                race_t_after,
-            ),
-            analysis::GapKind::Restart => println!("note: session restart detected"),
-            analysis::GapKind::Pause => {}
-        }
-    }
-    println!();
-    for (i, stint) in segments.iter().enumerate() {
-        let metrics = analysis::metrics::stint_metrics(stint);
-        println!("{}", analysis::report::render_stint(i + 1, &metrics));
-        let laps = analysis::split_laps(stint);
-        if laps.len() > 1 {
-            println!("{}", analysis::report::render_laps(&laps));
-        }
-    }
+    print!("{}", analysis::report::full_session_report(path.as_ref())?);
     Ok(())
 }
 
@@ -157,6 +127,20 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
         ))
     );
     Ok(())
+}
+
+fn cmd_serve(args: &[String]) -> Result<(), String> {
+    let mut port: u16 = 8080;
+    let mut sessions_dir = "sessions".to_string();
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--port" => port = parse(flag, it.next())?,
+            "--sessions" => sessions_dir = value(flag, it.next())?.clone(),
+            other => return Err(format!("unknown flag '{other}' for serve")),
+        }
+    }
+    tuners::serve::run(port, sessions_dir).map_err(|e| e.to_string())
 }
 
 fn cmd_advise(args: &[String]) -> Result<(), String> {

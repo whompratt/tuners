@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tuners</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --text: #d6dae2; --dim: #8b93a3;
+    --accent: #e8a33d; --border: #2a2e38;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+    display: flex; height: 100vh;
+  }
+  aside {
+    width: 340px; min-width: 260px; border-right: 1px solid var(--border);
+    padding: 16px; overflow-y: auto;
+  }
+  aside h1 { font-size: 16px; color: var(--accent); margin-bottom: 12px; }
+  aside h1 span { color: var(--dim); font-weight: normal; font-size: 12px; }
+  .session {
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    margin-bottom: 8px; cursor: pointer; word-break: break-all;
+  }
+  .session:hover { border-color: var(--accent); }
+  .session.active { border-color: var(--accent); background: var(--panel); }
+  .session .size { color: var(--dim); font-size: 12px; }
+  main { flex: 1; padding: 16px 24px; overflow: auto; }
+  pre { white-space: pre-wrap; }
+  .placeholder { color: var(--dim); }
+</style>
+</head>
+<body>
+  <aside>
+    <h1>tuners <span>FH6 tuning assistant</span></h1>
+    <div id="sessions"></div>
+  </aside>
+  <main>
+    <pre id="report" class="placeholder">select a session</pre>
+  </main>
+<script>
+async function load() {
+  const list = document.getElementById('sessions');
+  const sessions = await fetch('/api/sessions').then(r => r.json());
+  if (sessions.length === 0) {
+    list.innerHTML = '<div class="placeholder">no .ftel sessions found — record one with `tuners capture`</div>';
+    return;
+  }
+  for (const s of sessions.reverse()) {
+    const el = document.createElement('div');
+    el.className = 'session';
+    const name = s.file.split('/').pop();
+    el.innerHTML = `${name}<br><span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>`;
+    el.onclick = () => show(s.file, el);
+    list.appendChild(el);
+  }
+}
+async function show(file, el) {
+  document.querySelectorAll('.session').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+  const report = document.getElementById('report');
+  report.classList.remove('placeholder');
+  report.textContent = 'analyzing…';
+  report.textContent = await fetch(`/api/report?file=${encodeURIComponent(file)}`).then(r => r.text());
+}
+load();
+</script>
+</body>
+</html>

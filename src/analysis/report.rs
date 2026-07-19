@@ -1,10 +1,55 @@
 //! Text rendering of stint metrics. Observations only — no advice.
 
 use super::metrics::{stint_metrics, StintMetrics};
-use super::LapSlice;
+use super::{classify_gaps, driving_segments, split_laps, GapKind, LapSlice, Session};
 use crate::packet::{class_name, drivetrain_name};
 use crate::util::{format_lap_time, MPS_TO_MPH};
 use std::fmt::Write;
+use std::path::Path;
+
+/// The complete text report for a session file: rewind/restart notes, per-stint
+/// observations, lap tables. Shared by the CLI (`tuners analyze`) and the
+/// dashboard's report endpoint.
+pub fn full_session_report(path: &Path) -> Result<String, String> {
+    let session = Session::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut out = String::new();
+    if session.decode_errors > 0 {
+        writeln!(out, "warning: {} packets failed to decode", session.decode_errors).unwrap();
+    }
+    let segments = driving_segments(&session.frames, 5.0);
+    if segments.is_empty() {
+        return Err(format!(
+            "no driving stints of 5s or longer found ({} frames total)",
+            session.frames.len()
+        ));
+    }
+    writeln!(out, "{}: {} stint(s)\n", path.display(), segments.len()).unwrap();
+    for gap in classify_gaps(&session.frames) {
+        match gap.kind {
+            GapKind::Rewind { race_t_before, race_t_after } => writeln!(
+                out,
+                "note: rewind on lap {} (race clock {:.1}s -> {:.1}s) — superseded \
+                 driving erased, the kept retry counts",
+                gap.resume_lap + 1,
+                race_t_before,
+                race_t_after,
+            )
+            .unwrap(),
+            GapKind::Restart => writeln!(out, "note: session restart detected").unwrap(),
+            GapKind::Pause => {}
+        }
+    }
+    writeln!(out).unwrap();
+    for (i, stint) in segments.iter().enumerate() {
+        let metrics = stint_metrics(stint);
+        writeln!(out, "{}", render_stint(i + 1, &metrics)).unwrap();
+        let laps = split_laps(stint);
+        if laps.len() > 1 {
+            writeln!(out, "{}", render_laps(&laps)).unwrap();
+        }
+    }
+    Ok(out)
+}
 
 pub fn render_recommendations(recs: &[super::recommend::Recommendation]) -> String {
     let mut out = String::new();
