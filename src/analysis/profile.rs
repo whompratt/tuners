@@ -8,8 +8,8 @@
 //! into the corner and can never be combined with a clean lap's exit, which would
 //! fabricate a physically impossible lap (docs/plans/003-comparison.md).
 
-use super::{classify_gaps, split_laps, split_stint_ranges, GapKind, LapSlice, TimedFrame};
-use std::collections::{BTreeSet, HashSet};
+use super::{driving_segments, split_laps, LapSlice, TimedFrame};
+use std::collections::BTreeSet;
 
 pub const BIN_METERS: f32 = 10.0;
 /// Laps may only be spliced at bins where their speeds match within this tolerance.
@@ -61,15 +61,15 @@ pub fn lap_profile(lap: &LapSlice) -> Option<LapProfile> {
     let mut brake = vec![0u32; n_bins];
     let mut samples = vec![0u32; n_bins];
 
-    let mut prev_ts = first.timestamp_ms;
+    let mut prev_race_t = first.current_race_time;
     for tf in lap.frames {
         let f = &tf.frame;
         let d = f.distance_traveled - first.distance_traveled;
         let bin = ((d / BIN_METERS) as usize).min(n_bins - 1);
-        let dt_ms = f.timestamp_ms.wrapping_sub(prev_ts).min(1000);
-        prev_ts = f.timestamp_ms;
+        let dt_s = (f.current_race_time - prev_race_t).clamp(0.0, 1.0);
+        prev_race_t = f.current_race_time;
 
-        time[bin] += dt_ms as f32 / 1000.0;
+        time[bin] += dt_s;
         speed[bin] += f.speed;
         slip_f[bin] += (f.tire_combined_slip.fl.abs() + f.tire_combined_slip.fr.abs()) / 2.0;
         slip_r[bin] += (f.tire_combined_slip.rl.abs() + f.tire_combined_slip.rr.abs()) / 2.0;
@@ -177,23 +177,14 @@ pub struct SessionProfile {
 }
 
 pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> {
-    // A stint that begins at a rewind-resume continues a rewound lap: its first
-    // lap slice must not be profiled even when the rewind landed early enough in
-    // the lap to pass the mid-lap start check.
-    let rewind_resumes: HashSet<usize> = classify_gaps(frames)
-        .iter()
-        .filter(|g| matches!(g.kind, GapKind::Rewind { .. }))
-        .map(|g| g.resume_frame)
-        .collect();
-
+    // Profiles are built from the kept timeline (rewinds erased, retries spliced
+    // in), so a rewound lap arrives here as one continuous, physically consistent
+    // lap — the game restored exact state at the splice point.
+    let segments = driving_segments(frames, 5.0);
     let mut laps: Vec<LapProfile> = Vec::new();
-    for range in split_stint_ranges(frames, 5.0) {
-        let after_rewind = rewind_resumes.contains(&range.start);
-        for (k, lap) in split_laps(&frames[range]).iter().enumerate() {
-            if after_rewind && k == 0 {
-                continue;
-            }
-            if let Some(p) = lap_profile(lap) {
+    for segment in &segments {
+        for lap in split_laps(segment) {
+            if let Some(p) = lap_profile(&lap) {
                 laps.push(p);
             }
         }

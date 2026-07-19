@@ -171,14 +171,56 @@ pub fn classify_gaps(frames: &[TimedFrame]) -> Vec<SessionGap> {
     gaps
 }
 
-/// In-game duration of a frame slice, tolerant of TimestampMS overflow.
+/// In-game duration of a frame slice, measured on the race clock (which runs in
+/// free roam too, pauses during pauses, and is monotonic in a kept timeline).
 pub fn stint_seconds(frames: &[TimedFrame]) -> f32 {
     match (frames.first(), frames.last()) {
-        (Some(a), Some(b)) => {
-            b.frame.timestamp_ms.wrapping_sub(a.frame.timestamp_ms) as f32 / 1000.0
-        }
+        (Some(a), Some(b)) => b.frame.current_race_time - a.frame.current_race_time,
         _ => 0.0,
     }
+}
+
+/// The session as the game kept it: driving segments with rewinds *erased*.
+///
+/// A rewind restores exact car state (clock, position, speed) and lets the player
+/// re-drive — the game is doing equal-state splicing. For tune evaluation the kept
+/// retry is the data that matters (leaderboard validity is irrelevant), so frames
+/// superseded by a rewind (race clock >= the resume point) are dropped and the
+/// retry is spliced on. Pauses are stitched over; restarts start a new segment.
+/// Segments shorter than `min_seconds` on the race clock are dropped.
+pub fn driving_segments(frames: &[TimedFrame], min_seconds: f32) -> Vec<Vec<TimedFrame>> {
+    let mut segments: Vec<Vec<TimedFrame>> = Vec::new();
+    let mut current: Vec<TimedFrame> = Vec::new();
+    let mut in_gap = false;
+    for tf in frames {
+        if !tf.frame.is_race_on {
+            in_gap = !current.is_empty();
+            continue;
+        }
+        if in_gap {
+            in_gap = false;
+            let race_t = tf.frame.current_race_time;
+            let last_t = current.last().map(|l| l.frame.current_race_time);
+            if race_t < RESTART_RACE_T_S {
+                segments.push(std::mem::take(&mut current));
+            } else if last_t.is_some_and(|t| t >= race_t) {
+                // Rewind: erase what the retry supersedes.
+                while current
+                    .last()
+                    .is_some_and(|l| l.frame.current_race_time >= race_t)
+                {
+                    current.pop();
+                }
+            }
+            // Pause: the race clock didn't move; just keep appending.
+        }
+        current.push(*tf);
+    }
+    if !current.is_empty() {
+        segments.push(current);
+    }
+    segments.retain(|s| stint_seconds(s) >= min_seconds);
+    segments
 }
 
 #[cfg(test)]
@@ -188,7 +230,12 @@ mod tests {
     fn tf(is_race_on: bool, timestamp_ms: u32) -> TimedFrame {
         TimedFrame {
             recv_us: timestamp_ms as u64 * 1000,
-            frame: TelemetryFrame { is_race_on, timestamp_ms, ..Default::default() },
+            frame: TelemetryFrame {
+                is_race_on,
+                timestamp_ms,
+                current_race_time: timestamp_ms as f32 / 1000.0,
+                ..Default::default()
+            },
         }
     }
 
@@ -287,12 +334,14 @@ mod tests {
         assert_eq!(gaps[2].kind, GapKind::Restart);
     }
 
-    /// A rewound lap attempt must never reach the ideal composite: the gap splits
-    /// the stint and the resumed slice starts mid-lap, which profiling rejects.
+    /// A mid-lap rewind produces a KEPT lap: superseded frames are erased and the
+    /// retry splices on seamlessly (the game restored exact state), so the lap is
+    /// profiled as one continuous, physically consistent lap.
     #[test]
-    fn rewound_attempt_is_structurally_unprofileable() {
+    fn rewound_lap_keeps_the_retried_attempt() {
         // Completed lap 1 (with boundary), then lap 2 begins, rewind mid-lap,
-        // lap 2 resumes mid-lap and completes.
+        // lap 2 resumes earlier in the lap and completes; lap 3 provides the
+        // boundary time.
         let mut frames = Vec::new();
         for i in 0..100 {
             frames.push(TimedFrame {
@@ -327,9 +376,9 @@ mod tests {
             });
         }
         frames.push(gap_frame());
-        // Adversarial resume: the rewind lands 0.8s into lap 2 — INSIDE the
-        // mid-lap start tolerance — and lap 3 follows, giving lap 2 a boundary
-        // time. Without the explicit rewind guard this attempt would be profiled.
+        // Rewind lands 0.8s into lap 2; the game restored exact state, so the
+        // retry continues from the matching clock and distance (frames with
+        // race_t >= 110.8 above are superseded and get erased).
         for i in 0..92 {
             frames.push(TimedFrame {
                 recv_us: 0,
@@ -340,7 +389,7 @@ mod tests {
                     current_lap: 0.8 + i as f32 * 0.1,
                     current_race_time: 110.8 + i as f32 * 0.1,
                     last_lap: 10.0,
-                    distance_traveled: 1504.0 + i as f32 * 5.0,
+                    distance_traveled: 1540.0 + i as f32 * 5.0,
                     speed: 50.0,
                     ..Default::default()
                 },
@@ -355,8 +404,8 @@ mod tests {
                     lap_number: 3,
                     current_lap: i as f32 * 0.1,
                     current_race_time: 120.0 + i as f32 * 0.1,
-                    last_lap: 10.0, // lap 2's finished (but rewound) time
-                    distance_traveled: 1964.0 + i as f32 * 5.0,
+                    last_lap: 10.0, // lap 2's finished time (real physics, rewind included)
+                    distance_traveled: 2000.0 + i as f32 * 5.0,
                     speed: 50.0,
                     ..Default::default()
                 },
@@ -369,7 +418,12 @@ mod tests {
 
         let profile = crate::analysis::profile::session_profile(&frames).unwrap();
         let numbers: Vec<u16> = profile.laps.iter().map(|l| l.lap_number).collect();
-        assert_eq!(numbers, vec![1], "rewound lap 2 must not be profiled: {numbers:?}");
+        assert_eq!(numbers, vec![1, 2], "the kept lap 2 must be profiled: {numbers:?}");
+
+        // The spliced lap must carry no phantom time: bin times sum to ~the lap time.
+        let lap2 = profile.laps.iter().find(|l| l.lap_number == 2).unwrap();
+        let binned: f32 = lap2.bins.iter().map(|b| b.time_s).sum();
+        assert!((binned - 10.0).abs() < 0.5, "binned lap time {binned}");
     }
 
     /// Regression: capture starting shortly after launch (race clock already at
@@ -413,8 +467,39 @@ mod tests {
     }
 
     #[test]
-    fn survives_timestamp_overflow() {
-        let frames = vec![tf(true, u32::MAX - 500), tf(true, 500)];
-        assert!((stint_seconds(&frames) - 1.001).abs() < 0.01);
+    fn duration_reads_the_race_clock() {
+        let frames = vec![tf(true, 1000), tf(true, 3500)];
+        assert!((stint_seconds(&frames) - 2.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn rewind_erases_superseded_frames() {
+        let mut frames: Vec<TimedFrame> = (0..10).map(|i| racing(100.0 + i as f32 * 0.1, 3)).collect();
+        frames.push(gap_frame());
+        // rewind lands at 100.4s: the four frames at 100.4..100.9 are superseded
+        frames.extend((0..6).map(|i| racing(100.4 + i as f32 * 0.1, 3)));
+
+        let segments = driving_segments(&frames, 0.0);
+        assert_eq!(segments.len(), 1);
+        let times: Vec<f32> = segments[0].iter().map(|t| t.frame.current_race_time).collect();
+        assert_eq!(times.len(), 10, "4 pre-rewind frames erased, 6 retry frames kept");
+        assert!(
+            times.windows(2).all(|w| w[1] > w[0]),
+            "kept timeline must be monotonic on the race clock: {times:?}"
+        );
+    }
+
+    #[test]
+    fn pause_stitches_and_restart_splits() {
+        let mut frames: Vec<TimedFrame> = (0..5).map(|i| racing(100.0 + i as f32 * 0.1, 2)).collect();
+        frames.push(gap_frame()); // pause: clock resumes where it left off
+        frames.extend((0..5).map(|i| racing(100.5 + i as f32 * 0.1, 2)));
+        frames.push(gap_frame()); // restart: clock near zero
+        frames.extend((0..5).map(|i| racing(0.5 + i as f32 * 0.1, 0)));
+
+        let segments = driving_segments(&frames, 0.0);
+        assert_eq!(segments.len(), 2, "pause stitched, restart split");
+        assert_eq!(segments[0].len(), 10);
+        assert_eq!(segments[1].len(), 5);
     }
 }

@@ -102,8 +102,16 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   `LapNumber` all step back. Rewinding over the finish line replays the lap
   transition identically (same race_t, same distance).
 - Gap classification by race clock on resume: **unchanged = pause, stepped back =
-  rewind, near zero = restart**. (A pause mid-lap still leaks up to ~1s of phantom
-  time into one bin via `TimestampMS`, which keeps running — known minor issue.)
+  rewind, near zero = restart**.
+- **`CurrentRaceTime` is the canonical time axis**: it runs in free roam too, freezes
+  during pauses, and steps back coherently at rewinds. All durations, distance
+  integration, and profile bin times use it (not `TimestampMS`, which keeps running
+  through pauses and rewinds).
+- **Analysis reconstructs the kept timeline**: frames superseded by a rewind (race
+  clock ≥ the resume point) are erased and the retry splices on. A rewind restores
+  exact car state, so the result is one continuous, physically consistent lap — the
+  game itself performs equal-state splicing. Rewound laps are therefore kept as
+  real laps (leaderboard validity is irrelevant to tune evaluation).
 - Race-start artifacts: `DistanceTraveled` goes briefly **negative** (spawn is ~27 m
   behind the start line) and `CurrentLap` resets when the line is actually crossed
   (~3 s after launch).

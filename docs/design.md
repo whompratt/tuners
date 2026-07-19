@@ -83,6 +83,12 @@ no flying laps at all, so every run is a standing start and runs compare only to
 other runs of the same route). Cross-session comparison — same car/track, tune A vs
 tune B — is where recommendations get their evidence.
 
+**Leaderboard validity is irrelevant — the kept drive is the data.** Rewinds
+invalidate laps for the leaderboard, but a rewind-and-retry is the driver choosing
+better data: the game restores exact car state, so the kept lap is physically
+consistent and its time is real. Analysis reconstructs this kept timeline (erasing
+superseded driving) rather than discarding rewound laps.
+
 **The driver-learning confounder.** Across an iterative tuning session the driver
 learns the car and track and gets faster regardless of the tune, so raw
 best-lap-vs-best-lap deltas systematically flatter whichever tune was driven later.

@@ -89,19 +89,19 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
     if session.decode_errors > 0 {
         eprintln!("warning: {} packets failed to decode", session.decode_errors);
     }
-    let stints = analysis::split_stints(&session.frames, 5.0);
-    if stints.is_empty() {
+    let segments = analysis::driving_segments(&session.frames, 5.0);
+    if segments.is_empty() {
         return Err(format!(
             "no driving stints of 5s or longer found ({} frames total)",
             session.frames.len()
         ));
     }
-    println!("{path}: {} stint(s)\n", stints.len());
+    println!("{path}: {} stint(s)\n", segments.len());
     for gap in analysis::classify_gaps(&session.frames) {
         match gap.kind {
             analysis::GapKind::Rewind { race_t_before, race_t_after } => println!(
-                "note: rewind on lap {} (race clock {:.1}s -> {:.1}s) — rewound lap \
-                 attempts are excluded from ideal/compare",
+                "note: rewind on lap {} (race clock {:.1}s -> {:.1}s) — superseded \
+                 driving erased, the kept retry counts",
                 gap.resume_lap + 1,
                 race_t_before,
                 race_t_after,
@@ -111,7 +111,7 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
         }
     }
     println!();
-    for (i, stint) in stints.iter().enumerate() {
+    for (i, stint) in segments.iter().enumerate() {
         let metrics = analysis::metrics::stint_metrics(stint);
         println!("{}", analysis::report::render_stint(i + 1, &metrics));
         let laps = analysis::split_laps(stint);
@@ -127,9 +127,9 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
         return Err("usage: tuners recommend <session-file>".into());
     };
     let session = analysis::Session::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
-    let stints = analysis::split_stints(&session.frames, 5.0);
+    let segments = analysis::driving_segments(&session.frames, 5.0);
     // Advise from the longest stint — the most driving under one set of conditions.
-    let Some(stint) = stints.iter().max_by_key(|s| s.len()) else {
+    let Some(stint) = segments.iter().max_by_key(|s| s.len()) else {
         return Err("no driving stints of 5s or longer found".into());
     };
 

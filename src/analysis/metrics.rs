@@ -94,19 +94,19 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut upshifts = 0u32;
     let mut prev_real_gear: Option<(u8, f32)> = None; // (gear, rpm while in it)
     // DistanceTraveled is always 0 outside races (see telemetry.md), so distance is
-    // integrated from speed over in-game timestamps instead.
+    // integrated from speed over the race clock (monotonic in a kept timeline,
+    // frozen across pauses).
     let mut distance_m = 0.0f32;
-    let mut prev_ts: Option<u32> = None;
+    let mut prev_race_t: Option<f32> = None;
 
     for tf in frames {
         let f = &tf.frame;
         speed_sum += f.speed;
         max_speed = max_speed.max(f.speed);
-        if let Some(prev) = prev_ts {
-            let dt_ms = f.timestamp_ms.wrapping_sub(prev).min(1000);
-            distance_m += f.speed * dt_ms as f32 / 1000.0;
+        if let Some(prev) = prev_race_t {
+            distance_m += f.speed * (f.current_race_time - prev).clamp(0.0, 1.0);
         }
-        prev_ts = Some(f.timestamp_ms);
+        prev_race_t = Some(f.current_race_time);
 
         let temps = f.tire_temp.to_array();
         let slips = f.tire_combined_slip.to_array();
@@ -230,6 +230,7 @@ mod tests {
             .map(|(i, mut frame)| {
                 frame.is_race_on = true;
                 frame.timestamp_ms = i as u32 * 100;
+                frame.current_race_time = i as f32 * 0.1;
                 TimedFrame { recv_us: i as u64 * 100_000, frame }
             })
             .collect()
