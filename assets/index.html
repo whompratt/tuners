@@ -98,8 +98,10 @@
     border: 1px solid var(--border); border-radius: 4px; padding: 2px 0;
   }
   .temps .cold { color: #3987e5; } .temps .hot { color: #e66767; }
+  .live-body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+  .live-body .live-row { flex: 1; min-width: 320px; }
   #live-quality {
-    margin-top: 12px; display: flex; align-items: center; gap: 16px;
+    flex: none; display: flex; align-items: center; gap: 16px;
     border: 1px solid var(--qcolor); border-radius: 8px; padding: 10px 14px;
     background: color-mix(in srgb, var(--qcolor) 14%, transparent);
     --qcolor: #e66767; /* low */
@@ -136,6 +138,19 @@
         <span id="rec-status" style="font-size:12px;color:var(--muted)"></span>
         <button id="rec-split" style="display:none">new session — tune changed</button>
       </div>
+      <div class="live-body">
+      <div id="live-quality">
+        <svg viewBox="0 0 100 62" width="120" aria-label="data confidence">
+          <path class="q-track" d="M 10 52 A 40 40 0 0 1 90 52"/>
+          <path class="q-fill" id="q-fill" d="M 10 52 A 40 40 0 0 1 90 52" stroke-dasharray="0 999"/>
+          <text id="q-pct" x="50" y="50">–</text>
+        </svg>
+        <div>
+          <div id="q-label">confidence</div>
+          <div id="q-detail">no complete laps yet</div>
+          <div id="q-caption">share of the ideal lap reproduced by a second lap</div>
+        </div>
+      </div>
       <div class="live-row">
         <div class="readout"><div class="label">Speed</div>
           <div class="value"><span id="lv-speed">–</span> <span class="unit">mph</span></div></div>
@@ -154,17 +169,6 @@
         <div class="readout"><div class="label">Tires °F</div>
           <div class="temps" id="lv-temps"><div>–</div><div>–</div><div>–</div><div>–</div></div></div>
       </div>
-      <div id="live-quality">
-        <svg viewBox="0 0 100 62" width="120" aria-label="data confidence">
-          <path class="q-track" d="M 10 52 A 40 40 0 0 1 90 52"/>
-          <path class="q-fill" id="q-fill" d="M 10 52 A 40 40 0 0 1 90 52" stroke-dasharray="0 999"/>
-          <text id="q-pct" x="50" y="50">–</text>
-        </svg>
-        <div>
-          <div id="q-label">confidence</div>
-          <div id="q-detail">no complete laps yet</div>
-          <div id="q-caption">share of the ideal lap reproduced by a second lap</div>
-        </div>
       </div>
     </div>
     <div id="compare-panel" style="display:none" class="panel">
