@@ -6,6 +6,21 @@ use crate::packet::{class_name, drivetrain_name};
 use crate::util::{format_lap_time, MPS_TO_MPH};
 use std::fmt::Write;
 
+pub fn render_recommendations(recs: &[super::recommend::Recommendation]) -> String {
+    let mut out = String::new();
+    if recs.is_empty() {
+        writeln!(out, "no recommendations — nothing in this session stood out").unwrap();
+        return out;
+    }
+    for r in recs {
+        writeln!(out, "[{}] {}: {}", r.confidence.label(), r.area, r.advice).unwrap();
+        for e in &r.evidence {
+            writeln!(out, "    · {e}").unwrap();
+        }
+    }
+    out
+}
+
 /// Lap table for a stint. Standing-start laps (rivals out laps) are labelled and
 /// excluded from the best-lap comparison — they are not comparable to flying laps.
 pub fn render_laps(laps: &[LapSlice]) -> String {

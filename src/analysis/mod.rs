@@ -4,6 +4,7 @@
 pub mod compare;
 pub mod metrics;
 pub mod profile;
+pub mod recommend;
 pub mod report;
 
 use crate::packet::{self, TelemetryFrame};

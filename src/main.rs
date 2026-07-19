@@ -15,6 +15,8 @@ USAGE:
                     per-stint tuning observations: tires, grip, suspension, gearing
   tuners compare  <session-A> <session-B>
                     tune A/B: lap-time delta, where it comes from, mistakes excluded
+  tuners recommend <session-file>
+                    directional tune advice with evidence (blind mode: no tune input)
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60]
                     send synthetic telemetry (stand-in for the game)
 ";
@@ -40,6 +42,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "replay" => cmd_replay(&args[1..]),
         "analyze" => cmd_analyze(&args[1..]),
         "compare" => cmd_compare(&args[1..]),
+        "recommend" => cmd_recommend(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
@@ -102,6 +105,39 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
             println!("{}", analysis::report::render_laps(&laps));
         }
     }
+    Ok(())
+}
+
+fn cmd_recommend(args: &[String]) -> Result<(), String> {
+    let [path] = args else {
+        return Err("usage: tuners recommend <session-file>".into());
+    };
+    let session = analysis::Session::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
+    let stints = analysis::split_stints(&session.frames, 5.0);
+    // Advise from the longest stint — the most driving under one set of conditions.
+    let Some(stint) = stints.iter().max_by_key(|s| s.len()) else {
+        return Err("no driving stints of 5s or longer found".into());
+    };
+
+    let overall = analysis::metrics::stint_metrics(stint);
+    let laps = analysis::split_laps(stint);
+    let per_lap: Vec<_> = laps
+        .iter()
+        .filter(|l| l.time_s.is_some() && !l.standing_start)
+        .map(|l| analysis::metrics::stint_metrics(l.frames))
+        .collect();
+
+    println!(
+        "{path}: advice from a {:.0}s stint ({} flying lap(s))\n",
+        overall.duration_s,
+        per_lap.len(),
+    );
+    print!(
+        "{}",
+        analysis::report::render_recommendations(&analysis::recommend::recommend(
+            &overall, &per_lap
+        ))
+    );
     Ok(())
 }
 
