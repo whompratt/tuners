@@ -56,6 +56,23 @@ pub fn respond(target: &str, sessions_dir: &str) -> (&'static str, &'static str,
             include_str!("../assets/index.html").to_string(),
         ),
         "/api/sessions" => ("200 OK", "application/json", sessions_json(sessions_dir)),
+        "/api/compare" => {
+            let a = query_param(query, "a");
+            let b = query_param(query, "b");
+            match (a, b) {
+                (Some(a), Some(b)) if is_safe_session_path(&a) && is_safe_session_path(&b) => {
+                    match compare_json(Path::new(&a), Path::new(&b)) {
+                        Ok(json) => ("200 OK", "application/json", json),
+                        Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e),
+                    }
+                }
+                _ => (
+                    "400 Bad Request",
+                    "text/plain; charset=utf-8",
+                    "need safe a= and b= session parameters".into(),
+                ),
+            }
+        }
         "/api/laps" => match query.strip_prefix("file=").map(percent_decode) {
             Some(file) if is_safe_session_path(&file) => match laps_json(Path::new(&file)) {
                 Ok(json) => ("200 OK", "application/json", json),
@@ -110,6 +127,58 @@ fn percent_decode(s: &str) -> String {
 /// recordings, nothing else.
 fn is_safe_session_path(file: &str) -> bool {
     file.ends_with(".ftel") && !file.contains("..") && !file.starts_with('/')
+}
+
+fn query_param(query: &str, key: &str) -> Option<String> {
+    query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix(&format!("{key}=")))
+        .map(percent_decode)
+}
+
+/// A/B comparison for the dashboard: both composited ideal-lap speed traces plus
+/// the per-bin time delta (B − A), for the overlay + segment-delta view.
+fn compare_json(a_path: &Path, b_path: &Path) -> Result<String, String> {
+    let profile = |path: &Path| -> Result<_, String> {
+        let session = crate::analysis::Session::load(path)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        crate::analysis::profile::session_profile(&session.frames)
+            .map_err(|e| format!("{}: {e}", path.display()))
+    };
+    let pa = profile(a_path)?;
+    let pb = profile(b_path)?;
+    let cmp = crate::analysis::compare::compare(&pa, &pb)?;
+    let shared = cmp.bin_delta_s.len();
+
+    let speeds = |p: &crate::analysis::profile::SessionProfile| {
+        p.composite.bins[..shared]
+            .iter()
+            .map(|bin| format!("{:.1}", bin.speed_avg))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let side = |path: &Path, p: &crate::analysis::profile::SessionProfile| {
+        format!(
+            "{{\"file\":\"{}\",\"laps\":{},\"best\":{:.3},\"ideal\":{:.3},\"standingOnly\":{}}}",
+            path.display(),
+            p.laps.len(),
+            p.best_lap_time_s,
+            p.composite.time_s,
+            p.standing_start_only,
+        )
+    };
+    let delta: Vec<String> = cmp.bin_delta_s.iter().map(|d| format!("{d:.4}")).collect();
+    Ok(format!(
+        "{{\"binMeters\":{:.0},\"a\":{},\"b\":{},\"speedsA\":[{}],\"speedsB\":[{}],\"delta\":[{}],\"unequalLaps\":{},\"carMismatch\":{}}}",
+        crate::analysis::profile::BIN_METERS,
+        side(a_path, &pa),
+        side(b_path, &pb),
+        speeds(&pa),
+        speeds(&pb),
+        delta.join(","),
+        pa.laps.len() != pb.laps.len(),
+        cmp.car_mismatch,
+    ))
 }
 
 /// Distance-binned speed traces per profiled lap — the dashboard's chart data.

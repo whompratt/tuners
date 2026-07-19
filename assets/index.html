@@ -29,29 +29,38 @@
   .session {
     padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
     margin-bottom: 8px; cursor: pointer; word-break: break-all; font-size: 13px;
+    position: relative;
   }
   .session:hover { border-color: var(--accent); }
   .session.active { border-color: var(--accent); background: var(--surface); }
   .session .size { color: var(--muted); font-size: 12px; }
+  .ab { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
+  .ab button {
+    background: none; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--muted); font: 600 11px system-ui; width: 22px; height: 20px;
+    cursor: pointer; padding: 0;
+  }
+  .ab button.on-a { border-color: #3987e5; color: #3987e5; }
+  .ab button.on-b { border-color: #199e70; color: #199e70; }
   main { flex: 1; padding: 16px 24px; overflow: auto; }
-  #chart-panel {
+  .panel {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; padding: 16px; margin-bottom: 16px; display: none;
+    border-radius: 8px; padding: 16px; margin-bottom: 16px;
     position: relative;
   }
-  #chart-panel h2 { font-size: 13px; color: var(--ink-2); font-weight: 600; margin-bottom: 8px; }
-  #legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; font-size: 12px; }
+  .panel h2 { font-size: 13px; color: var(--ink-2); font-weight: 600; margin-bottom: 8px; }
+  .legend-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; font-size: 12px; }
   .chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   #canvas-wrap { position: relative; }
   canvas { width: 100%; display: block; }
-  #tooltip {
+  .tip {
     position: absolute; pointer-events: none; display: none;
     background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
     padding: 6px 10px; font-size: 12px; color: var(--ink-2); white-space: nowrap;
     box-shadow: 0 2px 8px rgba(0,0,0,0.5); z-index: 2;
   }
-  #tooltip .t-head { color: var(--muted); margin-bottom: 2px; }
-  #tooltip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
+  .tip .t-head { color: var(--muted); margin-bottom: 2px; }
+  .tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
   pre { white-space: pre-wrap; font: 13px/1.45 ui-monospace, Consolas, monospace; }
   .placeholder { color: var(--muted); }
 </style>
@@ -62,12 +71,21 @@
     <div id="sessions"></div>
   </aside>
   <main>
-    <div id="chart-panel">
+    <div id="compare-panel" style="display:none" class="panel">
+      <h2 id="compare-title">A/B comparison</h2>
+      <div id="compare-summary" style="font-size:12px;color:var(--ink-2);margin-bottom:8px"></div>
+      <div id="compare-legend" class="legend-row"></div>
+      <div id="compare-wrap" style="position:relative">
+        <canvas id="compare-chart" height="380"></canvas>
+        <div id="compare-tip" class="tip"></div>
+      </div>
+    </div>
+    <div id="chart-panel" class="panel" style="display:none">
       <h2>Speed by distance — flying laps</h2>
-      <div id="legend"></div>
+      <div id="legend" class="legend-row"></div>
       <div id="canvas-wrap">
         <canvas id="chart" height="320"></canvas>
-        <div id="tooltip"></div>
+        <div id="tooltip" class="tip"></div>
       </div>
     </div>
     <pre id="report" class="placeholder">select a session</pre>
@@ -94,10 +112,162 @@ async function load() {
   for (const s of sessions.reverse()) {
     const el = document.createElement('div');
     el.className = 'session';
-    el.innerHTML = `${s.file.split('/').pop()}<br><span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>`;
+    el.innerHTML = `${s.file.split('/').pop()}<br><span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>` +
+      `<span class="ab"><button data-side="a" title="compare as A">A</button>` +
+      `<button data-side="b" title="compare as B">B</button></span>`;
     el.onclick = () => show(s.file, el);
+    el.querySelectorAll('.ab button').forEach(btn => {
+      btn.onclick = ev => { ev.stopPropagation(); pick(btn.dataset.side, s.file, btn); };
+    });
     list.appendChild(el);
   }
+}
+
+// --- A/B comparison ---
+const sel = { a: null, b: null };
+function pick(side, file, btn) {
+  const cls = side === 'a' ? 'on-a' : 'on-b';
+  const was = sel[side] === file;
+  document.querySelectorAll(`.ab button[data-side=${side}]`).forEach(b => b.classList.remove(cls));
+  sel[side] = was ? null : file;
+  if (!was) btn.classList.add(cls);
+  updateCompare();
+}
+
+let cmpData = null;
+async function updateCompare() {
+  const panel = document.getElementById('compare-panel');
+  if (!sel.a || !sel.b) { panel.style.display = 'none'; cmpData = null; return; }
+  const resp = await fetch(`/api/compare?a=${encodeURIComponent(sel.a)}&b=${encodeURIComponent(sel.b)}`);
+  const summary = document.getElementById('compare-summary');
+  if (!resp.ok) {
+    panel.style.display = 'block';
+    document.getElementById('compare-legend').innerHTML = '';
+    summary.textContent = `cannot compare: ${await resp.text()}`;
+    document.getElementById('compare-chart').getContext('2d').clearRect(0, 0, 4000, 4000);
+    cmpData = null;
+    return;
+  }
+  cmpData = await resp.json();
+  panel.style.display = 'block';
+  const ideal = cmpData.b.ideal - cmpData.a.ideal;
+  const best = cmpData.b.best - cmpData.a.best;
+  const word = d => Math.abs(d) < 0.01 ? 'even' : d < 0 ? `B faster by ${(-d).toFixed(2)}s` : `A faster by ${d.toFixed(2)}s`;
+  summary.innerHTML =
+    `best lap: <span class="num">${word(best)}</span> · ideal (spliced): <span class="num">${word(ideal)}</span>` +
+    (cmpData.unequalLaps ? ' · <span style="color:var(--muted)">note: unequal lap counts bias the ideal toward the session with more laps</span>' : '') +
+    (cmpData.carMismatch ? ' · <span style="color:var(--muted)">note: different cars — this compares cars, not tunes</span>' : '');
+  document.getElementById('compare-legend').innerHTML = [
+    ['#3987e5', 'A', cmpData.a], ['#199e70', 'B', cmpData.b],
+  ].map(([c, tag, s]) =>
+    `<span><span class="chip" style="background:${c}"></span>${tag}: ${s.file.split('/').pop()} — ` +
+    `best <span class="num">${fmtLap(s.best)}</span>, ideal <span class="num">${fmtLap(s.ideal)}</span> (${s.laps} laps)</span>`
+  ).join('');
+  drawCompare();
+}
+
+const SEG_BINS = 25; // 250m segments for the delta bars
+function compareLayout() {
+  const canvas = document.getElementById('compare-chart');
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth, cssH = 380;
+  canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const pad = { l: 46, r: 12, t: 8, b: 24 };
+  const bins = cmpData.delta.length;
+  const speedH = 220, gapH = 26;
+  const deltaH = cssH - pad.t - speedH - gapH - pad.b;
+  const segs = [];
+  for (let s = 0; s < bins; s += SEG_BINS) {
+    segs.push(cmpData.delta.slice(s, s + SEG_BINS).reduce((x, y) => x + y, 0));
+  }
+  return { ctx, cssW, cssH, pad, bins, speedH, gapH, deltaH,
+    plotW: cssW - pad.l - pad.r,
+    yMax: Math.ceil(Math.max(...cmpData.speedsA, ...cmpData.speedsB) * MPH / 20) * 20,
+    segs, segMax: Math.max(0.05, ...segs.map(Math.abs)) };
+}
+
+function drawCompare(hoverBin) {
+  const L = compareLayout();
+  const { ctx, cssW, pad, bins, plotW, yMax, speedH, gapH, deltaH, segs, segMax } = L;
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const x = bin => pad.l + (bin / (bins - 1)) * plotW;
+  const ySpeed = mph => pad.t + speedH - (mph / yMax) * speedH;
+  const delta0 = pad.t + speedH + gapH + deltaH / 2;
+  const yDelta = d => delta0 - (d / segMax) * (deltaH / 2);
+  ctx.clearRect(0, 0, cssW, L.cssH);
+  ctx.font = '11px system-ui, sans-serif';
+
+  ctx.lineWidth = 1;
+  for (let g = 0; g <= yMax; g += 40) {
+    ctx.strokeStyle = css('--grid');
+    ctx.beginPath(); ctx.moveTo(pad.l, ySpeed(g)); ctx.lineTo(cssW - pad.r, ySpeed(g)); ctx.stroke();
+    ctx.fillStyle = css('--muted'); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(`${g}`, pad.l - 8, ySpeed(g));
+  }
+  ctx.save(); ctx.translate(11, pad.t + speedH / 2); ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center'; ctx.fillText('mph', 0, 0); ctx.restore();
+
+  [[cmpData.speedsA, '#3987e5'], [cmpData.speedsB, '#199e70']].forEach(([speeds, color]) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    speeds.forEach((v, b) => b ? ctx.lineTo(x(b), ySpeed(v * MPH)) : ctx.moveTo(x(b), ySpeed(v * MPH)));
+    ctx.stroke();
+  });
+
+  // delta bars: one per 250m, colored by whichever side gains there
+  ctx.strokeStyle = css('--baseline');
+  ctx.beginPath(); ctx.moveTo(pad.l, delta0); ctx.lineTo(cssW - pad.r, delta0); ctx.stroke();
+  ctx.fillStyle = css('--muted'); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.fillText(`+${segMax.toFixed(2)}s`, pad.l - 8, yDelta(segMax));
+  ctx.fillText(`-${segMax.toFixed(2)}s`, pad.l - 8, yDelta(-segMax));
+  segs.forEach((d, i) => {
+    const x0 = x(i * SEG_BINS), x1 = x(Math.min((i + 1) * SEG_BINS, bins - 1));
+    ctx.fillStyle = d < 0 ? '#199e70' : '#3987e5'; // negative: B faster
+    const y0 = yDelta(Math.max(d, 0)), y1 = yDelta(Math.min(d, 0));
+    ctx.fillRect(x0 + 1, y0, Math.max(1, x1 - x0 - 2), Math.max(1, y1 - y0));
+  });
+  ctx.fillStyle = css('--muted'); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('Δ per 250 m (bar colored by who gains)', pad.l, pad.t + speedH + gapH / 2);
+
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const kmMax = bins * cmpData.binMeters / 1000;
+  for (let km = 0; km <= kmMax; km += 1) {
+    ctx.fillText(`${km} km`, x(km * 1000 / cmpData.binMeters), L.cssH - pad.b + 6);
+  }
+
+  if (hoverBin != null) {
+    ctx.strokeStyle = css('--baseline'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x(hoverBin), pad.t); ctx.lineTo(x(hoverBin), L.cssH - pad.b); ctx.stroke();
+  }
+}
+
+document.getElementById('compare-wrap').addEventListener('mousemove', ev => {
+  if (!cmpData) return;
+  const rect = document.getElementById('compare-chart').getBoundingClientRect();
+  const { pad, plotW, bins, segs } = compareLayout();
+  const px = ev.clientX - rect.left;
+  if (px < pad.l || px > pad.l + plotW) { drawCompare(); cmpTip(null); return; }
+  const bin = Math.round(((px - pad.l) / plotW) * (bins - 1));
+  drawCompare(bin);
+  const seg = segs[Math.floor(bin / SEG_BINS)] ?? 0;
+  const tip = document.getElementById('compare-tip');
+  tip.innerHTML =
+    `<div class="t-head">${(bin * cmpData.binMeters / 1000).toFixed(2)} km</div>` +
+    `<div><span class="chip" style="background:#3987e5"></span>A <span class="num">${(cmpData.speedsA[bin] * MPH).toFixed(0)} mph</span></div>` +
+    `<div><span class="chip" style="background:#199e70"></span>B <span class="num">${(cmpData.speedsB[bin] * MPH).toFixed(0)} mph</span></div>` +
+    `<div>this 250 m: <span class="num">${seg < 0 ? 'B' : 'A'} +${Math.abs(seg).toFixed(2)}s</span></div>`;
+  tip.style.display = 'block';
+  const wrap = document.getElementById('compare-wrap').getBoundingClientRect();
+  tip.style.left = px > wrap.width - 200 ? `${px - tip.offsetWidth - 12}px` : `${px + 12}px`;
+  tip.style.top = `${Math.max(0, ev.clientY - rect.top - 20)}px`;
+});
+document.getElementById('compare-wrap').addEventListener('mouseleave', () => {
+  if (cmpData) { drawCompare(); cmpTip(null); }
+});
+function cmpTip(bin) {
+  if (bin == null) document.getElementById('compare-tip').style.display = 'none';
 }
 
 async function show(file, el) {
@@ -217,7 +387,10 @@ function tooltip(bin, px, py) {
   tip.style.top = `${Math.max(0, py - 20)}px`;
 }
 
-window.addEventListener('resize', () => { if (lapData) drawChart(); });
+window.addEventListener('resize', () => {
+  if (lapData) drawChart();
+  if (cmpData) drawCompare();
+});
 load();
 </script>
 </body>

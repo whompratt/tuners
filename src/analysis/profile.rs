@@ -186,6 +186,8 @@ pub struct SessionProfile {
     pub composite: Composite,
     pub best_lap_time_s: f32,
     pub standing_start_only: bool,
+    /// Car identity of the profiled laps, so compare can flag car mismatches.
+    pub car_ordinal: i32,
 }
 
 pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> {
@@ -194,9 +196,13 @@ pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> 
     // lap — the game restored exact state at the splice point.
     let segments = driving_segments(frames, 5.0);
     let mut laps: Vec<LapProfile> = Vec::new();
+    let mut car_ordinal = 0;
     for segment in &segments {
         for lap in split_laps(segment) {
             if let Some(p) = lap_profile(&lap) {
+                if laps.is_empty() {
+                    car_ordinal = lap.frames[0].frame.car_ordinal;
+                }
                 laps.push(p);
             }
         }
@@ -225,6 +231,7 @@ pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> 
         composite,
         best_lap_time_s,
         standing_start_only,
+        car_ordinal,
         laps,
     })
 }

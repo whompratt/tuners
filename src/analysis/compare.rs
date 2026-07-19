@@ -9,14 +9,21 @@ use std::fmt::Write;
 const SEGMENT_BINS: usize = 25;
 /// Sessions must be the same route: shared bin counts within this fraction.
 const ROUTE_LENGTH_TOLERANCE: f32 = 0.02;
+/// Route lengths can coincide across different tracks (DistanceTraveled is route
+/// units, and two routes measured ~5.95km while one drove in 50s and the other in
+/// 92s) — lap times are the tiebreaker. No tune change moves lap time this much.
+const LAP_TIME_RATIO_LIMIT: f32 = 1.30;
 /// Segment deltas smaller than this aren't worth listing (seconds).
 const SEGMENT_NOISE_S: f32 = 0.05;
 
+#[derive(Debug)]
 pub struct Comparison {
     /// Per-bin: best clean B time minus best clean A time (negative = B faster).
     pub bin_delta_s: Vec<f32>,
     pub ideal_delta_s: f32,
     pub best_lap_delta_s: f32,
+    /// Sessions were driven in different cars — a car comparison, not a tune A/B.
+    pub car_mismatch: bool,
 }
 
 pub fn compare(a: &SessionProfile, b: &SessionProfile) -> Result<Comparison, String> {
@@ -38,6 +45,18 @@ pub fn compare(a: &SessionProfile, b: &SessionProfile) -> Result<Comparison, Str
                 .into(),
         );
     }
+    let (fast, slow) = (
+        a.best_lap_time_s.min(b.best_lap_time_s),
+        a.best_lap_time_s.max(b.best_lap_time_s),
+    );
+    if fast > 0.0 && slow / fast > LAP_TIME_RATIO_LIMIT {
+        return Err(format!(
+            "sessions look like different routes despite similar route length: best \
+             laps {} vs {} are too far apart for a tune change",
+            format_lap_time(a.best_lap_time_s),
+            format_lap_time(b.best_lap_time_s),
+        ));
+    }
 
     let bin_delta_s: Vec<f32> = (0..short)
         .map(|bin| b.composite.bins[bin].time_s - a.composite.bins[bin].time_s)
@@ -46,6 +65,7 @@ pub fn compare(a: &SessionProfile, b: &SessionProfile) -> Result<Comparison, Str
     Ok(Comparison {
         ideal_delta_s: bin_delta_s.iter().sum(),
         best_lap_delta_s: b.best_lap_time_s - a.best_lap_time_s,
+        car_mismatch: a.car_ordinal != b.car_ordinal,
         bin_delta_s,
     })
 }
@@ -78,6 +98,14 @@ pub fn render(a: &SessionProfile, b: &SessionProfile, cmp: &Comparison) -> Strin
             out,
             "note: unequal lap counts — the session with more laps gives its ideal \
              more material, biasing the ideal comparison in its favor",
+        )
+        .unwrap();
+    }
+    if cmp.car_mismatch {
+        writeln!(
+            out,
+            "note: different cars (ordinal {} vs {}) — this compares cars, not tunes",
+            a.car_ordinal, b.car_ordinal,
         )
         .unwrap();
     }
@@ -147,8 +175,30 @@ mod tests {
             shared_bins: n_bins,
             best_lap_time_s: laps[0].time_s,
             standing_start_only: false,
+            car_ordinal: 42,
             laps,
         }
+    }
+
+    /// Two routes can measure the same length in route units; wildly different
+    /// lap times expose them (found comparing a 92s tarmac lap to a 50s dirt lap
+    /// that both measured ~5.95km).
+    #[test]
+    fn same_length_different_route_rejected_by_lap_time() {
+        let a = uniform_profile(100, 0.2); // 20s laps
+        let b = uniform_profile(100, 0.11); // 11s laps, same bin count
+        let err = compare(&a, &b).unwrap_err();
+        assert!(err.contains("different routes"), "{err}");
+    }
+
+    #[test]
+    fn different_cars_flagged_not_rejected() {
+        let a = uniform_profile(100, 0.2);
+        let mut b = uniform_profile(100, 0.2);
+        b.car_ordinal = 7;
+        let cmp = compare(&a, &b).unwrap();
+        assert!(cmp.car_mismatch);
+        assert!(render(&a, &b, &cmp).contains("compares cars, not tunes"));
     }
 
     #[test]
