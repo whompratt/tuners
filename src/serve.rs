@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 
-pub fn run(port: u16, sessions_dir: String) -> std::io::Result<()> {
+pub fn run(port: u16, sessions_dir: String, udp_port: u16) -> std::io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     println!("tuners dashboard: http://127.0.0.1:{port}/  (Ctrl+C to stop)");
     let live: crate::live::SharedLive = Default::default();
@@ -15,17 +15,32 @@ pub fn run(port: u16, sessions_dir: String) -> std::io::Result<()> {
         let live = live.clone();
         std::thread::spawn(move || crate::live::run_tailer(dir, live));
     }
+    let recorder = crate::record::new_shared();
+    if udp_port != 0 {
+        let out_dir = std::path::PathBuf::from(sessions_dir.clone());
+        let recorder = recorder.clone();
+        std::thread::spawn(move || crate::record::run_recorder(udp_port, out_dir, recorder));
+    } else {
+        recorder.lock().unwrap().mode =
+            crate::record::RecorderMode::External("disabled (--udp-port 0)".into());
+    }
     for stream in listener.incoming() {
         let dir = sessions_dir.clone();
         if let Ok(stream) = stream {
             let live = live.clone();
-            std::thread::spawn(move || handle(stream, &dir, &live));
+            let recorder = recorder.clone();
+            std::thread::spawn(move || handle(stream, &dir, &live, &recorder));
         }
     }
     Ok(())
 }
 
-fn handle(mut stream: TcpStream, sessions_dir: &str, live: &crate::live::SharedLive) {
+fn handle(
+    mut stream: TcpStream,
+    sessions_dir: &str,
+    live: &crate::live::SharedLive,
+    recorder: &crate::record::SharedRecorder,
+) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
@@ -43,12 +58,18 @@ fn handle(mut stream: TcpStream, sessions_dir: &str, live: &crate::live::SharedL
             Ok(_) => {}
         }
     }
+    let method = request_line.split_whitespace().next().unwrap_or("GET");
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
     if target.split('?').next() == Some("/api/live") {
-        serve_sse(stream, live);
+        serve_sse(stream, live, recorder);
         return;
     }
-    let (status, content_type, body) = respond(target, sessions_dir);
+    let (status, content_type, body) = if method == "POST" && target == "/api/record/split" {
+        recorder.lock().unwrap().split_requested = true;
+        ("200 OK", "application/json", "{\"ok\":true}".to_string())
+    } else {
+        respond(target, sessions_dir)
+    };
     let _ = write!(
         stream,
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -60,7 +81,11 @@ fn handle(mut stream: TcpStream, sessions_dir: &str, live: &crate::live::SharedL
 /// SSE relay of the live session (plan 006 phase 4): a `state` event ~4x/s with
 /// the latest frame and data age, plus a `quality` event whenever the
 /// data-quality summary changes. Ends when the client disconnects.
-fn serve_sse(mut stream: TcpStream, live: &crate::live::SharedLive) {
+fn serve_sse(
+    mut stream: TcpStream,
+    live: &crate::live::SharedLive,
+    recorder: &crate::record::SharedRecorder,
+) {
     if write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\nretry: 1000\n\n"
@@ -77,6 +102,11 @@ fn serve_sse(mut stream: TcpStream, live: &crate::live::SharedLive) {
                 .then(|| (s.quality_seq, quality_json(s.quality.as_ref())));
             (live_state_json(&s), quality)
         };
+        let rec_json = recorder_json(&recorder.lock().unwrap());
+        let state_json = format!(
+            "{},\"recorder\":{rec_json}}}",
+            &state_json[..state_json.len() - 1]
+        );
         if write!(stream, "event: state\ndata: {state_json}\n\n").is_err() {
             return; // client gone
         }
@@ -126,6 +156,20 @@ fn live_state_json(s: &crate::live::LiveState) -> String {
         }
     };
     format!("{{\"file\":{file},\"ageMs\":{age_ms},\"frame\":{frame}}}")
+}
+
+/// Recorder status for the `state` SSE event.
+fn recorder_json(r: &crate::record::RecorderStatus) -> String {
+    let mode = match &r.mode {
+        crate::record::RecorderMode::External(_) => "external",
+        crate::record::RecorderMode::Waiting => "waiting",
+        crate::record::RecorderMode::Recording => "recording",
+    };
+    let file = match r.file.as_ref().and_then(|p| p.file_name()) {
+        Some(name) => format!("\"{}\"", name.to_string_lossy()),
+        None => "null".into(),
+    };
+    format!("{{\"mode\":\"{mode}\",\"file\":{file},\"packets\":{}}}", r.packets)
 }
 
 /// The `quality` SSE payload; `null` until a comparable lap exists.

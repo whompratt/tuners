@@ -20,9 +20,12 @@ USAGE:
   tuners advise   [journal-file]
                     history-aware advice from a tuning journal (default tune-journal.txt);
                     journal lines: <session-file> | <change since previous session>
-  tuners serve    [--port 8080] [--sessions sessions]
-                    local web dashboard: session list, reports, and a live view
-                    of the session `tuners capture` is currently recording
+  tuners serve    [--port 8080] [--sessions sessions] [--udp-port 20440]
+                    the app: records telemetry automatically (race mode only,
+                    sessions split from the dashboard) and serves the dashboard
+                    with charts, A/B compare, and a live view + quality meter.
+                    If the UDP port is busy (external capture), view-only.
+                    --udp-port 0 disables recording entirely
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
                     send synthetic telemetry (stand-in for the game); timescale
                     compresses in-game time for headless lap testing
@@ -144,15 +147,17 @@ fn session_balance(session: &analysis::Session) -> Option<(f32, f32, f32)> {
 fn cmd_serve(args: &[String]) -> Result<(), String> {
     let mut port: u16 = 8080;
     let mut sessions_dir = "sessions".to_string();
+    let mut udp_port: u16 = 20440;
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--port" => port = parse(flag, it.next())?,
             "--sessions" => sessions_dir = value(flag, it.next())?.clone(),
+            "--udp-port" => udp_port = parse(flag, it.next())?,
             other => return Err(format!("unknown flag '{other}' for serve")),
         }
     }
-    tuners::serve::run(port, sessions_dir).map_err(|e| e.to_string())
+    tuners::serve::run(port, sessions_dir, udp_port).map_err(|e| e.to_string())
 }
 
 fn cmd_advise(args: &[String]) -> Result<(), String> {

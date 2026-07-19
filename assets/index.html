@@ -75,6 +75,12 @@
   pre { white-space: pre-wrap; font: 13px/1.45 ui-monospace, Consolas, monospace; }
   .placeholder { color: var(--muted); }
   #live-panel.stale { opacity: 0.55; }
+  #rec-split {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--ink-2); font: 12px system-ui; padding: 4px 10px; cursor: pointer;
+  }
+  #rec-split:hover { border-color: var(--accent); color: var(--ink); }
+  #rec-status .rec-dot { color: #e66767; }
   .live-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
   .live-head .dot {
     width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
@@ -110,6 +116,9 @@
         <h2 style="margin:0">Live</h2>
         <span id="live-file" style="font-size:12px;color:var(--muted)"></span>
         <span id="live-status" style="font-size:12px;color:var(--muted)"></span>
+        <span style="flex:1"></span>
+        <span id="rec-status" style="font-size:12px;color:var(--muted)"></span>
+        <button id="rec-split" style="display:none">new session — tune changed</button>
       </div>
       <div class="live-row">
         <div class="readout"><div class="label">Speed</div>
@@ -542,17 +551,34 @@ window.addEventListener('resize', () => {
 // --- live view: SSE from the session `tuners capture` is recording now ---
 const STALE_MS = 3000;
 const live = new EventSource('/api/live');
+let lastRecFile = null;
 live.addEventListener('state', ev => {
   const s = JSON.parse(ev.data);
-  if (!s.frame) return;                       // nothing captured yet — stay hidden
+  const rec = s.recorder || { mode: 'external' };
   const panel = document.getElementById('live-panel');
+  // Recorder armed or data seen: show the panel so the user knows where things stand.
+  if (!s.frame && rec.mode === 'external') return;
   panel.style.display = 'block';
+
+  document.getElementById('rec-status').innerHTML = {
+    recording: `<span class="rec-dot">●</span> recording (${rec.packets.toLocaleString()} pkts)`,
+    waiting: 'armed — waiting for race telemetry',
+    external: 'view-only (external capture owns the UDP port)',
+  }[rec.mode] || '';
+  document.getElementById('rec-split').style.display = rec.mode === 'recording' ? '' : 'none';
+  if (rec.file !== lastRecFile) {             // session rotated: refresh the sidebar
+    lastRecFile = rec.file;
+    load();
+  }
+
   const stale = s.ageMs == null || s.ageMs > STALE_MS;
   panel.classList.toggle('stale', stale);
   document.getElementById('live-file').textContent = s.file || '';
   document.getElementById('live-status').textContent =
+    !s.frame ? '' :
     stale ? `no data for ${Math.round(s.ageMs / 1000)}s` : (s.frame.raceOn ? '' : 'menu / paused');
   const f = s.frame;
+  if (!f) return;
   const set = (id, v) => document.getElementById(id).textContent = v;
   set('lv-speed', (f.speedMps * MPH).toFixed(0));
   set('lv-gear', f.gear === 0 ? 'R' : f.gear === 11 ? '–' : f.gear); // 0 = reverse, 11 = transient glitch
@@ -568,6 +594,10 @@ live.addEventListener('state', ev => {
     temps[i].className = t < 160 ? 'cold' : t > 240 ? 'hot' : '';
   });
 });
+document.getElementById('rec-split').onclick = async () => {
+  await fetch('/api/record/split', { method: 'POST' });
+  // The recorder closes the file now; the next race-mode frame opens a fresh one.
+};
 live.addEventListener('quality', ev => {
   const q = JSON.parse(ev.data);
   const el = document.getElementById('live-quality');

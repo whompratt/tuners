@@ -5,22 +5,30 @@ analyses driving behaviour, and gives directional, evidence-cited tune advice �
 including A/B comparison of setups via spliced "ideal laps" that are robust to
 driving mistakes, and a history-aware tuning journal.
 
+## Use
+
+Run `tuners serve`, open http://127.0.0.1:8080/, drive. The server records
+telemetry automatically (race mode only — menus and free roam are skipped),
+shows a live view with a data-quality meter, and cuts session files on its own
+(car change, long idle). After editing your tune, click **new session** in the
+dashboard so the next stint lands in a fresh session for A/B comparison.
+
 ## Commands
 
 ```
-tuners capture    record a session (game's Data Out -> .ftel file)
+tuners serve      the app: auto-recording + web dashboard (charts, A/B compare,
+                  reports, live view + data-quality meter)
+tuners capture    record a session manually (serve then falls back to view-only)
 tuners analyze    per-stint observations: tires, grip, suspension, damping, gearing, laps
 tuners compare    tune A/B: lap-time delta, where it comes from, mistakes excluded
 tuners recommend  directional tune advice with evidence (blind mode)
 tuners advise     history-aware advice from a tuning journal (tune-journal.txt)
-tuners serve      local web dashboard: charts, A/B comparison, reports, and a
-                  live view + data-quality meter while `tuners capture` records
 tuners replay     integrity-check a recorded session
 tuners simulate   synthetic telemetry (stand-in for the game, for development)
 ```
 
 Game setup: Settings → HUD and Gameplay → Data Out On, IP = the machine running
-`tuners capture` (under WSL NAT, the WSL address from `hostname -I` — localhost is
+`tuners serve` (under WSL NAT, the WSL address from `hostname -I` — localhost is
 not forwarded for UDP), any port outside 5200-5300 (default 20440), then restart
 the game once. See [docs/guide.md](docs/guide.md) for capture practice (rewinds,
 lap counts, A-B-A protocol).

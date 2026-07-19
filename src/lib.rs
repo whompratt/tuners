@@ -3,6 +3,7 @@ pub mod capture;
 pub mod cars;
 pub mod live;
 pub mod packet;
+pub mod record;
 pub mod replay;
 pub mod serve;
 pub mod session;
