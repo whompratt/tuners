@@ -9,16 +9,23 @@ use std::path::Path;
 pub fn run(port: u16, sessions_dir: String) -> std::io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     println!("tuners dashboard: http://127.0.0.1:{port}/  (Ctrl+C to stop)");
+    let live: crate::live::SharedLive = Default::default();
+    {
+        let dir = sessions_dir.clone();
+        let live = live.clone();
+        std::thread::spawn(move || crate::live::run_tailer(dir, live));
+    }
     for stream in listener.incoming() {
         let dir = sessions_dir.clone();
         if let Ok(stream) = stream {
-            std::thread::spawn(move || handle(stream, &dir));
+            let live = live.clone();
+            std::thread::spawn(move || handle(stream, &dir, &live));
         }
     }
     Ok(())
 }
 
-fn handle(mut stream: TcpStream, sessions_dir: &str) {
+fn handle(mut stream: TcpStream, sessions_dir: &str, live: &crate::live::SharedLive) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
@@ -37,6 +44,10 @@ fn handle(mut stream: TcpStream, sessions_dir: &str) {
         }
     }
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
+    if target.split('?').next() == Some("/api/live") {
+        serve_sse(stream, live);
+        return;
+    }
     let (status, content_type, body) = respond(target, sessions_dir);
     let _ = write!(
         stream,
@@ -44,6 +55,95 @@ fn handle(mut stream: TcpStream, sessions_dir: &str) {
         body.len(),
     );
     let _ = stream.write_all(body.as_bytes());
+}
+
+/// SSE relay of the live session (plan 006 phase 4): a `state` event ~4x/s with
+/// the latest frame and data age, plus a `quality` event whenever the
+/// data-quality summary changes. Ends when the client disconnects.
+fn serve_sse(mut stream: TcpStream, live: &crate::live::SharedLive) {
+    if write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\nretry: 1000\n\n"
+    )
+    .is_err()
+    {
+        return;
+    }
+    let mut sent_quality_seq = u64::MAX;
+    loop {
+        let (state_json, quality) = {
+            let s = live.lock().unwrap();
+            let quality = (s.quality_seq != sent_quality_seq)
+                .then(|| (s.quality_seq, quality_json(s.quality.as_ref())));
+            (live_state_json(&s), quality)
+        };
+        if write!(stream, "event: state\ndata: {state_json}\n\n").is_err() {
+            return; // client gone
+        }
+        if let Some((seq, json)) = quality {
+            sent_quality_seq = seq;
+            if write!(stream, "event: quality\ndata: {json}\n\n").is_err() {
+                return;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
+/// The `state` SSE payload. Pure over the snapshot — unit-testable.
+fn live_state_json(s: &crate::live::LiveState) -> String {
+    let file = match s.file.as_ref().and_then(|p| p.file_name()) {
+        Some(name) => format!("\"{}\"", name.to_string_lossy()),
+        None => "null".into(),
+    };
+    let age_ms = s
+        .last_data
+        .map_or("null".into(), |t| t.elapsed().as_millis().to_string());
+    let frame = match &s.latest {
+        None => "null".into(),
+        Some(tf) => {
+            let f = &tf.frame;
+            let t = f.tire_temp;
+            format!(
+                "{{\"raceOn\":{},\"speedMps\":{:.2},\"rpm\":{:.0},\"maxRpm\":{:.0},\
+                 \"gear\":{},\"lapNumber\":{},\"currentLapS\":{:.3},\"lastLapS\":{:.3},\
+                 \"bestLapS\":{:.3},\"fuel\":{:.4},\"tireTempF\":[{:.0},{:.0},{:.0},{:.0}]}}",
+                f.is_race_on,
+                f.speed,
+                f.current_engine_rpm,
+                f.engine_max_rpm,
+                f.gear,
+                f.lap_number,
+                f.current_lap,
+                f.last_lap,
+                f.best_lap,
+                f.fuel,
+                t.fl,
+                t.fr,
+                t.rl,
+                t.rr,
+            )
+        }
+    };
+    format!("{{\"file\":{file},\"ageMs\":{age_ms},\"frame\":{frame}}}")
+}
+
+/// The `quality` SSE payload; `null` until a comparable lap exists.
+fn quality_json(q: Option<&crate::live::Quality>) -> String {
+    match q {
+        None => "null".into(),
+        Some(q) => format!(
+            "{{\"laps\":{},\"standingOnly\":{},\"bestLapS\":{:.3},\"spreadPct\":{:.2},\
+             \"sharedKm\":{:.2},\"coveragePct\":{:.0},\"verdict\":\"{}\"}}",
+            q.laps,
+            q.standing_only,
+            q.best_lap_s,
+            q.spread_frac * 100.0,
+            q.shared_km,
+            q.coverage_frac * 100.0,
+            q.verdict.as_str(),
+        ),
+    }
 }
 
 /// Route a request target to (status, content type, body). Pure — unit-testable.
@@ -301,6 +401,28 @@ mod tests {
         // Depending on cwd this may 500 (file not found) — accept both but never 400.
         assert_ne!(status, "400 Bad Request");
         let _ = (fixture, body);
+    }
+
+    #[test]
+    fn live_state_json_shapes() {
+        let empty = crate::live::LiveState::default();
+        assert_eq!(live_state_json(&empty), "{\"file\":null,\"ageMs\":null,\"frame\":null}");
+
+        let state = crate::live::LiveState {
+            file: Some("sessions/session-x.ftel".into()),
+            latest: Some(crate::analysis::TimedFrame {
+                recv_us: 0,
+                frame: crate::simulate::synth_frame(2.5),
+            }),
+            last_data: Some(std::time::Instant::now()),
+            ..Default::default()
+        };
+        let json = live_state_json(&state);
+        assert!(json.starts_with("{\"file\":\"session-x.ftel\""), "{json}");
+        for key in ["\"raceOn\":true", "\"speedMps\":", "\"rpm\":", "\"tireTempF\":["] {
+            assert!(json.contains(key), "{json} missing {key}");
+        }
+        assert_eq!(quality_json(None), "null");
     }
 
     #[test]

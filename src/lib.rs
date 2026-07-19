@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod capture;
 pub mod cars;
+pub mod live;
 pub mod packet;
 pub mod replay;
 pub mod serve;

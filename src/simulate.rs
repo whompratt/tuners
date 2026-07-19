@@ -11,28 +11,35 @@ pub struct SimOpts {
     pub port: u16,
     pub packets: u64,
     pub rate: f64,
+    /// In-game seconds per wall second (>1 compresses laps for headless tests).
+    pub timescale: f64,
 }
 
 pub fn run(opts: &SimOpts) -> io::Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     let target = format!("{}:{}", opts.addr, opts.port);
     println!(
-        "sending {} synthetic packets to {target} at {:.0} Hz",
-        opts.packets, opts.rate
+        "sending {} synthetic packets to {target} at {:.0} Hz (timescale {:.0}x)",
+        opts.packets, opts.rate, opts.timescale
     );
     for i in 0..opts.packets {
-        let t = i as f32 / opts.rate as f32;
+        let t = (i as f64 * opts.timescale / opts.rate) as f32;
         socket.send_to(&packet::encode(&synth_frame(t)), &target)?;
         std::thread::sleep(Duration::from_secs_f64(1.0 / opts.rate));
     }
     Ok(())
 }
 
+/// Synthetic lap length in in-game seconds.
+pub const LAP_S: f32 = 30.0;
+
 /// Deterministic, vaguely-plausible car state at time `t` seconds: speed and steering
-/// oscillate, gears step, temperatures drift. Not physics — just non-constant values
-/// for every field group the analysis will eventually care about.
+/// oscillate, gears step, temperatures drift, laps tick over every LAP_S seconds so
+/// the analysis pipeline (lap split, profile, quality) sees real lap structure.
+/// Not physics — just non-constant values for every field group analysis cares about.
 pub fn synth_frame(t: f32) -> TelemetryFrame {
     let speed = 30.0 + 15.0 * (t / 4.0).sin();
+    let lap = (t / LAP_S) as u16;
     let rpm = 3800.0 + 2600.0 * (t * 1.5).sin();
     let wheel_speed = speed / 0.35;
     let corner_wave = |phase: f32, base: f32, amp: f32| Corners {
@@ -72,10 +79,13 @@ pub fn synth_frame(t: f32) -> TelemetryFrame {
         tire_temp: corner_wave(0.5, 175.0, 20.0),
         boost: 6.0 + 6.0 * (t * 1.5).sin().max(0.0),
         fuel: (0.95 - t * 0.0002).max(0.0),
-        distance_traveled: speed * t,
-        current_lap: t % 60.0,
+        // Integral of the speed curve, so distance stays monotonic and consistent.
+        distance_traveled: 30.0 * t - 60.0 * (t / 4.0).cos() + 60.0,
+        best_lap: if lap >= 1 { LAP_S } else { 0.0 },
+        last_lap: if lap >= 1 { LAP_S } else { 0.0 },
+        current_lap: t % LAP_S,
         current_race_time: t,
-        lap_number: (t / 60.0) as u16,
+        lap_number: lap,
         race_position: 1,
         accel: 200,
         brake: if (t / 5.0).sin() < -0.8 { 180 } else { 0 },

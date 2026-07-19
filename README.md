@@ -13,7 +13,8 @@ tuners analyze    per-stint observations: tires, grip, suspension, damping, gear
 tuners compare    tune A/B: lap-time delta, where it comes from, mistakes excluded
 tuners recommend  directional tune advice with evidence (blind mode)
 tuners advise     history-aware advice from a tuning journal (tune-journal.txt)
-tuners serve      local web dashboard: charts, A/B comparison, reports
+tuners serve      local web dashboard: charts, A/B comparison, reports, and a
+                  live view + data-quality meter while `tuners capture` records
 tuners replay     integrity-check a recorded session
 tuners simulate   synthetic telemetry (stand-in for the game, for development)
 ```

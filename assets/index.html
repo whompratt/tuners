@@ -74,6 +74,27 @@
   .tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
   pre { white-space: pre-wrap; font: 13px/1.45 ui-monospace, Consolas, monospace; }
   .placeholder { color: var(--muted); }
+  #live-panel.stale { opacity: 0.55; }
+  .live-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .live-head .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
+    align-self: center;
+  }
+  #live-panel:not(.stale) .live-head .dot { background: #199e70; }
+  .live-row { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: flex-end; }
+  .readout .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .readout .value { font-size: 26px; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .readout .unit { font-size: 12px; color: var(--muted); }
+  .readout.minor .value { font-size: 16px; }
+  .temps { display: grid; grid-template-columns: repeat(2, 52px); gap: 3px; }
+  .temps div {
+    text-align: center; font-size: 12px; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 0;
+  }
+  .temps .cold { color: #3987e5; } .temps .hot { color: #e66767; }
+  #live-quality { margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+  #live-quality .num { font-variant-numeric: tabular-nums; color: var(--ink); }
+  .v-good { color: #199e70; } .v-usable { color: var(--accent); } .v-insufficient { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -83,6 +104,33 @@
     <div id="sessions"></div>
   </aside>
   <main>
+    <div id="live-panel" class="panel" style="display:none">
+      <div class="live-head">
+        <span class="dot"></span>
+        <h2 style="margin:0">Live</h2>
+        <span id="live-file" style="font-size:12px;color:var(--muted)"></span>
+        <span id="live-status" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div class="live-row">
+        <div class="readout"><div class="label">Speed</div>
+          <div class="value"><span id="lv-speed">–</span> <span class="unit">mph</span></div></div>
+        <div class="readout"><div class="label">Gear</div>
+          <div class="value" id="lv-gear">–</div></div>
+        <div class="readout"><div class="label">RPM</div>
+          <div class="value"><span id="lv-rpm">–</span> <span class="unit" id="lv-maxrpm"></span></div></div>
+        <div class="readout minor"><div class="label">Lap</div>
+          <div class="value" id="lv-lap">–</div></div>
+        <div class="readout minor"><div class="label">Last</div>
+          <div class="value" id="lv-last">–</div></div>
+        <div class="readout minor"><div class="label">Best</div>
+          <div class="value" id="lv-best">–</div></div>
+        <div class="readout minor"><div class="label">Fuel</div>
+          <div class="value" id="lv-fuel">–</div></div>
+        <div class="readout"><div class="label">Tires °F</div>
+          <div class="temps" id="lv-temps"><div>–</div><div>–</div><div>–</div><div>–</div></div></div>
+      </div>
+      <div id="live-quality"></div>
+    </div>
     <div id="compare-panel" style="display:none" class="panel">
       <h2 id="compare-title">A/B comparison</h2>
       <div id="compare-summary" style="font-size:12px;color:var(--ink-2);margin-bottom:8px"></div>
@@ -489,6 +537,55 @@ function tooltip(bin, px, py) {
 window.addEventListener('resize', () => {
   if (lapData) drawChart();
   if (cmpData) drawCompare();
+});
+
+// --- live view: SSE from the session `tuners capture` is recording now ---
+const STALE_MS = 3000;
+const live = new EventSource('/api/live');
+live.addEventListener('state', ev => {
+  const s = JSON.parse(ev.data);
+  if (!s.frame) return;                       // nothing captured yet — stay hidden
+  const panel = document.getElementById('live-panel');
+  panel.style.display = 'block';
+  const stale = s.ageMs == null || s.ageMs > STALE_MS;
+  panel.classList.toggle('stale', stale);
+  document.getElementById('live-file').textContent = s.file || '';
+  document.getElementById('live-status').textContent =
+    stale ? `no data for ${Math.round(s.ageMs / 1000)}s` : (s.frame.raceOn ? '' : 'menu / paused');
+  const f = s.frame;
+  const set = (id, v) => document.getElementById(id).textContent = v;
+  set('lv-speed', (f.speedMps * MPH).toFixed(0));
+  set('lv-gear', f.gear === 0 ? 'R' : f.gear === 11 ? '–' : f.gear); // 0 = reverse, 11 = transient glitch
+  set('lv-rpm', f.rpm.toFixed(0));
+  set('lv-maxrpm', `/ ${f.maxRpm.toFixed(0)}`);
+  set('lv-lap', `${f.lapNumber + 1} · ${f.currentLapS.toFixed(1)}s`);
+  set('lv-last', f.lastLapS > 0 ? fmtLap(f.lastLapS) : '–');
+  set('lv-best', f.bestLapS > 0 ? fmtLap(f.bestLapS) : '–');
+  set('lv-fuel', `${(f.fuel * 100).toFixed(0)}%`);
+  const temps = document.getElementById('lv-temps').children;
+  f.tireTempF.forEach((t, i) => {
+    temps[i].textContent = t.toFixed(0);
+    temps[i].className = t < 160 ? 'cold' : t > 240 ? 'hot' : '';
+  });
+});
+live.addEventListener('quality', ev => {
+  const q = JSON.parse(ev.data);
+  const el = document.getElementById('live-quality');
+  if (!q) {
+    el.innerHTML = '<span class="v-insufficient">data quality: no complete laps yet</span>';
+    return;
+  }
+  const lapWord = q.standingOnly ? 'standing run(s)' : 'flying lap(s)';
+  const verdictText = {
+    good: 'enough for a trustworthy A/B comparison',
+    usable: 'comparable — more laps would firm it up',
+    insufficient: 'keep driving — a comparison needs 2+ laps',
+  }[q.verdict] || q.verdict;
+  el.innerHTML = `data quality: <span class="num">${q.laps}</span> ${lapWord} · ` +
+    `best <span class="num">${fmtLap(q.bestLapS)}</span> · ` +
+    `spread <span class="num">${q.spreadPct.toFixed(1)}%</span> · ` +
+    `<span class="num">${q.sharedKm.toFixed(2)} km</span> shared (${q.coveragePct.toFixed(0)}% coverage) — ` +
+    `<span class="v-${q.verdict}">${verdictText}</span>`;
 });
 load();
 </script>

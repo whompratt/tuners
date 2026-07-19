@@ -21,9 +21,11 @@ USAGE:
                     history-aware advice from a tuning journal (default tune-journal.txt);
                     journal lines: <session-file> | <change since previous session>
   tuners serve    [--port 8080] [--sessions sessions]
-                    local web dashboard: session list + reports in the browser
-  tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60]
-                    send synthetic telemetry (stand-in for the game)
+                    local web dashboard: session list, reports, and a live view
+                    of the session `tuners capture` is currently recording
+  tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
+                    send synthetic telemetry (stand-in for the game); timescale
+                    compresses in-game time for headless lap testing
 ";
 
 fn main() -> ExitCode {
@@ -267,6 +269,7 @@ fn cmd_simulate(args: &[String]) -> Result<(), String> {
         port: 20440,
         packets: 600,
         rate: 60.0,
+        timescale: 1.0,
     };
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -275,6 +278,7 @@ fn cmd_simulate(args: &[String]) -> Result<(), String> {
             "--port" => opts.port = parse(flag, it.next())?,
             "--packets" => opts.packets = parse(flag, it.next())?,
             "--rate" => opts.rate = parse(flag, it.next())?,
+            "--timescale" => opts.timescale = parse(flag, it.next())?,
             other => return Err(format!("unknown flag '{other}' for simulate")),
         }
     }
