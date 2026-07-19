@@ -145,6 +145,16 @@ field is optional and recommendation quality degrades gracefully:
   which side actually got worked (turn-direction balance is derivable from
   telemetry lateral-G history).
 
+**Units**: values are stored in canonical imperial (FH6's internal units: psi,
+lb/in, in, lb, °F, m/s from telemetry); unit preferences are a pure display
+layer, per field rather than per system — the UK mix (psi + kgf/mm + cm + kgf +
+kg + mph + °C) is the proof that "unit system" is really a bundle of per-field
+defaults. Imperial/Metric/UK presets quick-fill the per-field pickers; switching
+is safe at any time because storage never changes. Journal notes carry the
+canonical unit suffix ("front springs -28 lb/in") so the hill-climb math stays
+in one unit forever; a per-field epsilon (half a display step) keeps unit
+round-trips from journaling phantom diffs.
+
 **Baseline tune**: a session starts from whatever tune the car currently has —
 stock counts; the baseline revision is simply "what's in the sliders now" and
 iteration proceeds from there. Suggesting a starting tune from car stats

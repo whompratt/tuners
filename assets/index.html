@@ -227,7 +227,7 @@
       </div>
       <div class="live-grid">
         <div class="readout"><div class="label">Speed</div>
-          <div class="value"><span id="lv-speed">–</span> <span class="unit">mph</span></div></div>
+          <div class="value"><span id="lv-speed">–</span> <span class="unit" id="lv-speed-unit">mph</span></div></div>
         <div class="readout"><div class="label">Gear</div>
           <div class="value" id="lv-gear">–</div>
           <div class="sub"><span id="lv-rpm">–</span><span id="lv-maxrpm"></span> rpm</div></div>
@@ -239,7 +239,7 @@
           <div class="trow">best <span class="num" id="lv-best">–</span></div></div>
         <div class="readout"><div class="label">Fuel</div>
           <div class="value" id="lv-fuel">–</div></div>
-        <div class="readout"><div class="label">Tires °F</div>
+        <div class="readout"><div class="label" id="lv-tires-label">Tires °F</div>
           <div class="temps" id="lv-temps"><div>–</div><div>–</div><div>–</div><div>–</div></div></div>
       </div>
       </div>
@@ -267,8 +267,54 @@
 <script>
 // reference dark categorical palette (validated, fixed order — never cycled)
 const SERIES = ['#3987e5', '#008300', '#d55181', '#c98500', '#199e70', '#d95926', '#9085e9', '#e66767'];
-const MPH = 2.23694;
 let lapData = null;
+
+// --- units: storage is canonical imperial (FH6 internals); prefs are pure
+// display formatting, switchable any time. k converts canonical -> display.
+const UNITS = {
+  pressure: { psi: { k: 1, dp: 1, l: 'psi' }, bar: { k: 0.0689476, dp: 2, l: 'bar' } },
+  springs: { lbin: { k: 1, dp: 0, l: 'lb/in' }, kgfmm: { k: 0.0178580, dp: 2, l: 'kgf/mm' } },
+  length: { in: { k: 1, dp: 1, l: 'in' }, cm: { k: 2.54, dp: 1, l: 'cm' } },
+  force: { lb: { k: 1, dp: 0, l: 'lb' }, kgf: { k: 0.453592, dp: 0, l: 'kgf' } },
+  mass: { lb: { k: 1, dp: 0, l: 'lb' }, kg: { k: 0.453592, dp: 0, l: 'kg' } },
+  speed: { mph: { k: 2.23694, dp: 0, l: 'mph' }, kmh: { k: 3.6, dp: 0, l: 'km/h' } }, // from m/s
+};
+const FIELD_UNIT = {
+  tire_pressure_f: 'pressure', tire_pressure_r: 'pressure',
+  springs_f: 'springs', springs_r: 'springs',
+  ride_height_f: 'length', ride_height_r: 'length',
+  aero_f: 'force', aero_r: 'force', weight: 'mass',
+};
+const UNIT_PRESETS = {
+  imperial: { pressure: 'psi', springs: 'lbin', length: 'in', force: 'lb', mass: 'lb', speed: 'mph', temp: 'f' },
+  metric: { pressure: 'bar', springs: 'kgfmm', length: 'cm', force: 'kgf', mass: 'kg', speed: 'kmh', temp: 'c' },
+  uk: { pressure: 'psi', springs: 'kgfmm', length: 'cm', force: 'kgf', mass: 'kg', speed: 'mph', temp: 'c' },
+};
+const UNIT_DIMS = [
+  ['pressure', 'tire pressure'], ['springs', 'spring rate'], ['length', 'ride height'],
+  ['force', 'aero'], ['mass', 'weight'], ['speed', 'speed'], ['temp', 'temperature'],
+];
+let unitPrefs = { ...UNIT_PRESETS.imperial };
+const unitOf = key => {
+  const dim = FIELD_UNIT[key];
+  return dim ? UNITS[dim][unitPrefs[dim]] || UNITS[dim][Object.keys(UNITS[dim])[0]] : null;
+};
+// canonical string -> display string (for form/summary), and back
+const toDisp = (key, v) => {
+  const u = unitOf(key);
+  const n = parseFloat(v);
+  return !u || isNaN(n) ? v : (n * u.k).toFixed(u.dp).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+};
+const toCanon = (key, v) => {
+  const u = unitOf(key);
+  const n = parseFloat(v);
+  return !u || isNaN(n) ? v : String(Math.round((n / u.k) * 1e4) / 1e4);
+};
+const unitLabel = key => { const u = unitOf(key); return u ? ` (${u.l})` : ''; };
+// telemetry display: speed from m/s, temps from °F
+const SPD = () => UNITS.speed[unitPrefs.speed] || UNITS.speed.mph;
+const tempDisp = f => unitPrefs.temp === 'c' ? (f - 32) / 1.8 : f;
+const tempLabel = () => unitPrefs.temp === 'c' ? '°C' : '°F';
 
 const fmtLap = s => {
   const ms = Math.round(s * 1000), m = Math.floor(ms / 60000), r = ms % 60000;
@@ -413,7 +459,7 @@ function compareLayout() {
   for (const d of cmpData.delta) { acc += d; cum.push(acc); }
   return { ctx, cssW, cssH, pad, bins, speedH, gapH, barsH, cumH,
     plotW: cssW - pad.l - pad.r,
-    yMax: Math.ceil(Math.max(...cmpData.speedsA, ...cmpData.speedsB) * MPH / 20) * 20,
+    yMax: Math.ceil(Math.max(...cmpData.speedsA, ...cmpData.speedsB) * SPD().k / 20) * 20,
     segs, segMax: Math.max(0.05, ...segs.map(Math.abs)),
     cum, cumMax: Math.max(0.1, ...cum.map(Math.abs)) };
 }
@@ -440,12 +486,12 @@ function drawCompare(hoverBin) {
     ctx.fillText(`${g}`, pad.l - 8, ySpeed(g));
   }
   ctx.save(); ctx.translate(11, pad.t + speedH / 2); ctx.rotate(-Math.PI / 2);
-  ctx.textAlign = 'center'; ctx.fillText('mph', 0, 0); ctx.restore();
+  ctx.textAlign = 'center'; ctx.fillText(SPD().l, 0, 0); ctx.restore();
 
   [[cmpData.speedsA, '#3987e5'], [cmpData.speedsB, '#199e70']].forEach(([speeds, color]) => {
     ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
     ctx.beginPath();
-    speeds.forEach((v, b) => b ? ctx.lineTo(x(b), ySpeed(v * MPH)) : ctx.moveTo(x(b), ySpeed(v * MPH)));
+    speeds.forEach((v, b) => b ? ctx.lineTo(x(b), ySpeed(v * SPD().k)) : ctx.moveTo(x(b), ySpeed(v * SPD().k)));
     ctx.stroke();
   });
 
@@ -514,8 +560,8 @@ document.getElementById('compare-wrap').addEventListener('mousemove', ev => {
   const tip = document.getElementById('compare-tip');
   tip.innerHTML =
     `<div class="t-head">${(bin * cmpData.binMeters / 1000).toFixed(2)} km</div>` +
-    `<div><span class="chip" style="background:#3987e5"></span>A <span class="num">${(cmpData.speedsA[bin] * MPH).toFixed(0)} mph</span></div>` +
-    `<div><span class="chip" style="background:#199e70"></span>B <span class="num">${(cmpData.speedsB[bin] * MPH).toFixed(0)} mph</span></div>` +
+    `<div><span class="chip" style="background:#3987e5"></span>A <span class="num">${(cmpData.speedsA[bin] * SPD().k).toFixed(0)} ${SPD().l}</span></div>` +
+    `<div><span class="chip" style="background:#199e70"></span>B <span class="num">${(cmpData.speedsB[bin] * SPD().k).toFixed(0)} ${SPD().l}</span></div>` +
     `<div>this 250 m: <span class="num">${seg < 0 ? 'B' : 'A'} quicker by ${Math.abs(seg).toFixed(2)}s</span></div>` +
     `<div>gap so far: <span class="num">${gap < 0 ? 'B' : 'A'} ahead by ${Math.abs(gap).toFixed(2)}s</span></div>`;
   tip.style.display = 'block';
@@ -559,7 +605,7 @@ function layout() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const pad = { l: 56, r: 12, t: 8, b: 28 };
   const bins = Math.max(...lapData.laps.map(l => l.speeds.length));
-  const maxMph = Math.max(...lapData.laps.flatMap(l => l.speeds)) * MPH;
+  const maxMph = Math.max(...lapData.laps.flatMap(l => l.speeds)) * SPD().k;
   return { ctx, cssW, cssH, pad,
     plotW: cssW - pad.l - pad.r, plotH: cssH - pad.t - pad.b,
     bins, kmMax: bins * lapData.binMeters / 1000, yMax: Math.ceil(maxMph / 20) * 20 };
@@ -587,7 +633,7 @@ function drawChart(hoverBin) {
   }
   ctx.save();                                      // y-axis unit
   ctx.translate(11, pad.t + plotH / 2); ctx.rotate(-Math.PI / 2);
-  ctx.fillText('mph', 0, 0);
+  ctx.fillText(SPD().l, 0, 0);
   ctx.restore();
   ctx.strokeStyle = css('--baseline');             // baseline
   ctx.beginPath(); ctx.moveTo(pad.l, y(0)); ctx.lineTo(cssW - pad.r, y(0)); ctx.stroke();
@@ -596,7 +642,7 @@ function drawChart(hoverBin) {
     ctx.strokeStyle = SERIES[i % SERIES.length];
     ctx.lineWidth = 2; ctx.lineJoin = 'round';
     ctx.beginPath();
-    lap.speeds.forEach((v, b) => b ? ctx.lineTo(x(b), y(v * MPH)) : ctx.moveTo(x(b), y(v * MPH)));
+    lap.speeds.forEach((v, b) => b ? ctx.lineTo(x(b), y(v * SPD().k)) : ctx.moveTo(x(b), y(v * SPD().k)));
     ctx.stroke();
   });
 
@@ -634,11 +680,11 @@ function tooltip(bin, px, py) {
   if (bin == null) { tip.style.display = 'none'; return; }
   const km = (bin * lapData.binMeters / 1000).toFixed(2);
   const rows = lapData.laps
-    .map((lap, i) => ({ lap, i, mph: (lap.speeds[bin] ?? 0) * MPH }))
+    .map((lap, i) => ({ lap, i, mph: (lap.speeds[bin] ?? 0) * SPD().k }))
     .sort((a, b) => b.mph - a.mph)
     .map(({ lap, i, mph }) =>
       `<div><span class="chip" style="background:${SERIES[i % SERIES.length]}"></span>` +
-      `lap ${lap.lap} <span class="num">${mph.toFixed(0)} mph</span></div>`);
+      `lap ${lap.lap} <span class="num">${mph.toFixed(0)} ${SPD().l}</span></div>`);
   tip.innerHTML = `<div class="t-head">${km} km</div>` + rows.join('');
   tip.style.display = 'block';
   const wrap = document.getElementById('canvas-wrap').getBoundingClientRect();
@@ -654,7 +700,7 @@ window.addEventListener('resize', () => {
 
 // --- tuning session: the campaign (one car, facts, tune revisions) ---
 const TUNE_FIELDS = [
-  ['tire_psi_f', 'front tire psi'], ['tire_psi_r', 'rear tire psi'],
+  ['tire_pressure_f', 'front tire pressure'], ['tire_pressure_r', 'rear tire pressure'],
   ['final_drive', 'final drive'],
   ['camber_f', 'front camber'], ['camber_r', 'rear camber'],
   ['toe_f', 'front toe'], ['toe_r', 'rear toe'], ['caster', 'caster'],
@@ -669,7 +715,7 @@ const TUNE_FIELDS = [
   ['diff_center', 'center diff %'],
 ];
 const FACT_FIELDS = [
-  ['front_weight_pct', 'front weight %'], ['weight_lb', 'weight (lb)'],
+  ['front_weight_pct', 'front weight %'], ['weight', 'weight'],
   ['tire_compound', 'tire compound'], ['abs', 'ABS (on/off)'],
   ['tcs', 'TCS (on/off)'], ['stability', 'stability (on/off)'],
 ];
@@ -678,7 +724,13 @@ const $ = id => document.getElementById(id);
 
 async function loadSession() {
   sessionData = await fetch('/api/session').then(r => r.json());
+  for (const [dim] of UNIT_DIMS) {
+    const v = sessionData && sessionData.facts[`unit_${dim}`];
+    if (v) unitPrefs[dim] = v;
+  }
   renderSession();
+  if (lapData) drawChart();
+  if (cmpData) drawCompare();
   // Scope the stint list to the session's car by default.
   const filter = document.getElementById('car-filter');
   if (sessionData && sessionData.car != null
@@ -698,12 +750,14 @@ function renderSession() {
   $('session-edit').textContent = active ? 'session settings' : 'set up session';
   $('tune-edit').style.display = active ? '' : 'none';
   $('tune-edit').textContent = s && s.latest ? 'new tune revision' : 'enter baseline tune';
-  const facts = active ? Object.entries(s.facts) : [];
+  const facts = active ? Object.entries(s.facts).filter(([k]) => !k.startsWith('unit_')) : [];
   const latest = s && s.latest ? Object.entries(s.latest) : [];
+  const kv = (fields, k, v) =>
+    `<span class="kv">${label(fields, k)} <b>${toDisp(k, v)}${unitLabel(k).replace(/[()]/g, '')}</b></span>`;
   $('tune-summary').innerHTML =
-    facts.map(([k, v]) => `<span class="kv">${label(FACT_FIELDS, k)} <b>${v}</b></span>`).join('') +
+    facts.map(([k, v]) => kv(FACT_FIELDS, k, v)).join('') +
     (latest.length && facts.length ? '<br>' : '') +
-    latest.map(([k, v]) => `<span class="kv">${label(TUNE_FIELDS, k)} <b>${v}</b></span>`).join('');
+    latest.map(([k, v]) => kv(TUNE_FIELDS, k, v)).join('');
 }
 const label = (fields, key) => (fields.find(([k]) => k === key) || [key, key])[1];
 
@@ -718,8 +772,29 @@ function openSessionForm() {
     `</select></div>` +
     `<div><label>or car ordinal (manual)</label><input id="ss-car-manual" type="number" ${cur && !cars.has(cur) ? `value="${cur}"` : ''}></div>` +
     FACT_FIELDS.map(([k, l]) =>
-      `<div><label>${l}</label><input id="ss-${k}" value="${(sessionData && sessionData.facts[k]) || ''}"></div>`
+      `<div><label>${l}${unitLabel(k)}</label><input id="ss-${k}" value="${toDisp(k, (sessionData && sessionData.facts[k]) || '')}"></div>`
+    ).join('') +
+    `<div style="grid-column:1/-1;margin-top:6px;display:flex;gap:8px;align-items:baseline">
+       <label style="margin:0">units</label>
+       <button type="button" class="btn" id="up-imperial">imperial</button>
+       <button type="button" class="btn" id="up-metric">metric</button>
+       <button type="button" class="btn" id="up-uk">UK</button>
+       <span style="font-size:12px;color:var(--muted)">display only — values are stored in the game's native units, switch any time</span>
+     </div>` +
+    UNIT_DIMS.map(([dim, l]) => dim === 'temp'
+      ? `<div><label>temperature</label><select id="up-${dim}" data-dim="${dim}">
+           <option value="f" ${unitPrefs.temp === 'f' ? 'selected' : ''}>°F</option>
+           <option value="c" ${unitPrefs.temp === 'c' ? 'selected' : ''}>°C</option></select></div>`
+      : `<div><label>${l}</label><select id="up-${dim}" data-dim="${dim}">` +
+        Object.entries(UNITS[dim]).map(([u, d]) =>
+          `<option value="${u}" ${unitPrefs[dim] === u ? 'selected' : ''}>${d.l}</option>`).join('') +
+        `</select></div>`
     ).join('');
+  for (const preset of ['imperial', 'metric', 'uk']) {
+    $(`up-${preset}`).onclick = () => {
+      for (const [dim, u] of Object.entries(UNIT_PRESETS[preset])) $(`up-${dim}`).value = u;
+    };
+  }
   $('session-form').style.display = '';
   $('tune-form').style.display = 'none';
 }
@@ -728,7 +803,11 @@ $('session-cancel').onclick = () => $('session-form').style.display = 'none';
 $('session-save').onclick = async () => {
   const body = new URLSearchParams();
   body.set('car', $('ss-car-manual').value || $('ss-car').value);
-  for (const [k] of FACT_FIELDS) body.set(k, $(`ss-${k}`).value);
+  // Units first, so toCanon below converts under the prefs being saved.
+  for (const [dim] of UNIT_DIMS) {
+    if ($(`up-${dim}`)) { unitPrefs[dim] = $(`up-${dim}`).value; body.set(`unit_${dim}`, unitPrefs[dim]); }
+  }
+  for (const [k] of FACT_FIELDS) body.set(k, toCanon(k, $(`ss-${k}`).value));
   await fetch('/api/session', { method: 'POST', body });
   $('session-form').style.display = 'none';
   loadSession();
@@ -737,7 +816,7 @@ $('session-save').onclick = async () => {
 function openTuneForm() {
   const latest = (sessionData && sessionData.latest) || {};
   $('tune-fields').innerHTML = TUNE_FIELDS.map(([k, l]) =>
-    `<div><label>${l}</label><input id="tf-${k}" type="number" step="any" value="${latest[k] || ''}"></div>`
+    `<div><label>${l}${unitLabel(k)}</label><input id="tf-${k}" type="number" step="any" value="${toDisp(k, latest[k] || '')}"></div>`
   ).join('');
   $('tune-msg').textContent = '';
   $('tune-form').style.display = '';
@@ -750,7 +829,7 @@ $('tune-save').onclick = async () => {
   const body = new URLSearchParams();
   for (const [k] of TUNE_FIELDS) {
     const v = $(`tf-${k}`).value;
-    if (v !== '') body.set(k, v);
+    if (v !== '') body.set(k, toCanon(k, v));
   }
   const resp = await fetch('/api/session/tune', { method: 'POST', body });
   if (!resp.ok) { $('tune-msg').textContent = await resp.text(); return; }
@@ -805,7 +884,7 @@ live.addEventListener('state', ev => {
   const fmtClock = s => s >= 60
     ? `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`
     : `${s.toFixed(1)}s`;
-  set('lv-speed', (f.speedMps * MPH).toFixed(0));
+  set('lv-speed', (f.speedMps * SPD().k).toFixed(0));
   set('lv-gear', f.gear === 0 ? 'R' : f.gear === 11 ? '–' : f.gear); // 0 = reverse, 11 = transient glitch
   set('lv-rpm', f.rpm.toFixed(0));
   set('lv-maxrpm', ` / ${f.maxRpm.toFixed(0)}`);
@@ -815,9 +894,11 @@ live.addEventListener('state', ev => {
   set('lv-best', f.bestLapS > 0 ? fmtLap(f.bestLapS) : '–');
   set('lv-fuel', `${(f.fuel * 100).toFixed(0)}%`);
   const temps = document.getElementById('lv-temps').children;
+  document.getElementById('lv-speed-unit').textContent = SPD().l;
+  document.getElementById('lv-tires-label').textContent = `Tires ${tempLabel()}`;
   f.tireTempF.forEach((t, i) => {
-    temps[i].textContent = t.toFixed(0);
-    temps[i].className = t < 160 ? 'cold' : t > 240 ? 'hot' : '';
+    temps[i].textContent = tempDisp(t).toFixed(0);
+    temps[i].className = t < 160 ? 'cold' : t > 240 ? 'hot' : ''; // thresholds in canonical °F
   });
 });
 // The split button expands into a small form capturing the tune delta in

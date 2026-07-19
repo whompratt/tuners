@@ -274,7 +274,10 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         let vals: Vec<String> = rev
             .values
             .iter()
-            .map(|(k, v)| format!("{} {v}", tuners::tuning::field_phrase(k)))
+            .map(|(k, v)| match tuners::tuning::canonical_unit(k) {
+                Some(unit) => format!("{} {v} {unit}", tuners::tuning::field_phrase(k)),
+                None => format!("{} {v}", tuners::tuning::field_phrase(k)),
+            })
             .collect();
         println!(
             "\ncurrent tune (tune-session.txt, revision {}): {}",
@@ -290,9 +293,10 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             let known: Vec<String> = keys
                 .iter()
                 .filter_map(|k| {
-                    rev.values
-                        .get(*k)
-                        .map(|v| format!("{} = {v}", tuners::tuning::field_phrase(k)))
+                    rev.values.get(*k).map(|v| match tuners::tuning::canonical_unit(k) {
+                        Some(unit) => format!("{} = {v} {unit}", tuners::tuning::field_phrase(k)),
+                        None => format!("{} = {v}", tuners::tuning::field_phrase(k)),
+                    })
                 })
                 .collect();
             if !known.is_empty() {

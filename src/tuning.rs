@@ -43,11 +43,14 @@ pub struct TuningSession {
 }
 
 /// Tune fields the dashboard form offers, with the journal phrase used when the
-/// field changes (None = no journal family yet; the change is still recorded).
-/// Order matches the in-game tuning menu.
+/// field changes. Order matches the in-game tuning menu.
+///
+/// VALUES ARE STORED IN CANONICAL IMPERIAL UNITS (what FH6 uses internally):
+/// psi, lb/in, in, lb. Unit preferences are a pure display/formatting layer in
+/// the dashboard — the file, the diffs, and the journal never change units.
 pub const FIELDS: &[(&str, &str)] = &[
-    ("tire_psi_f", "front tire psi"),
-    ("tire_psi_r", "rear tire psi"),
+    ("tire_pressure_f", "front tire pressure"),
+    ("tire_pressure_r", "rear tire pressure"),
     ("final_drive", "final drive"),
     ("camber_f", "front camber"),
     ("camber_r", "rear camber"),
@@ -79,6 +82,31 @@ pub fn field_phrase(key: &str) -> &str {
         .find(|(k, _)| *k == key)
         .map(|(_, p)| *p)
         .unwrap_or(key)
+}
+
+/// Canonical (stored) unit for unit-bearing fields; None for unitless sliders,
+/// degrees, percentages, and ratios.
+pub fn canonical_unit(key: &str) -> Option<&'static str> {
+    match key {
+        "tire_pressure_f" | "tire_pressure_r" => Some("psi"),
+        "springs_f" | "springs_r" => Some("lb/in"),
+        "ride_height_f" | "ride_height_r" => Some("in"),
+        "aero_f" | "aero_r" => Some("lb"),
+        _ => None,
+    }
+}
+
+/// Smallest delta worth journaling, per field, in canonical units — half a
+/// sensible display step. Guards against phantom diffs from unit-conversion
+/// round-trips (enter 700 lb/in, display 12.5 kgf/mm, re-save → 699.96).
+fn diff_epsilon(key: &str) -> f32 {
+    match key {
+        "tire_pressure_f" | "tire_pressure_r" => 0.05,
+        "springs_f" | "springs_r" => 0.5,
+        "ride_height_f" | "ride_height_r" => 0.05,
+        "aero_f" | "aero_r" => 0.5,
+        _ => 1e-4,
+    }
 }
 
 impl TuningSession {
@@ -167,8 +195,13 @@ pub fn diff_note(prev: &Revision, next: &Revision) -> String {
         ) {
             (Some(old), Ok(new)) => {
                 let delta = new - old;
-                if delta != 0.0 {
-                    parts.push(format!("{phrase} {delta:+}"));
+                if delta.abs() >= diff_epsilon(key) {
+                    // Canonical unit suffixed so the journal is self-documenting;
+                    // the math stays in one unit no matter how displays are set.
+                    match canonical_unit(key) {
+                        Some(unit) => parts.push(format!("{phrase} {delta:+} {unit}")),
+                        None => parts.push(format!("{phrase} {delta:+}")),
+                    }
                 }
             }
             (None, _) if old_val.is_none() => parts.push(format!("{phrase} = {new_val}")),
@@ -226,11 +259,11 @@ mod tests {
     #[test]
     fn multi_field_and_non_numeric_changes_are_recorded_honestly() {
         let a = rev("t1", &[("arb_f", "24"), ("aero_r", "180")]);
-        let b = rev("t2", &[("arb_f", "26"), ("aero_r", "200"), ("tire_psi_f", "28.5")]);
+        let b = rev("t2", &[("arb_f", "26"), ("aero_r", "200"), ("tire_pressure_f", "28.5")]);
         let note = diff_note(&a, &b);
         assert!(note.contains("front arb +2"), "{note}");
-        assert!(note.contains("rear aero +20"), "{note}");
-        assert!(note.contains("front tire psi = 28.5"), "{note}");
+        assert!(note.contains("rear aero +20 lb"), "{note}");
+        assert!(note.contains("front tire pressure = 28.5"), "{note}");
         // Compound steps are deliberately unattributable to one family.
         assert_eq!(crate::analysis::journal::parse_change(&note), None, "{note}");
     }
@@ -239,5 +272,15 @@ mod tests {
     fn identical_revisions_produce_no_note() {
         let a = rev("t1", &[("arb_f", "24")]);
         assert_eq!(diff_note(&a, &rev("t2", &[("arb_f", "24")])), "");
+    }
+
+    /// The unit round-trip case: 700 lb/in shown as 12.5 kgf/mm re-enters as
+    /// 699.96 lb/in — below the display step, so no phantom journal entry.
+    #[test]
+    fn sub_step_conversion_noise_is_not_a_change() {
+        let a = rev("t1", &[("springs_f", "700")]);
+        assert_eq!(diff_note(&a, &rev("t2", &[("springs_f", "699.9605")])), "");
+        let note = diff_note(&a, &rev("t3", &[("springs_f", "672")]));
+        assert_eq!(note, "front springs -28 lb/in");
     }
 }
