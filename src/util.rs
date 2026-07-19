@@ -26,9 +26,32 @@ pub fn utc_stamp(unix_secs: u64) -> String {
     )
 }
 
+/// Format a lap time the way racers read them: `1:30.791`, or `43.210` when
+/// sub-minute. Milliseconds always shown to three places.
+pub fn format_lap_time(secs: f32) -> String {
+    let total_ms = (f64::from(secs) * 1000.0).round().max(0.0) as u64;
+    let minutes = total_ms / 60_000;
+    let rem_ms = total_ms % 60_000;
+    if minutes > 0 {
+        format!("{minutes}:{:02}.{:03}", rem_ms / 1000, rem_ms % 1000)
+    } else {
+        format!("{}.{:03}", rem_ms / 1000, rem_ms % 1000)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lap_times_read_like_lap_times() {
+        assert_eq!(format_lap_time(90.791), "1:30.791");
+        assert_eq!(format_lap_time(43.21), "43.210");
+        assert_eq!(format_lap_time(60.0), "1:00.000");
+        assert_eq!(format_lap_time(59.9996), "1:00.000"); // rounds across the minute
+        assert_eq!(format_lap_time(605.05), "10:05.050");
+        assert_eq!(format_lap_time(0.0), "0.000");
+    }
 
     #[test]
     fn known_dates() {

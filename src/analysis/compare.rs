@@ -2,6 +2,7 @@
 //! where on the road, and what changed in behaviour — on clean bins only.
 
 use super::profile::{best_clean_time, SessionProfile, BIN_METERS};
+use crate::util::format_lap_time;
 use std::fmt::Write;
 
 /// Bins per reported segment (250 m at 10 m bins).
@@ -57,11 +58,11 @@ pub fn render(a: &SessionProfile, b: &SessionProfile, cmp: &Comparison) -> Strin
     for (name, p) in [("A", a), ("B", b)] {
         writeln!(
             out,
-            "{name}: {} lap(s){} | best {:.2}s | ideal {:.2}s | {} mistake bin(s) excluded",
+            "{name}: {} lap(s){} | best {} | ideal {} | {} mistake bin(s) excluded",
             p.laps.len(),
             if p.standing_start_only { " (standing starts)" } else { "" },
-            p.best_lap_time_s,
-            p.ideal_time_s,
+            format_lap_time(p.best_lap_time_s),
+            format_lap_time(p.ideal_time_s),
             p.dirty_bin_count(),
         )
         .unwrap();

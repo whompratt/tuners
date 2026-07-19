@@ -3,7 +3,7 @@
 use super::metrics::{stint_metrics, StintMetrics};
 use super::LapSlice;
 use crate::packet::{class_name, drivetrain_name};
-use crate::util::MPS_TO_MPH;
+use crate::util::{format_lap_time, MPS_TO_MPH};
 use std::fmt::Write;
 
 /// Lap table for a stint. Standing-start laps (rivals out laps) are labelled and
@@ -21,7 +21,7 @@ pub fn render_laps(laps: &[LapSlice]) -> String {
         let m = stint_metrics(lap.frames);
         let label = format!("lap {}", lap.number + 1);
         let time = match lap.time_s {
-            Some(t) => format!("{t:7.2}s"),
+            Some(t) => format!("{:>9}", format_lap_time(t)),
             None => format!("({:.1}s, incomplete)", m.duration_s),
         };
         let compare = match (lap.time_s, lap.standing_start) {
@@ -32,7 +32,7 @@ pub fn render_laps(laps: &[LapSlice]) -> String {
         };
         let extras = [
             m.wheelspin_frac.map(|w| format!("spin {:.1}%", w * 100.0)),
-            m.lockup_frac.map(|l| format!("lock {:.1}%", l * 100.0)),
+            m.lockup_frac.map(|l| format!("brake-slip {:.1}%", l * 100.0)),
             m.understeer_index.map(|i| format!("balance {i:+.2}")),
         ]
         .into_iter()
