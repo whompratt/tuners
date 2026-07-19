@@ -9,9 +9,9 @@ fn main() {
         "session", "laps", "best", "spread", "conf"
     );
     for path in std::env::args().skip(1) {
-        let profile = tuners::analysis::Session::load(path.as_ref())
+        let profile = tuners::analysis::Stint::load(path.as_ref())
             .map_err(|e| e.to_string())
-            .and_then(|s| tuners::analysis::profile::session_profile(&s.frames));
+            .and_then(|s| tuners::analysis::profile::stint_profile(&s.frames));
         let name = path.rsplit('/').next().unwrap_or(&path).to_string();
         match profile {
             Ok(p) => {

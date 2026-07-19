@@ -1,7 +1,7 @@
 //! Text rendering of stint metrics. Observations only — no advice.
 
 use super::metrics::{stint_metrics, StintMetrics};
-use super::{classify_gaps, driving_segments, split_laps, GapKind, LapSlice, Session};
+use super::{classify_gaps, driving_segments, split_laps, GapKind, LapSlice, Stint};
 use crate::packet::{class_name, drivetrain_name};
 use crate::util::{format_lap_time, MPS_TO_MPH};
 use std::fmt::Write;
@@ -11,7 +11,7 @@ use std::path::Path;
 /// observations, lap tables. Shared by the CLI (`tuners analyze`) and the
 /// dashboard's report endpoint.
 pub fn full_session_report(path: &Path) -> Result<String, String> {
-    let session = Session::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let session = Stint::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut out = String::new();
     if session.decode_errors > 0 {
         writeln!(out, "warning: {} packets failed to decode", session.decode_errors).unwrap();

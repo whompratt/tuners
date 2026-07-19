@@ -8,18 +8,18 @@ tuners — FH6 tuning assistant (telemetry capture spike)
 
 USAGE:
   tuners capture  [--port 20440] [--out sessions] [--packets N] [--duration SECS]
-                    listen for Data Out packets, record a session, show live status
-  tuners replay   <session-file>
-                    decode a recorded session and print a summary (exits non-zero on errors)
-  tuners analyze  <session-file>
+                    listen for Data Out packets, record a stint, show live status
+  tuners replay   <stint-file>
+                    decode a recorded stint and print a summary (exits non-zero on errors)
+  tuners analyze  <stint-file>
                     per-stint tuning observations: tires, grip, suspension, gearing
-  tuners compare  <session-A> <session-B>
+  tuners compare  <stint-A> <stint-B>
                     tune A/B: lap-time delta, where it comes from, mistakes excluded
-  tuners recommend <session-file>
+  tuners recommend <stint-file>
                     directional tune advice with evidence (blind mode: no tune input)
   tuners advise   [journal-file]
                     history-aware advice from a tuning journal (default tune-journal.txt);
-                    journal lines: <session-file> | <change since previous session>
+                    journal lines: <stint-file> | <change since previous stint>
   tuners serve    [--port 8080] [--sessions sessions] [--udp-port 20440]
                   [--journal tune-journal.txt]
                     the app: records telemetry automatically (race mode only,
@@ -91,13 +91,13 @@ fn cmd_capture(args: &[String]) -> Result<(), String> {
 fn cmd_replay(args: &[String]) -> Result<(), String> {
     match args {
         [path] => replay::run(path.as_ref()),
-        _ => Err("usage: tuners replay <session-file>".into()),
+        _ => Err("usage: tuners replay <stint-file>".into()),
     }
 }
 
 fn cmd_analyze(args: &[String]) -> Result<(), String> {
     let [path] = args else {
-        return Err("usage: tuners analyze <session-file>".into());
+        return Err("usage: tuners analyze <stint-file>".into());
     };
     print!("{}", analysis::report::full_session_report(path.as_ref())?);
     Ok(())
@@ -105,9 +105,9 @@ fn cmd_analyze(args: &[String]) -> Result<(), String> {
 
 fn cmd_recommend(args: &[String]) -> Result<(), String> {
     let [path] = args else {
-        return Err("usage: tuners recommend <session-file>".into());
+        return Err("usage: tuners recommend <stint-file>".into());
     };
-    let session = analysis::Session::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
+    let session = analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
     let segments = analysis::driving_segments(&session.frames, 5.0);
     // Advise from the longest stint — the most driving under one set of conditions.
     let Some(stint) = segments.iter().max_by_key(|s| s.len()) else {
@@ -139,7 +139,7 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
 /// Balance of a session's longest stint: (index, front, rear mean |slip angle| as
 /// fraction of grip limit) — shown per trajectory row so the setting -> balance ->
 /// lap-time mapping is visible, absolute operating point included.
-fn session_balance(session: &analysis::Session) -> Option<(f32, f32, f32)> {
+fn session_balance(session: &analysis::Stint) -> Option<(f32, f32, f32)> {
     let segments = analysis::driving_segments(&session.frames, 5.0);
     let stint = segments.iter().max_by_key(|s| s.len())?;
     let m = analysis::metrics::stint_metrics(stint);
@@ -179,9 +179,9 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     // Load and profile every session, in journal (chronological) order.
     let mut sessions = Vec::new();
     for entry in &entries {
-        let session = analysis::Session::load(entry.path.as_ref())
+        let session = analysis::Stint::load(entry.path.as_ref())
             .map_err(|e| format!("{}: {e}", entry.path))?;
-        let profile = analysis::profile::session_profile(&session.frames)
+        let profile = analysis::profile::stint_profile(&session.frames)
             .map_err(|e| format!("{}: {e}", entry.path))?;
         sessions.push((entry, session, profile));
     }
@@ -271,11 +271,11 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
 
 fn cmd_compare(args: &[String]) -> Result<(), String> {
     let [path_a, path_b] = args else {
-        return Err("usage: tuners compare <session-A> <session-B>".into());
+        return Err("usage: tuners compare <stint-A> <stint-B>".into());
     };
     let load = |path: &String| -> Result<_, String> {
-        let session = analysis::Session::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
-        analysis::profile::session_profile(&session.frames).map_err(|e| format!("{path}: {e}"))
+        let session = analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
+        analysis::profile::stint_profile(&session.frames).map_err(|e| format!("{path}: {e}"))
     };
     let a = load(path_a)?;
     let b = load(path_b)?;

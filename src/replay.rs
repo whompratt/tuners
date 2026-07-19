@@ -2,14 +2,14 @@
 //! check that a capture is intact and the decoder handles every packet in it.
 
 use crate::packet::{self, TelemetryFrame};
-use crate::session::SessionReader;
+use crate::stint::StintReader;
 use crate::util;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub fn run(path: &Path) -> Result<(), String> {
     let mut reader =
-        SessionReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        StintReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
 
     let mut packets: u64 = 0;
     let mut errors: u64 = 0;

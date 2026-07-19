@@ -6,6 +6,6 @@ pub mod packet;
 pub mod record;
 pub mod replay;
 pub mod serve;
-pub mod session;
+pub mod stint;
 pub mod simulate;
 pub mod util;

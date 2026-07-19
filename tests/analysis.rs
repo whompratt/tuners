@@ -1,12 +1,12 @@
 //! Analysis pipeline against the real capture: values must stay physically plausible.
 
 use std::path::Path;
-use tuners::analysis::{metrics::stint_metrics, split_stints, Session};
+use tuners::analysis::{metrics::stint_metrics, split_stints, Stint};
 
 #[test]
 fn real_fixture_analysis_is_sane() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/real-01.ftel");
-    let session = Session::load(Path::new(path)).unwrap();
+    let session = Stint::load(Path::new(path)).unwrap();
     assert_eq!(session.decode_errors, 0);
 
     let stints = split_stints(&session.frames, 5.0);
@@ -42,7 +42,7 @@ fn real_fixture_analysis_is_sane() {
 #[test]
 fn rivals_lap_boundary_fixture() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/rivals-lap-boundary-01.ftel");
-    let session = Session::load(Path::new(path)).unwrap();
+    let session = Stint::load(Path::new(path)).unwrap();
     assert_eq!(session.decode_errors, 0);
 
     let laps = tuners::analysis::split_laps(&session.frames);

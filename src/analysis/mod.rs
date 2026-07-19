@@ -9,7 +9,7 @@ pub mod recommend;
 pub mod report;
 
 use crate::packet::{self, TelemetryFrame};
-use crate::session::SessionReader;
+use crate::stint::StintReader;
 use std::io;
 use std::path::Path;
 
@@ -19,14 +19,14 @@ pub struct TimedFrame {
     pub frame: TelemetryFrame,
 }
 
-pub struct Session {
+pub struct Stint {
     pub frames: Vec<TimedFrame>,
     pub decode_errors: u64,
 }
 
-impl Session {
+impl Stint {
     pub fn load(path: &Path) -> io::Result<Self> {
-        let mut reader = SessionReader::open(path)?;
+        let mut reader = StintReader::open(path)?;
         let mut frames = Vec::new();
         let mut decode_errors = 0u64;
         while let Some((recv_us, payload)) = reader.next_packet()? {
@@ -447,7 +447,7 @@ mod tests {
         assert_eq!(gaps.len(), 1);
         assert!(matches!(gaps[0].kind, GapKind::Rewind { .. }));
 
-        let profile = crate::analysis::profile::session_profile(&frames).unwrap();
+        let profile = crate::analysis::profile::stint_profile(&frames).unwrap();
         let numbers: Vec<u16> = profile.laps.iter().map(|l| l.lap_number).collect();
         assert_eq!(numbers, vec![1, 2], "the kept lap 2 must be profiled: {numbers:?}");
 

@@ -1,7 +1,7 @@
 //! A/B session comparison over distance-binned profiles: which tune is faster,
 //! where on the road, and what changed in behaviour — on clean bins only.
 
-use super::profile::{SessionProfile, BIN_METERS};
+use super::profile::{StintProfile, BIN_METERS};
 use crate::util::format_lap_time;
 use std::fmt::Write;
 
@@ -26,7 +26,7 @@ pub struct Comparison {
     pub car_mismatch: bool,
 }
 
-pub fn compare(a: &SessionProfile, b: &SessionProfile) -> Result<Comparison, String> {
+pub fn compare(a: &StintProfile, b: &StintProfile) -> Result<Comparison, String> {
     let (short, long) = (
         a.shared_bins.min(b.shared_bins),
         a.shared_bins.max(b.shared_bins),
@@ -70,7 +70,7 @@ pub fn compare(a: &SessionProfile, b: &SessionProfile) -> Result<Comparison, Str
     })
 }
 
-pub fn render(a: &SessionProfile, b: &SessionProfile, cmp: &Comparison) -> String {
+pub fn render(a: &StintProfile, b: &StintProfile, cmp: &Comparison) -> String {
     let mut out = String::new();
 
     for (name, p) in [("A", a), ("B", b)] {
@@ -159,7 +159,7 @@ mod tests {
     use super::*;
     use crate::analysis::profile::{build_composite, BinStats, LapProfile};
 
-    fn uniform_profile(n_bins: usize, bin_time: f32) -> SessionProfile {
+    fn uniform_profile(n_bins: usize, bin_time: f32) -> StintProfile {
         let lap = LapProfile {
             lap_number: 1,
             time_s: bin_time * n_bins as f32,
@@ -170,7 +170,7 @@ mod tests {
             ],
         };
         let laps = vec![lap];
-        SessionProfile {
+        StintProfile {
             composite: build_composite(&laps, n_bins),
             shared_bins: n_bins,
             best_lap_time_s: laps[0].time_s,

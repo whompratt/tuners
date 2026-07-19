@@ -232,18 +232,18 @@ const fmtLap = s => {
 
 let allSessions = [];
 async function load() {
-  allSessions = await fetch('/api/sessions').then(r => r.json());
+  allSessions = await fetch('/api/stints').then(r => r.json());
   const filter = document.getElementById('car-filter');
   if (!allSessions.length) {
     document.getElementById('sessions').innerHTML =
-      '<div class="placeholder">no .ftel sessions found — record one with `tuners capture`</div>';
+      '<div class="placeholder">no stint recordings yet — drive with `tuners serve` running</div>';
     filter.style.display = 'none';
     return;
   }
   const carLabel = s => s.carName || `car #${s.car}`;
   const cars = new Map(); // ordinal -> label, insertion-ordered
   for (const s of allSessions) cars.set(s.car, carLabel(s));
-  filter.innerHTML = `<option value="all">all cars (${allSessions.length} sessions)</option>` +
+  filter.innerHTML = `<option value="all">all cars (${allSessions.length} stints)</option>` +
     [...cars].map(([ord, label]) => `<option value="${ord}">${label}</option>`).join('');
   // default: the latest session's car (list is filename-sorted = chronological)
   filter.value = String(allSessions[allSessions.length - 1].car);
@@ -257,7 +257,7 @@ function renderSessions() {
   list.innerHTML = '';
   const shown = allSessions.filter(s => filter === 'all' || String(s.car) === filter);
   if (!shown.length) {
-    list.innerHTML = '<div class="placeholder">no sessions for this car</div>';
+    list.innerHTML = '<div class="placeholder">no stints for this car</div>';
     return;
   }
   for (const s of [...shown].reverse()) {

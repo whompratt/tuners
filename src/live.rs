@@ -2,13 +2,13 @@
 //! keep a shared snapshot (latest frame + data-quality summary) for the dashboard
 //! to relay over SSE (docs/plans/006-dashboard.md phase 4).
 //!
-//! The serve process never binds the UDP port — capture owns it. SessionWriter
+//! The serve process never binds the UDP port — capture owns it. StintWriter
 //! writes each record with a single unbuffered `write_all`, so tailing the file
 //! sees new packets within one poll interval.
 
 use crate::analysis::TimedFrame;
 use crate::packet;
-use crate::session::MAGIC;
+use crate::stint::MAGIC;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -20,16 +20,16 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// Recompute the (whole-session) quality summary at most this often.
 const QUALITY_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Incremental reader over a growing session file. Unlike SessionReader it
+/// Incremental reader over a growing session file. Unlike StintReader it
 /// tolerates a partially-written record at end-of-file: bytes are buffered until
 /// a complete record is available, and the next poll picks up where it left off.
-pub struct SessionTail {
+pub struct StintTail {
     file: File,
     buf: Vec<u8>,
     magic_ok: bool,
 }
 
-impl SessionTail {
+impl StintTail {
     pub fn open(path: &Path) -> std::io::Result<Self> {
         Ok(Self { file: File::open(path)?, buf: Vec::new(), magic_ok: false })
     }
@@ -130,7 +130,7 @@ pub struct Quality {
 
 /// Quality over the frames captured so far; None until a comparable lap exists.
 pub fn compute_quality(frames: &[TimedFrame]) -> Option<Quality> {
-    let profile = crate::analysis::profile::session_profile(frames).ok()?;
+    let profile = crate::analysis::profile::stint_profile(frames).ok()?;
     let laps = profile.laps.len();
     let worst = profile.laps.iter().map(|l| l.time_s).fold(0.0f32, f32::max);
     let spread_frac = (worst - profile.best_lap_time_s).max(0.0) / profile.best_lap_time_s;
@@ -164,7 +164,7 @@ pub type SharedLive = Arc<Mutex<LiveState>>;
 
 /// Newest session file in the directory. Capture names files with a UTC stamp,
 /// so the lexicographically greatest name is the most recent.
-fn newest_session(dir: &str) -> Option<PathBuf> {
+fn newest_stint(dir: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -176,19 +176,19 @@ fn newest_session(dir: &str) -> Option<PathBuf> {
 /// Tail the newest session file forever, keeping `state` current. Spawned as a
 /// daemon thread by `serve::run`; exits only with the process.
 pub fn run_tailer(dir: String, state: SharedLive) {
-    let mut tail: Option<(PathBuf, SessionTail)> = None;
+    let mut tail: Option<(PathBuf, StintTail)> = None;
     let mut frames: Vec<TimedFrame> = Vec::new();
     let mut frames_at_last_quality = 0usize;
     let mut last_quality_at = Instant::now() - QUALITY_INTERVAL;
 
     loop {
-        let newest = newest_session(&dir);
+        let newest = newest_stint(&dir);
         if newest.as_deref() != tail.as_ref().map(|(p, _)| p.as_path()) {
             tail = None;
             frames.clear();
             frames_at_last_quality = 0;
             if let Some(path) = &newest
-                && let Ok(t) = SessionTail::open(path)
+                && let Ok(t) = StintTail::open(path)
             {
                 tail = Some((path.clone(), t));
             }
@@ -255,7 +255,7 @@ mod tests {
         f.write_all(&record(1, &[10, 11])).unwrap();
         f.write_all(&record(2, &[20; 324])).unwrap();
 
-        let mut tail = SessionTail::open(&path).unwrap();
+        let mut tail = StintTail::open(&path).unwrap();
         let got = tail.poll().unwrap();
         assert_eq!(got.len(), 2);
         assert_eq!(got[0], (1, vec![10, 11]));
@@ -280,7 +280,7 @@ mod tests {
         let path = temp_path("magic");
         let mut f = File::create(&path).unwrap();
         f.write_all(&MAGIC[..4]).unwrap(); // header still being written
-        let mut tail = SessionTail::open(&path).unwrap();
+        let mut tail = StintTail::open(&path).unwrap();
         assert!(tail.poll().unwrap().is_empty());
 
         f.write_all(b"XXXX").unwrap(); // completes to a non-magic header

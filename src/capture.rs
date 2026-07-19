@@ -1,7 +1,7 @@
 //! UDP capture: receive Data Out packets, record them raw, show a live status line.
 
 use crate::packet::{self, TelemetryFrame, PACKET_LEN};
-use crate::session::SessionWriter;
+use crate::stint::StintWriter;
 use crate::util;
 use std::collections::HashSet;
 use std::io::{self, Write};
@@ -27,8 +27,8 @@ pub fn run(opts: &CaptureOpts) -> io::Result<PathBuf> {
     std::fs::create_dir_all(&opts.out_dir)?;
     let path = opts
         .out_dir
-        .join(format!("session-{}.ftel", util::utc_stamp(unix_now().as_secs())));
-    let mut writer = SessionWriter::create(&path)?;
+        .join(format!("stint-{}.ftel", util::utc_stamp(unix_now().as_secs())));
+    let mut writer = StintWriter::create(&path)?;
 
     println!("listening on 0.0.0.0:{} (udp)", opts.port);
     println!("recording to {}", path.display());

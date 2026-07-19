@@ -2,14 +2,14 @@
 //! the committed fixture must always decode cleanly.
 
 use std::path::Path;
-use tuners::{packet, session::SessionReader};
+use tuners::{packet, stint::StintReader};
 
 /// Real FH6 capture (2026-07-19, ordinal 4165, S1 800 AWD): the ground truth for
 /// the packet layout. If this breaks, the decoder is wrong, not the fixture.
 #[test]
 fn real_fixture_decodes_cleanly() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/real-01.ftel");
-    let mut reader = SessionReader::open(Path::new(path)).unwrap();
+    let mut reader = StintReader::open(Path::new(path)).unwrap();
 
     let mut packets = 0u64;
     while let Some((_recv_us, payload)) = reader.next_packet().unwrap() {
@@ -28,7 +28,7 @@ fn real_fixture_decodes_cleanly() {
 #[test]
 fn fixture_decodes_cleanly() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/synthetic-01.ftel");
-    let mut reader = SessionReader::open(Path::new(path)).unwrap();
+    let mut reader = StintReader::open(Path::new(path)).unwrap();
 
     let mut packets = 0u64;
     let mut first = None;

@@ -11,7 +11,7 @@
 //! classification (pause/rewind/restart) depends on.
 
 use crate::packet;
-use crate::session::SessionWriter;
+use crate::stint::StintWriter;
 use crate::util;
 use std::collections::VecDeque;
 use std::net::UdpSocket;
@@ -268,7 +268,7 @@ pub fn run_recorder(port: u16, out_dir: PathBuf, journal: PathBuf, shared: Share
     println!("recording automatically from udp {port} into {}", out_dir.display());
 
     let mut cutter = Cutter::default();
-    let mut writer: Option<SessionWriter> = None;
+    let mut writer: Option<StintWriter> = None;
     let mut buf = [0u8; 2048];
     loop {
         let split = {
@@ -296,13 +296,13 @@ pub fn run_recorder(port: u16, out_dir: PathBuf, journal: PathBuf, shared: Share
                     // Suffix on collision: a split + reopen inside one second must
                     // not truncate the file just closed.
                     let stamp = util::utc_stamp(unix_micros() / 1_000_000);
-                    let mut path = out_dir.join(format!("session-{stamp}.ftel"));
+                    let mut path = out_dir.join(format!("stint-{stamp}.ftel"));
                     let mut n = 2;
                     while path.exists() {
-                        path = out_dir.join(format!("session-{stamp}-{n}.ftel"));
+                        path = out_dir.join(format!("stint-{stamp}-{n}.ftel"));
                         n += 1;
                     }
-                    match SessionWriter::create(&path) {
+                    match StintWriter::create(&path) {
                         Ok(w) => {
                             writer = Some(w);
                             let (note, last_closed) = {

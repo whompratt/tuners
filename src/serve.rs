@@ -210,7 +210,7 @@ pub fn respond(target: &str, sessions_dir: &str) -> (&'static str, &'static str,
             "text/html; charset=utf-8",
             include_str!("../assets/index.html").to_string(),
         ),
-        "/api/sessions" => ("200 OK", "application/json", sessions_json(sessions_dir)),
+        "/api/stints" => ("200 OK", "application/json", stints_json(sessions_dir)),
         "/api/compare" => {
             let a = query_param(query, "a");
             let b = query_param(query, "b");
@@ -295,9 +295,9 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 /// the per-bin time delta (B − A), for the overlay + segment-delta view.
 fn compare_json(a_path: &Path, b_path: &Path) -> Result<String, String> {
     let profile = |path: &Path| -> Result<_, String> {
-        let session = crate::analysis::Session::load(path)
+        let session = crate::analysis::Stint::load(path)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        crate::analysis::profile::session_profile(&session.frames)
+        crate::analysis::profile::stint_profile(&session.frames)
             .map_err(|e| format!("{}: {e}", path.display()))
     };
     let pa = profile(a_path)?;
@@ -305,14 +305,14 @@ fn compare_json(a_path: &Path, b_path: &Path) -> Result<String, String> {
     let cmp = crate::analysis::compare::compare(&pa, &pb)?;
     let shared = cmp.bin_delta_s.len();
 
-    let speeds = |p: &crate::analysis::profile::SessionProfile| {
+    let speeds = |p: &crate::analysis::profile::StintProfile| {
         p.composite.bins[..shared]
             .iter()
             .map(|bin| format!("{:.1}", bin.speed_avg))
             .collect::<Vec<_>>()
             .join(",")
     };
-    let side = |path: &Path, p: &crate::analysis::profile::SessionProfile| {
+    let side = |path: &Path, p: &crate::analysis::profile::StintProfile| {
         format!(
             "{{\"file\":\"{}\",\"laps\":{},\"best\":{:.3},\"ideal\":{:.3},\"standingOnly\":{}}}",
             path.display(),
@@ -343,8 +343,8 @@ fn compare_json(a_path: &Path, b_path: &Path) -> Result<String, String> {
 
 /// Distance-binned speed traces per profiled lap — the dashboard's chart data.
 fn laps_json(path: &Path) -> Result<String, String> {
-    let session = crate::analysis::Session::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let profile = crate::analysis::profile::session_profile(&session.frames)?;
+    let session = crate::analysis::Stint::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let profile = crate::analysis::profile::stint_profile(&session.frames)?;
     let laps: Vec<String> = profile
         .laps
         .iter()
@@ -370,7 +370,7 @@ fn laps_json(path: &Path) -> Result<String, String> {
     ))
 }
 
-fn sessions_json(dir: &str) -> String {
+fn stints_json(dir: &str) -> String {
     let mut rows = Vec::new();
     if let Ok(read_dir) = std::fs::read_dir(dir) {
         let mut paths: Vec<_> = read_dir
@@ -381,7 +381,7 @@ fn sessions_json(dir: &str) -> String {
         paths.sort();
         for p in paths {
             let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-            let car = session_car(&p).unwrap_or(0);
+            let car = stint_car(&p).unwrap_or(0);
             let name = crate::cars::car_name(car).unwrap_or("");
             // Session filenames are our own ASCII naming scheme, and car names in
             // the bundled dataset contain no quotes/backslashes.
@@ -396,8 +396,8 @@ fn sessions_json(dir: &str) -> String {
 
 /// First car seen driving in the session (bounded scan — the file may open with
 /// menu frames, but driving starts within moments in every real capture).
-fn session_car(path: &Path) -> Option<i32> {
-    let mut reader = crate::session::SessionReader::open(path).ok()?;
+fn stint_car(path: &Path) -> Option<i32> {
+    let mut reader = crate::stint::StintReader::open(path).ok()?;
     for _ in 0..20_000 {
         let (_, payload) = reader.next_packet().ok()??;
         if let Ok(frame) = crate::packet::decode(&payload)
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn sessions_list_empty_when_dir_missing() {
-        let (status, _, body) = respond("/api/sessions", "no-such-dir");
+        let (status, _, body) = respond("/api/stints", "no-such-dir");
         assert_eq!(status, "200 OK");
         assert_eq!(body, "[]");
     }

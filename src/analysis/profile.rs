@@ -179,7 +179,7 @@ pub fn build_composite(laps: &[LapProfile], shared: usize) -> Composite {
 }
 
 #[derive(Debug)]
-pub struct SessionProfile {
+pub struct StintProfile {
     pub laps: Vec<LapProfile>,
     /// Bins shared by every profiled lap (lap lengths differ by a few meters).
     pub shared_bins: usize,
@@ -207,7 +207,7 @@ pub struct Corroboration {
     pub score: f32,
 }
 
-impl SessionProfile {
+impl StintProfile {
     pub fn corroboration(&self) -> Corroboration {
         let mut corroborated = vec![false; self.shared_bins];
         let (mut time_ok, mut time_total) = (0.0f32, 0.0f32);
@@ -229,7 +229,7 @@ impl SessionProfile {
     }
 }
 
-pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> {
+pub fn stint_profile(frames: &[TimedFrame]) -> Result<StintProfile, String> {
     // Profiles are built from the kept timeline (rewinds erased, retries spliced
     // in), so a rewound lap arrives here as one continuous, physically consistent
     // lap — the game restored exact state at the splice point.
@@ -265,7 +265,7 @@ pub fn session_profile(frames: &[TimedFrame]) -> Result<SessionProfile, String> 
     let composite = build_composite(&laps, shared_bins);
     let best_lap_time_s = laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min);
 
-    Ok(SessionProfile {
+    Ok(StintProfile {
         shared_bins,
         composite,
         best_lap_time_s,
@@ -380,11 +380,11 @@ mod tests {
         assert!((total - 10.0).abs() < 0.3, "time conserved: {total}");
     }
 
-    fn profile_of(laps: Vec<LapProfile>) -> SessionProfile {
+    fn profile_of(laps: Vec<LapProfile>) -> StintProfile {
         let shared = laps.iter().map(|l| l.bins.len()).min().unwrap();
         let composite = build_composite(&laps, shared);
         let best = laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min);
-        SessionProfile {
+        StintProfile {
             shared_bins: shared,
             composite,
             best_lap_time_s: best,
@@ -500,7 +500,7 @@ mod tests {
         }
         frames.extend(tail);
 
-        let p = session_profile(&frames).unwrap();
+        let p = stint_profile(&frames).unwrap();
         let numbers: Vec<u16> = p.laps.iter().map(|l| l.lap_number).collect();
         assert_eq!(numbers, vec![1, 2], "out lap and partial tail excluded");
         assert!(!p.standing_start_only);
