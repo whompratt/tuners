@@ -26,10 +26,10 @@ These shape the whole design — the app is an *advisor*, not an *autotuner*:
 - **There is no API to write a tune back into the game.** The user applies every change
   by hand in the tuning menu. The feedback loop is: drive → analyse → suggest → user
   edits tune → drive again.
-- **Telemetry is one-way and send-only.** We can't query the game for car metadata
-  (weight, drivetrain, upgrades); anything beyond what's in the packet needs a static
-  data source or user input. The packet's car ordinal/class fields may help identify
-  the car (to be verified against the FH6 packet spec).
+- **Telemetry is one-way and send-only.** The packet does identify the car
+  (`CarOrdinal`, class, PI) and its drivetrain type, but **weight, weight
+  distribution, fitted upgrades, tire compound, and suspension type are not exposed**
+  — those need user input or a community car dataset.
 - **Send rate = frame rate**, so sample spacing is irregular. Analysis must use the
   packet's timestamp field and resample, not assume fixed dt.
 
@@ -60,7 +60,11 @@ UDP listener → packet decoder → session recorder (raw + decoded)
 - **Recommend**: rules mapping metrics to tune adjustments, each with an explanation.
   Start with well-established heuristics (tire temps → pressures, gearing from RPM
   traces) before anything fancy.
-- **UI**: undecided — see open questions.
+- **UI**: local web dashboard. The Rust binary serves a browser UI over
+  HTTP/WebSocket on localhost; charts render in the browser. Chosen over a TUI
+  (charts/graphs are central to presenting telemetry) and over a desktop shell
+  (a Tauri wrap can be added later without changing the architecture). UI design is
+  Claude-led with user feedback; capture/analysis stay UI-agnostic.
 
 ## Non-goals (for now)
 
@@ -68,12 +72,31 @@ UDP listener → packet decoder → session recorder (raw + decoded)
 - Live in-race coaching / overlay (analysis is post-drive to start with).
 - Anything requiring memory reading or game modification — Data Out only.
 
+## Tune input model
+
+The app iterates on the *user's existing tune* rather than generating one from scratch
+(primary use case: "the tune is 90% there but something is wrong I can't pin down").
+There are not two hard modes; there is **one incremental input model** where every
+field is optional and recommendation quality degrades gracefully:
+
+- **Free from telemetry** (never ask): car identity, class/PI, drivetrain type,
+  redline, observed peak power/torque, gear count and effective ratios, EV heuristic
+  via cylinder count. Pre-fill these; let the user correct.
+- **High-value manual inputs**: tuning goal, weight, front weight %, tire compound,
+  suspension type, current tune values, slider limits (springs, ride height, aero).
+- **Nice-to-have**: engine position, body type.
+
+With no manual input at all ("blind" = the empty form), the app still produces
+**directional deltas** with explanations ("drop front pressure ~1 psi"; "soften front
+ARB"), phrased to survive unknown limits ("if already at minimum, do X instead").
+As inputs are added, recommendations upgrade to **absolute targets** and gain
+limit-awareness (detecting a maxed slider and redirecting to the next-best lever).
+Every analysis records which inputs it had, so a session can be re-analysed after
+the user fills in more.
+
 ## Open questions
 
-- **UI form factor**: CLI report? TUI? Desktop app? Web dashboard? Affects crate choices;
-  capture/analysis pipeline is UI-agnostic either way.
-- **Tune input**: do we ask the user to type in their current tune (enables absolute
-  recommendations) or stay delta-only?
-- **Car metadata**: is there a usable community dataset of FH6 cars (weight, drivetrain,
-  stock gearing), and is bundling it legally fine?
-- **Exact FH6 packet layout**: needs verification — see [telemetry.md](telemetry.md).
+- **Car metadata**: is there a usable community dataset of FH6 cars (weight, weight
+  distribution, stock gearing) keyed by `CarOrdinal`, and is bundling it legally fine?
+- Packet-layout residuals (trailing byte, byte order, tire temp units) — tracked in
+  [telemetry.md](telemetry.md).
