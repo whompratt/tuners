@@ -6,31 +6,54 @@
 <title>tuners</title>
 <style>
   :root {
-    --bg: #14161a; --panel: #1c1f26; --text: #d6dae2; --dim: #8b93a3;
-    --accent: #e8a33d; --border: #2a2e38;
+    color-scheme: dark;
+    /* reference dataviz dark tokens */
+    --page: #0d0d0d; --surface: #1a1a19;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --accent: #c98500;
   }
   * { box-sizing: border-box; margin: 0; }
   body {
-    background: var(--bg); color: var(--text);
-    font: 14px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+    background: var(--page); color: var(--ink-2);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
     display: flex; height: 100vh;
   }
   aside {
-    width: 340px; min-width: 260px; border-right: 1px solid var(--border);
+    width: 320px; min-width: 240px; border-right: 1px solid var(--border);
     padding: 16px; overflow-y: auto;
   }
-  aside h1 { font-size: 16px; color: var(--accent); margin-bottom: 12px; }
-  aside h1 span { color: var(--dim); font-weight: normal; font-size: 12px; }
+  aside h1 { font-size: 16px; color: var(--ink); margin-bottom: 12px; }
+  aside h1 span { color: var(--muted); font-weight: normal; font-size: 12px; }
   .session {
     padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
-    margin-bottom: 8px; cursor: pointer; word-break: break-all;
+    margin-bottom: 8px; cursor: pointer; word-break: break-all; font-size: 13px;
   }
   .session:hover { border-color: var(--accent); }
-  .session.active { border-color: var(--accent); background: var(--panel); }
-  .session .size { color: var(--dim); font-size: 12px; }
+  .session.active { border-color: var(--accent); background: var(--surface); }
+  .session .size { color: var(--muted); font-size: 12px; }
   main { flex: 1; padding: 16px 24px; overflow: auto; }
-  pre { white-space: pre-wrap; }
-  .placeholder { color: var(--dim); }
+  #chart-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; margin-bottom: 16px; display: none;
+    position: relative;
+  }
+  #chart-panel h2 { font-size: 13px; color: var(--ink-2); font-weight: 600; margin-bottom: 8px; }
+  #legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; font-size: 12px; }
+  .chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  #canvas-wrap { position: relative; }
+  canvas { width: 100%; display: block; }
+  #tooltip {
+    position: absolute; pointer-events: none; display: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-size: 12px; color: var(--ink-2); white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5); z-index: 2;
+  }
+  #tooltip .t-head { color: var(--muted); margin-bottom: 2px; }
+  #tooltip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
+  pre { white-space: pre-wrap; font: 13px/1.45 ui-monospace, Consolas, monospace; }
+  .placeholder { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -39,33 +62,162 @@
     <div id="sessions"></div>
   </aside>
   <main>
+    <div id="chart-panel">
+      <h2>Speed by distance — flying laps</h2>
+      <div id="legend"></div>
+      <div id="canvas-wrap">
+        <canvas id="chart" height="320"></canvas>
+        <div id="tooltip"></div>
+      </div>
+    </div>
     <pre id="report" class="placeholder">select a session</pre>
   </main>
 <script>
+// reference dark categorical palette (validated, fixed order — never cycled)
+const SERIES = ['#3987e5', '#008300', '#d55181', '#c98500', '#199e70', '#d95926', '#9085e9', '#e66767'];
+const MPH = 2.23694;
+let lapData = null;
+
+const fmtLap = s => {
+  const ms = Math.round(s * 1000), m = Math.floor(ms / 60000), r = ms % 60000;
+  const sec = (r / 1000).toFixed(3).padStart(6, '0');
+  return m > 0 ? `${m}:${sec}` : (r / 1000).toFixed(3);
+};
+
 async function load() {
   const list = document.getElementById('sessions');
   const sessions = await fetch('/api/sessions').then(r => r.json());
-  if (sessions.length === 0) {
+  if (!sessions.length) {
     list.innerHTML = '<div class="placeholder">no .ftel sessions found — record one with `tuners capture`</div>';
     return;
   }
   for (const s of sessions.reverse()) {
     const el = document.createElement('div');
     el.className = 'session';
-    const name = s.file.split('/').pop();
-    el.innerHTML = `${name}<br><span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>`;
+    el.innerHTML = `${s.file.split('/').pop()}<br><span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>`;
     el.onclick = () => show(s.file, el);
     list.appendChild(el);
   }
 }
+
 async function show(file, el) {
   document.querySelectorAll('.session').forEach(e => e.classList.remove('active'));
   el.classList.add('active');
   const report = document.getElementById('report');
   report.classList.remove('placeholder');
   report.textContent = 'analyzing…';
-  report.textContent = await fetch(`/api/report?file=${encodeURIComponent(file)}`).then(r => r.text());
+  const [reportText, lapsResp] = await Promise.all([
+    fetch(`/api/report?file=${encodeURIComponent(file)}`).then(r => r.text()),
+    fetch(`/api/laps?file=${encodeURIComponent(file)}`),
+  ]);
+  report.textContent = reportText;
+  const panel = document.getElementById('chart-panel');
+  if (lapsResp.ok) {
+    lapData = await lapsResp.json();
+    if (lapData.laps.length) { panel.style.display = 'block'; drawChart(); return; }
+  }
+  lapData = null;
+  panel.style.display = 'none';
 }
+
+function layout() {
+  const canvas = document.getElementById('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth, cssH = 320;
+  canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const pad = { l: 46, r: 12, t: 8, b: 26 };
+  const bins = Math.max(...lapData.laps.map(l => l.speeds.length));
+  const maxMph = Math.max(...lapData.laps.flatMap(l => l.speeds)) * MPH;
+  return { ctx, cssW, cssH, pad,
+    plotW: cssW - pad.l - pad.r, plotH: cssH - pad.t - pad.b,
+    bins, kmMax: bins * lapData.binMeters / 1000, yMax: Math.ceil(maxMph / 20) * 20 };
+}
+
+function drawChart(hoverBin) {
+  const { ctx, cssW, cssH, pad, plotW, plotH, bins, kmMax, yMax } = layout();
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const x = bin => pad.l + (bin / (bins - 1)) * plotW;
+  const y = mph => pad.t + plotH - (mph / yMax) * plotH;
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.lineWidth = 1;
+  for (let g = 0; g <= yMax; g += 40) {           // horizontal grid + labels
+    ctx.strokeStyle = css('--grid');
+    ctx.beginPath(); ctx.moveTo(pad.l, y(g)); ctx.lineTo(cssW - pad.r, y(g)); ctx.stroke();
+    ctx.fillStyle = css('--muted');
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(`${g}`, pad.l - 8, y(g));
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let km = 0; km <= kmMax; km += 1) {
+    ctx.fillText(`${km} km`, x(km * 1000 / lapData.binMeters), pad.t + plotH + 8);
+  }
+  ctx.save();                                      // y-axis unit
+  ctx.translate(11, pad.t + plotH / 2); ctx.rotate(-Math.PI / 2);
+  ctx.fillText('mph', 0, 0);
+  ctx.restore();
+  ctx.strokeStyle = css('--baseline');             // baseline
+  ctx.beginPath(); ctx.moveTo(pad.l, y(0)); ctx.lineTo(cssW - pad.r, y(0)); ctx.stroke();
+
+  lapData.laps.forEach((lap, i) => {               // 2px series lines
+    ctx.strokeStyle = SERIES[i % SERIES.length];
+    ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    lap.speeds.forEach((v, b) => b ? ctx.lineTo(x(b), y(v * MPH)) : ctx.moveTo(x(b), y(v * MPH)));
+    ctx.stroke();
+  });
+
+  if (hoverBin != null) {                          // crosshair
+    ctx.strokeStyle = css('--baseline');
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x(hoverBin), pad.t); ctx.lineTo(x(hoverBin), pad.t + plotH); ctx.stroke();
+  }
+
+  const best = Math.min(...lapData.laps.filter(l => !l.standing).map(l => l.time));
+  document.getElementById('legend').innerHTML = lapData.laps.map((lap, i) =>
+    `<span><span class="chip" style="background:${SERIES[i % SERIES.length]}"></span>` +
+    `lap ${lap.lap} — <span class="num">${fmtLap(lap.time)}</span>` +
+    `${lap.standing ? ' (standing start)' : lap.time === best ? ' (best)' : ''}</span>`
+  ).join('');
+}
+
+document.getElementById('canvas-wrap').addEventListener('mousemove', ev => {
+  if (!lapData) return;
+  const canvas = document.getElementById('chart');
+  const rect = canvas.getBoundingClientRect();
+  const { pad, plotW, bins } = layout();
+  const px = ev.clientX - rect.left;
+  if (px < pad.l || px > pad.l + plotW) { drawChart(); tooltip(null); return; }
+  const bin = Math.round(((px - pad.l) / plotW) * (bins - 1));
+  drawChart(bin);
+  tooltip(bin, px, ev.clientY - rect.top);
+});
+document.getElementById('canvas-wrap').addEventListener('mouseleave', () => {
+  if (lapData) { drawChart(); tooltip(null); }
+});
+
+function tooltip(bin, px, py) {
+  const tip = document.getElementById('tooltip');
+  if (bin == null) { tip.style.display = 'none'; return; }
+  const km = (bin * lapData.binMeters / 1000).toFixed(2);
+  const rows = lapData.laps
+    .map((lap, i) => ({ lap, i, mph: (lap.speeds[bin] ?? 0) * MPH }))
+    .sort((a, b) => b.mph - a.mph)
+    .map(({ lap, i, mph }) =>
+      `<div><span class="chip" style="background:${SERIES[i % SERIES.length]}"></span>` +
+      `lap ${lap.lap} <span class="num">${mph.toFixed(0)} mph</span></div>`);
+  tip.innerHTML = `<div class="t-head">${km} km</div>` + rows.join('');
+  tip.style.display = 'block';
+  const wrap = document.getElementById('canvas-wrap').getBoundingClientRect();
+  const flip = px > wrap.width - 170;
+  tip.style.left = flip ? `${px - tip.offsetWidth - 12}px` : `${px + 12}px`;
+  tip.style.top = `${Math.max(0, py - 20)}px`;
+}
+
+window.addEventListener('resize', () => { if (lapData) drawChart(); });
 load();
 </script>
 </body>

@@ -56,6 +56,17 @@ pub fn respond(target: &str, sessions_dir: &str) -> (&'static str, &'static str,
             include_str!("../assets/index.html").to_string(),
         ),
         "/api/sessions" => ("200 OK", "application/json", sessions_json(sessions_dir)),
+        "/api/laps" => match query.strip_prefix("file=").map(percent_decode) {
+            Some(file) if is_safe_session_path(&file) => match laps_json(Path::new(&file)) {
+                Ok(json) => ("200 OK", "application/json", json),
+                Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e),
+            },
+            _ => (
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                "bad or missing file parameter".into(),
+            ),
+        },
         "/api/report" => match query.strip_prefix("file=").map(percent_decode) {
             Some(file) if is_safe_session_path(&file) => {
                 match crate::analysis::report::full_session_report(Path::new(&file)) {
@@ -99,6 +110,35 @@ fn percent_decode(s: &str) -> String {
 /// recordings, nothing else.
 fn is_safe_session_path(file: &str) -> bool {
     file.ends_with(".ftel") && !file.contains("..") && !file.starts_with('/')
+}
+
+/// Distance-binned speed traces per profiled lap — the dashboard's chart data.
+fn laps_json(path: &Path) -> Result<String, String> {
+    let session = crate::analysis::Session::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let profile = crate::analysis::profile::session_profile(&session.frames)?;
+    let laps: Vec<String> = profile
+        .laps
+        .iter()
+        .map(|lap| {
+            let speeds: Vec<String> = lap.bins[..profile.shared_bins]
+                .iter()
+                .map(|b| format!("{:.1}", b.speed_avg))
+                .collect();
+            format!(
+                "{{\"lap\":{},\"time\":{:.3},\"standing\":{},\"speeds\":[{}]}}",
+                lap.lap_number + 1,
+                lap.time_s,
+                lap.standing_start,
+                speeds.join(","),
+            )
+        })
+        .collect();
+    Ok(format!(
+        "{{\"binMeters\":{:.0},\"bestTime\":{:.3},\"laps\":[{}]}}",
+        crate::analysis::profile::BIN_METERS,
+        profile.best_lap_time_s,
+        laps.join(","),
+    ))
 }
 
 fn sessions_json(dir: &str) -> String {
@@ -146,6 +186,9 @@ mod tests {
             "/api/report?file=/etc/passwd",
             "/api/report?file=Cargo.toml",
             "/api/report",
+            "/api/laps?file=..%2FCargo.toml",
+            "/api/laps?file=/etc/passwd",
+            "/api/laps",
         ] {
             let (status, _, _) = respond(target, "sessions");
             assert_eq!(status, "400 Bad Request", "{target}");
