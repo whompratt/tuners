@@ -87,6 +87,11 @@
     gap: 10px 14px;
   }
   .form-grid label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .form-grid .fg-head {
+    grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--accent);
+    text-transform: uppercase; letter-spacing: 0.06em; margin-top: 6px;
+  }
+  .form-grid .fg-head:first-child { margin-top: 0; }
   .form-grid input, .form-grid select {
     width: 100%; background: var(--page); color: var(--ink-2); font: 14px system-ui;
     border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
@@ -181,9 +186,11 @@
       </form>
       <form id="tune-form" style="display:none;margin-top:12px" onsubmit="return false">
         <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
-          Enter the tune as it is in the game (all fields optional). Saving a
-          changed tune journals the difference automatically and starts a new
-          stint — change one thing at a time to keep steps attributable.
+          Enter the tune as the game shows it. Leave a field empty when the
+          car can't tune it (upgrade limitations) — e.g. only rear diff values
+          filled means a rear-diff car. Saving a changed tune journals the
+          difference automatically and starts a new stint — change one thing
+          at a time to keep steps attributable.
         </div>
         <div class="form-grid" id="tune-fields"></div>
         <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
@@ -724,21 +731,32 @@ window.addEventListener('resize', () => {
 });
 
 // --- tuning session: the campaign (one car, facts, tune revisions) ---
-const TUNE_FIELDS = [
-  ['tire_pressure_f', 'front tire pressure'], ['tire_pressure_r', 'rear tire pressure'],
-  ['final_drive', 'final drive'],
-  ['camber_f', 'front camber'], ['camber_r', 'rear camber'],
-  ['toe_f', 'front toe'], ['toe_r', 'rear toe'], ['caster', 'caster'],
-  ['arb_f', 'front ARB'], ['arb_r', 'rear ARB'],
-  ['springs_f', 'front springs'], ['springs_r', 'rear springs'],
-  ['ride_height_f', 'front ride height'], ['ride_height_r', 'rear ride height'],
-  ['rebound_f', 'front rebound'], ['rebound_r', 'rear rebound'],
-  ['bump_f', 'front bump'], ['bump_r', 'rear bump'],
-  ['aero_f', 'front aero'], ['aero_r', 'rear aero'],
-  ['brake_balance', 'brake balance %'], ['brake_pressure', 'brake pressure %'],
-  ['diff_accel', 'diff accel %'], ['diff_decel', 'diff decel %'],
-  ['diff_center', 'center diff %'],
+const TUNE_GROUPS = [
+  ['Tire pressures', [
+    ['tire_pressure_f', 'front'], ['tire_pressure_r', 'rear']]],
+  ['Gearing', [
+    ['final_drive', 'final drive']]],
+  ['Alignment', [
+    ['camber_f', 'front camber'], ['camber_r', 'rear camber'],
+    ['toe_f', 'front toe'], ['toe_r', 'rear toe'], ['caster', 'caster']]],
+  ['Anti-roll bars', [
+    ['arb_f', 'front'], ['arb_r', 'rear']]],
+  ['Springs', [
+    ['springs_f', 'front rate'], ['springs_r', 'rear rate'],
+    ['ride_height_f', 'front ride height'], ['ride_height_r', 'rear ride height']]],
+  ['Damping', [
+    ['rebound_f', 'front rebound'], ['rebound_r', 'rear rebound'],
+    ['bump_f', 'front bump'], ['bump_r', 'rear bump']]],
+  ['Aero', [
+    ['aero_f', 'front'], ['aero_r', 'rear']]],
+  ['Brakes', [
+    ['brake_balance', 'balance %'], ['brake_pressure', 'pressure %']]],
+  ['Differential', [
+    ['diff_accel_f', 'front accel %'], ['diff_decel_f', 'front decel %'],
+    ['diff_accel_r', 'rear accel %'], ['diff_decel_r', 'rear decel %'],
+    ['diff_center', 'center balance %']]],
 ];
+const TUNE_FIELDS = TUNE_GROUPS.flatMap(([, fields]) => fields);
 // [key, label, type]: number | compound | check (stored as on/off)
 const FACT_FIELDS = [
   ['front_weight_pct', 'front weight %', 'number'], ['weight', 'weight', 'number'],
@@ -787,7 +805,20 @@ function renderSession() {
     (latest.length && facts.length ? '<br>' : '') +
     latest.map(([k, v]) => kv(TUNE_FIELDS, k, v)).join('');
 }
-const label = (fields, key) => (fields.find(([k]) => k === key) || [key, key])[1];
+// Full names for summary chips, where the grouped form uses short labels.
+const FULL_LABEL = {
+  tire_pressure_f: 'front tire pressure', tire_pressure_r: 'rear tire pressure',
+  arb_f: 'front ARB', arb_r: 'rear ARB',
+  springs_f: 'front springs', springs_r: 'rear springs',
+  aero_f: 'front aero', aero_r: 'rear aero',
+  brake_balance: 'brake balance', brake_pressure: 'brake pressure',
+  diff_accel_f: 'front diff accel', diff_decel_f: 'front diff decel',
+  diff_accel_r: 'rear diff accel', diff_decel_r: 'rear diff decel',
+  diff_center: 'center diff',
+};
+const label = (fields, key) =>
+  (fields === TUNE_FIELDS && FULL_LABEL[key]) ||
+  (fields.find(([k]) => k === key) || [key, key])[1];
 
 function openSessionForm() {
   const wrap = $('session-fields');
@@ -874,8 +905,11 @@ $('session-save').onclick = async () => {
 
 function openTuneForm() {
   const latest = (sessionData && sessionData.latest) || {};
-  $('tune-fields').innerHTML = TUNE_FIELDS.map(([k, l]) =>
-    `<div><label>${l}${unitLabel(k)}</label><input id="tf-${k}" type="number" step="any" value="${toDisp(k, latest[k] || '')}"></div>`
+  $('tune-fields').innerHTML = TUNE_GROUPS.map(([group, fields]) =>
+    `<div class="fg-head">${group}</div>` +
+    fields.map(([k, l]) =>
+      `<div><label>${l}${unitLabel(k)}</label><input id="tf-${k}" type="number" step="any" value="${toDisp(k, latest[k] || '')}"></div>`
+    ).join('')
   ).join('');
   $('tune-msg').textContent = '';
   $('tune-form').style.display = '';

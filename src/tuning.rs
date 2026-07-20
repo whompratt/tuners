@@ -45,6 +45,10 @@ pub struct TuningSession {
 /// Tune fields the dashboard form offers, with the journal phrase used when the
 /// field changes. Order matches the in-game tuning menu.
 ///
+/// An EMPTY (absent) field means "not tunable on this car" — upgrade choices
+/// decide what the game exposes (e.g. only rear diff fields filled = RWD diff;
+/// front+rear+center = AWD). Absence is never treated as a reset in diffs.
+///
 /// VALUES ARE STORED IN CANONICAL IMPERIAL UNITS (what FH6 uses internally):
 /// psi, lb/in, in, lb. Unit preferences are a pure display/formatting layer in
 /// the dashboard — the file, the diffs, and the journal never change units.
@@ -71,8 +75,10 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("aero_r", "rear aero"),
     ("brake_balance", "brake balance"),
     ("brake_pressure", "brake pressure"),
-    ("diff_accel", "diff accel"),
-    ("diff_decel", "diff decel"),
+    ("diff_accel_f", "front diff accel"),
+    ("diff_decel_f", "front diff decel"),
+    ("diff_accel_r", "rear diff accel"),
+    ("diff_decel_r", "rear diff decel"),
     ("diff_center", "center diff balance"),
 ];
 
