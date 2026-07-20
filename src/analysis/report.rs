@@ -182,6 +182,26 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         .unwrap(),
         _ => writeln!(out, "    no significant cornering in this stint").unwrap(),
     }
+    let band = |b: &crate::analysis::metrics::BandBalance| match b.index {
+        Some(idx) => format!("{idx:+.2} ({} samples)", b.samples),
+        None => "—".into(),
+    };
+    if m.understeer_index.is_some() {
+        writeln!(
+            out,
+            "    balance by speed: {} below 85 mph | {} above",
+            band(&m.balance_low_speed),
+            band(&m.balance_high_speed),
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    balance by throttle: {} on | {} off",
+            band(&m.balance_on_throttle),
+            band(&m.balance_off_throttle),
+        )
+        .unwrap();
+    }
 
     writeln!(
         out,

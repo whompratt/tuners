@@ -33,6 +33,9 @@ const LANDING_WINDOW_S: f32 = 0.6;
 /// Flutter (|d rpm/dt|, |d wheel speed/dt|) sampling: same gear, on throttle,
 /// frame gaps up to this many seconds.
 const FLUTTER_MAX_DT_S: f32 = 0.2;
+/// Cornering at or above this speed (m/s, ~85 mph) is the high-speed balance
+/// band, where aero dominates roll stiffness; below it, mechanical grip does.
+const HIGH_SPEED_MPS: f32 = 38.0;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TempStats {
@@ -51,6 +54,17 @@ pub struct SuspensionStats {
     /// signal. Road texture drives ~5.5/s baseline (observed, tarmac, healthy
     /// damping); underdamped ringing adds 2 reversals per cycle on top.
     pub reversals_per_sec: f32,
+}
+
+/// Balance measured over a conditioned subset of cornering samples (a speed
+/// band, or on/off throttle). Same units as `understeer_index`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BandBalance {
+    pub samples: usize,
+    /// mean |front slip angle| − mean |rear slip angle| within the band.
+    pub index: Option<f32>,
+    /// Mean |rear slip angle| within the band — the absolute operating point.
+    pub rear_slip: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -92,6 +106,14 @@ pub struct StintMetrics {
     pub cornering_front_slip: Option<f32>,
     pub cornering_rear_slip: Option<f32>,
     pub cornering_frac: f32,
+    /// Balance split by speed band (boundary HIGH_SPEED_MPS): imbalance that
+    /// lives only in the high band points at aero, not bars.
+    pub balance_low_speed: BandBalance,
+    pub balance_high_speed: BandBalance,
+    /// Balance split by throttle state while cornering: the on−off index shift
+    /// is the power-on balance signature (diff accel / power understeer).
+    pub balance_on_throttle: BandBalance,
+    pub balance_off_throttle: BandBalance,
     /// Drive-wheel spin as a fraction of on-throttle samples. None if never on throttle.
     pub wheelspin_frac: Option<f32>,
     /// Any-wheel lockup as a fraction of on-brake samples. None if never on brake.
@@ -112,6 +134,14 @@ pub struct StintMetrics {
     pub rpm_flutter: Option<f32>,
     /// Mean |d wheel-speed/dt| on throttle in-gear (rad/s²), same signal.
     pub wheelspeed_flutter: Option<f32>,
+}
+
+fn band_balance((samples, front, rear): (usize, f32, f32)) -> BandBalance {
+    BandBalance {
+        samples,
+        index: (samples > 0).then(|| (front - rear) / samples as f32),
+        rear_slip: (samples > 0).then(|| rear / samples as f32),
+    }
 }
 
 pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
@@ -144,6 +174,9 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut cornering = 0usize;
     let mut front_slip_sum = 0.0f32;
     let mut rear_slip_sum = 0.0f32;
+    // [low speed, high speed, on throttle, off throttle] cornering bands:
+    // (samples, front slip sum, rear slip sum).
+    let mut bands = [(0usize, 0.0f32, 0.0f32); 4];
     let mut throttle_samples = 0usize;
     let mut wheelspin = 0usize;
     let mut brake_samples = 0usize;
@@ -224,8 +257,17 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
 
         if f.acceleration[0].abs() > CORNERING_LAT_ACCEL {
             cornering += 1;
-            front_slip_sum += (f.tire_slip_angle.fl.abs() + f.tire_slip_angle.fr.abs()) / 2.0;
-            rear_slip_sum += (f.tire_slip_angle.rl.abs() + f.tire_slip_angle.rr.abs()) / 2.0;
+            let front = (f.tire_slip_angle.fl.abs() + f.tire_slip_angle.fr.abs()) / 2.0;
+            let rear = (f.tire_slip_angle.rl.abs() + f.tire_slip_angle.rr.abs()) / 2.0;
+            front_slip_sum += front;
+            rear_slip_sum += rear;
+            let speed_band = (f.speed >= HIGH_SPEED_MPS) as usize;
+            let throttle_band = 2 + (f.accel < PEDAL_ON) as usize;
+            for b in [speed_band, throttle_band] {
+                bands[b].0 += 1;
+                bands[b].1 += front;
+                bands[b].2 += rear;
+            }
         }
 
         if f.accel >= PEDAL_ON {
@@ -314,6 +356,10 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         cornering_front_slip: (cornering > 0).then(|| front_slip_sum / cornering as f32),
         cornering_rear_slip: (cornering > 0).then(|| rear_slip_sum / cornering as f32),
         cornering_frac: frac(cornering),
+        balance_low_speed: band_balance(bands[0]),
+        balance_high_speed: band_balance(bands[1]),
+        balance_on_throttle: band_balance(bands[2]),
+        balance_off_throttle: band_balance(bands[3]),
         wheelspin_frac: (throttle_samples > 0)
             .then(|| wheelspin as f32 / throttle_samples as f32),
         lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),

@@ -75,6 +75,9 @@ fn enrich_with_tune(
             journal::Family::FrontRoll => &["arb_f", "springs_f"],
             journal::Family::RearRoll => &["arb_r", "springs_r"],
             journal::Family::Gearing => &["final_drive"],
+            journal::Family::FrontAero => &["aero_f"],
+            journal::Family::RearAero => &["aero_r"],
+            journal::Family::DiffAccel => &["diff_accel_f", "diff_accel_r", "diff_center"],
         };
         let known: Vec<String> = keys
             .iter()

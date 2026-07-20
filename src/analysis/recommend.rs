@@ -18,6 +18,25 @@ const WHEELSPIN_MED: f32 = 0.08;
 const WHEELSPIN_HIGH: f32 = 0.15;
 /// Time on the rev limiter worth reacting to.
 const LIMITER_FRAC: f32 = 0.02;
+/// Minimum cornering samples in a conditioned band (speed / throttle) before
+/// band rules speak — ~8s of cornering at 60 Hz.
+const BAND_MIN_SAMPLES: usize = 500;
+/// High-speed-only imbalance (aero signature): the high band must read at
+/// least this while the low band stays under BALANCE_MILD. Calibrated on the
+/// real library: converged tarmac tunes show band gaps ~0.05 with BOTH bands
+/// imbalanced; only a genuinely speed-dependent car separates like this.
+const AERO_HIGH_INDEX: f32 = 0.10;
+const AERO_BAND_GAP: f32 = 0.10;
+/// On−off throttle index shift marking a power-on balance change. Healthy
+/// tarmac reads -0.02..-0.09 on the real library.
+const POWER_SHIFT: f32 = 0.10;
+/// The on-throttle index itself must clear this (in the shift direction): the
+/// power end genuinely works harder, not merely less pushy than entry.
+const POWER_INDEX: f32 = 0.08;
+/// Loose surfaces: throttle rotation is driving technique (dirt shifts read
+/// -0.13..-0.62 on well-tuned rally cars with on-throttle index ~0), so the
+/// on-throttle index gate is stricter before the diff rule speaks.
+const POWER_INDEX_LOOSE: f32 = 0.12;
 /// Top gear never reaching this fraction of redline = final drive too long.
 const UNUSED_REV_FRAC: f32 = 0.90;
 /// Suspension travel fractions.
@@ -74,6 +93,8 @@ pub fn recommend(overall: &StintMetrics, per_lap: &[StintMetrics]) -> Vec<Recomm
     let mut recs = Vec::new();
 
     let balance_sign = balance_rule(overall, per_lap, &mut recs);
+    aero_rule(overall, &mut recs);
+    power_balance_rule(overall, &mut recs);
     tire_pressure_rule(overall, balance_sign, &mut recs);
     traction_rule(overall, &mut recs);
     gearing_rule(overall, &mut recs);
@@ -145,6 +166,16 @@ fn balance_rule(
         front_slip * 100.0,
         rear_slip * 100.0,
     ));
+    if let (Some(lo), Some(hi)) = supported_pair(&overall.balance_low_speed, &overall.balance_high_speed) {
+        evidence.push(if (lo - hi) * idx.signum() >= AERO_BAND_GAP / 2.0 {
+            format!(
+                "concentrated at low speed ({lo:+.2} below 85 mph vs {hi:+.2} above) — \
+                 mechanical grip, so bars/springs over aero"
+            )
+        } else {
+            format!("by speed: {lo:+.2} below 85 mph, {hi:+.2} above")
+        });
+    }
 
     recs.push(Recommendation {
         area: "balance",
@@ -158,6 +189,107 @@ fn balance_rule(
         }),
     });
     Some(idx.signum())
+}
+
+/// Both bands' indices, when each has enough cornering samples to trust.
+fn supported_pair(
+    a: &crate::analysis::metrics::BandBalance,
+    b: &crate::analysis::metrics::BandBalance,
+) -> (Option<f32>, Option<f32>) {
+    let idx = |band: &crate::analysis::metrics::BandBalance| {
+        (band.samples >= BAND_MIN_SAMPLES).then_some(band.index).flatten()
+    };
+    (idx(a), idx(b))
+}
+
+/// Imbalance that lives ONLY in the high-speed band is an aero problem, not a
+/// bars problem — mechanical imbalance shows at every speed (and on the real
+/// library, mechanical understeer reads STRONGER at low speed).
+fn aero_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
+    let (Some(lo), Some(hi)) = supported_pair(&overall.balance_low_speed, &overall.balance_high_speed)
+    else {
+        return;
+    };
+    if hi.abs() < AERO_HIGH_INDEX || lo.abs() >= BALANCE_MILD || (hi - lo).abs() < AERO_BAND_GAP {
+        return;
+    }
+    let understeer = hi > 0.0;
+    let advice = if understeer {
+        "add front aero (or reduce rear aero): the car only pushes at high speed, \
+         where downforce balance outweighs the bars"
+    } else {
+        "add rear aero: the car is only loose at high speed, where downforce \
+         balance outweighs the bars"
+    };
+    recs.push(Recommendation {
+        area: "aero",
+        advice: advice.into(),
+        evidence: vec![format!(
+            "{} at speed only: index {hi:+.2} above 85 mph vs {lo:+.2} below \
+             (neutral) — a bars change would upset the low-speed balance that is \
+             currently fine",
+            if understeer { "understeer" } else { "oversteer" },
+        )],
+        confidence: if overall.surface_loose { Confidence::Low } else { Confidence::Medium },
+        implied: Some(Change {
+            family: if understeer { Family::FrontAero } else { Family::RearAero },
+            softer: false,
+            magnitude: None,
+        }),
+    });
+}
+
+/// Balance that degrades when the throttle is applied points at the driveline,
+/// not the bars: acceleration diff lock (and center torque split on AWD).
+fn power_balance_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
+    let (Some(on), Some(off)) = supported_pair(&overall.balance_on_throttle, &overall.balance_off_throttle)
+    else {
+        return;
+    };
+    let shift = on - off;
+    let index_gate = if overall.surface_loose { POWER_INDEX_LOOSE } else { POWER_INDEX };
+    let rear_drive = overall.drivetrain_type != 0; // RWD or AWD
+    let front_drive = overall.drivetrain_type != 1; // FWD or AWD
+    let awd = overall.drivetrain_type == 2;
+
+    let (advice, index_evt) = if shift <= -POWER_SHIFT && on <= -index_gate && rear_drive {
+        (
+            format!(
+                "reduce rear differential acceleration lock: the rear breaks away \
+                 specifically under power{}",
+                if awd { " (AWD: shifting center torque forward also helps)" } else { "" },
+            ),
+            "oversteer",
+        )
+    } else if shift >= POWER_SHIFT && on >= index_gate && front_drive {
+        (
+            format!(
+                "reduce front differential acceleration lock: the front washes out \
+                 specifically under power{}",
+                if awd { " (AWD: shifting center torque rearward also helps)" } else { "" },
+            ),
+            "understeer",
+        )
+    } else {
+        return;
+    };
+    let mut evidence = vec![format!(
+        "{index_evt} appears with throttle: index {on:+.2} on power vs {off:+.2} \
+         off power while cornering"
+    )];
+    if let Some(rear) = overall.balance_on_throttle.rear_slip {
+        evidence.push(format!(
+            "rear tires at {:.0}% of grip limit while cornering on power",
+            rear * 100.0
+        ));
+    }
+    recs.push(Recommendation {
+        area: "differential",
+        advice,
+        evidence,
+        confidence: Confidence::Medium,
+        implied: Some(Change { family: Family::DiffAccel, softer: true, magnitude: None }),
+    });
 }
 
 fn tire_pressure_rule(
@@ -223,7 +355,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             crate::packet::drivetrain_name(overall.drivetrain_type),
         )],
         confidence: if spin >= WHEELSPIN_HIGH { Confidence::High } else { Confidence::Medium },
-        implied: None,
+        implied: Some(Change { family: Family::DiffAccel, softer: true, magnitude: None }),
     });
 }
 
@@ -436,6 +568,10 @@ mod tests {
             cornering_front_slip: Some(0.5),
             cornering_rear_slip: Some(0.5),
             cornering_frac: 0.3,
+            balance_low_speed: Default::default(),
+            balance_high_speed: Default::default(),
+            balance_on_throttle: Default::default(),
+            balance_off_throttle: Default::default(),
             wheelspin_frac: Some(0.02),
             lockup_frac: Some(0.5),
             suspension: Corners::default(),
@@ -510,6 +646,121 @@ mod tests {
         assert_eq!(tire_recs.len(), 2, "both axles cold");
         assert!(tire_recs.iter().all(|r| r.advice.contains("lower")));
         assert!(tire_recs.iter().all(|r| r.confidence == Confidence::Medium));
+    }
+
+    fn band(samples: usize, index: f32) -> crate::analysis::metrics::BandBalance {
+        crate::analysis::metrics::BandBalance {
+            samples,
+            index: Some(index),
+            rear_slip: Some(0.6),
+        }
+    }
+
+    /// Understeer only above 85 mph with neutral low-speed balance = aero, and
+    /// the balance rule must stay quiet (overall index diluted below MILD is
+    /// not required — here overall is neutral so only aero speaks).
+    #[test]
+    fn high_speed_only_understeer_fires_aero_not_bars() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.04);
+        overall.balance_low_speed = band(2000, 0.02);
+        overall.balance_high_speed = band(2000, 0.14);
+        let recs = recommend(&overall, &[]);
+        let aero = recs.iter().find(|r| r.area == "aero").unwrap();
+        assert!(aero.advice.contains("add front aero"), "{}", aero.advice);
+        assert_eq!(aero.confidence, Confidence::Medium);
+        assert_eq!(aero.implied.unwrap().family, Family::FrontAero);
+        assert!(recs.iter().all(|r| r.area != "balance"));
+    }
+
+    #[test]
+    fn high_speed_oversteer_asks_for_rear_wing() {
+        let mut overall = base_metrics();
+        overall.balance_low_speed = band(2000, -0.01);
+        overall.balance_high_speed = band(2000, -0.13);
+        let recs = recommend(&overall, &[]);
+        let aero = recs.iter().find(|r| r.area == "aero").unwrap();
+        assert!(aero.advice.contains("add rear aero"), "{}", aero.advice);
+        assert_eq!(aero.implied.unwrap().family, Family::RearAero);
+    }
+
+    /// The real tarmac signature (Ford GT / McLaren): understeer at EVERY speed,
+    /// stronger below 85 mph. Mechanical — aero must stay quiet and the balance
+    /// rec must say the imbalance is concentrated at low speed.
+    #[test]
+    fn uniform_understeer_is_mechanical_not_aero() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.24);
+        overall.balance_low_speed = band(9000, 0.37);
+        overall.balance_high_speed = band(30000, 0.20);
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "aero"));
+        let balance = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert!(
+            balance.evidence.iter().any(|e| e.contains("concentrated at low speed")),
+            "{:?}",
+            balance.evidence
+        );
+    }
+
+    #[test]
+    fn starved_band_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.balance_low_speed = band(2000, 0.0);
+        overall.balance_high_speed = band(100, 0.30); // too few samples to trust
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "aero"));
+    }
+
+    /// Rear breaks away specifically under power (RWD): diff accel advice.
+    #[test]
+    fn power_oversteer_fires_diff_accel() {
+        let mut overall = base_metrics();
+        overall.balance_on_throttle = band(2000, -0.12);
+        overall.balance_off_throttle = band(2000, 0.02);
+        let recs = recommend(&overall, &[]);
+        let diff = recs.iter().find(|r| r.area == "differential").unwrap();
+        assert!(diff.advice.contains("rear differential acceleration lock"), "{}", diff.advice);
+        assert_eq!(diff.implied.unwrap().family, Family::DiffAccel);
+        assert!(diff.implied.unwrap().softer);
+    }
+
+    /// AWD power understeer: front diff / center torque advice.
+    #[test]
+    fn power_understeer_on_awd_names_the_front_diff() {
+        let mut overall = base_metrics();
+        overall.drivetrain_type = 2;
+        overall.balance_on_throttle = band(2000, 0.15);
+        overall.balance_off_throttle = band(2000, 0.02);
+        let recs = recommend(&overall, &[]);
+        let diff = recs.iter().find(|r| r.area == "differential").unwrap();
+        assert!(diff.advice.contains("front differential"), "{}", diff.advice);
+        assert!(diff.advice.contains("center torque rearward"), "{}", diff.advice);
+    }
+
+    /// The real dirt pattern (Fiesta/Audi): big on-off shift but on-throttle
+    /// index near zero — throttle rotation as technique, not a diff problem.
+    #[test]
+    fn dirt_throttle_rotation_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.surface_loose = true;
+        overall.balance_on_throttle = band(9000, -0.06);
+        overall.balance_off_throttle = band(5000, 0.57);
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "differential"), "{recs:?}");
+    }
+
+    /// Understeer everywhere with a small on-off shift (the healthy tarmac
+    /// signature) must NOT read as power understeer — the shift gate protects it.
+    #[test]
+    fn uniform_understeer_is_not_power_understeer() {
+        let mut overall = base_metrics();
+        overall.drivetrain_type = 2;
+        overall.understeer_index = Some(0.27);
+        overall.balance_on_throttle = band(27000, 0.26);
+        overall.balance_off_throttle = band(16000, 0.30);
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "differential"));
     }
 
     #[test]

@@ -12,6 +12,12 @@ pub enum Family {
     /// Final drive and per-gear ratios. Direction semantics: `softer` = the
     /// value decreased = LONGER gearing (higher final drive number = shorter).
     Gearing,
+    /// Downforce per end. `softer` = LESS downforce.
+    FrontAero,
+    RearAero,
+    /// Differential acceleration lock, either end (the drive axle is implicit
+    /// in the car). `softer` = LESS lock.
+    DiffAccel,
 }
 
 /// A step on a parameter family. Still blind to absolute setup values: the
@@ -94,8 +100,37 @@ fn parse_clause(note: &str) -> Option<Change> {
         let magnitude = num.map(|(v, _)| if softer { -v.abs() } else { v.abs() });
         return Some(Change { family: Family::Gearing, softer, magnitude });
     }
+    // "softer" here = less: less lock / less downforce.
+    let less_more = |t: &str| {
+        if ["less", "reduc", "lower", "remov"].iter().any(|k| t.contains(k)) {
+            Some(true)
+        } else if ["more", "add", "increas", "rais"].iter().any(|k| t.contains(k)) {
+            Some(false)
+        } else if let Some((v, true)) = number(t) {
+            Some(v < 0.0)
+        } else {
+            None
+        }
+    };
+    if t.contains("diff") && t.contains("accel") {
+        let softer = less_more(&t)?;
+        let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change { family: Family::DiffAccel, softer, magnitude });
+    }
     let front = t.contains("front");
     let rear = t.contains("rear");
+    if ["aero", "wing", "downforce"].iter().any(|k| t.contains(k)) {
+        if front == rear {
+            return None;
+        }
+        let softer = less_more(&t)?;
+        let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change {
+            family: if front { Family::FrontAero } else { Family::RearAero },
+            softer,
+            magnitude,
+        });
+    }
     if front == rear {
         return None;
     }
@@ -139,7 +174,7 @@ pub fn track_positions(changes: &[Vec<Change>]) -> Vec<(Option<f32>, Option<f32>
                 let slot = match c.family {
                     Family::FrontRoll => &mut front,
                     Family::RearRoll => &mut rear,
-                    Family::Gearing => continue, // not a tracked slider position
+                    _ => continue, // not a tracked slider position
                 };
                 *slot = match (*slot, c.magnitude) {
                     (Some(p), Some(m)) => Some(p + m),
@@ -328,6 +363,22 @@ mod tests {
         // v1 direction-only notes keep working, without magnitude.
         let c = parse_change("front arb softer").unwrap();
         assert_eq!(c.magnitude, None);
+    }
+
+    #[test]
+    fn aero_and_diff_notes_parse() {
+        let c = parse_change("front aero +20").unwrap();
+        assert_eq!((c.family, c.softer, c.magnitude), (Family::FrontAero, false, Some(20.0)));
+        let c = parse_change("reduced rear wing").unwrap();
+        assert_eq!((c.family, c.softer, c.magnitude), (Family::RearAero, true, None));
+        let c = parse_change("rear diff accel -15").unwrap();
+        assert_eq!((c.family, c.softer, c.magnitude), (Family::DiffAccel, true, Some(-15.0)));
+        let c = parse_change("more diff accel lock").unwrap();
+        assert_eq!((c.family, c.softer), (Family::DiffAccel, false));
+        assert_eq!(parse_change("aero changes"), None, "no direction, no end");
+        // Aero/diff clauses don't move the roll-position tracker.
+        let pos = track_positions(&[parse_clauses("front aero +20; rear diff accel -15")]);
+        assert_eq!(pos[0], (Some(0.0), Some(0.0)));
     }
 
     #[test]
