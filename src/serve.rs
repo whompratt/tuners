@@ -25,9 +25,10 @@ pub fn run(
     if udp_port != 0 {
         let out_dir = std::path::PathBuf::from(sessions_dir.clone());
         let journal = std::path::PathBuf::from(journal);
+        let session = std::path::PathBuf::from(session_file.clone());
         let recorder = recorder.clone();
         std::thread::spawn(move || {
-            crate::record::run_recorder(udp_port, out_dir, journal, recorder)
+            crate::record::run_recorder(udp_port, out_dir, journal, session, recorder)
         });
     } else {
         recorder.lock().unwrap().mode =

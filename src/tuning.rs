@@ -92,6 +92,19 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("diff_center", "center diff balance"),
 ];
 
+/// The journal belongs to the session: with a session car set, the journal
+/// file is derived per car ("tune-journal.txt" -> "tune-journal-1314.txt") so
+/// different cars' trajectories never mix. No car -> the base path (blind mode).
+pub fn journal_path_for(car: Option<i32>, base: &str) -> String {
+    match car {
+        Some(car) => match base.rsplit_once('.') {
+            Some((stem, ext)) => format!("{stem}-{car}.{ext}"),
+            None => format!("{base}-{car}"),
+        },
+        None => base.to_string(),
+    }
+}
+
 pub fn field_phrase(key: &str) -> &str {
     FIELDS
         .iter()
@@ -241,6 +254,13 @@ mod tests {
             stamp: stamp.into(),
             values: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
         }
+    }
+
+    #[test]
+    fn journal_path_is_per_car_when_session_has_one() {
+        assert_eq!(journal_path_for(Some(1314), "tune-journal.txt"), "tune-journal-1314.txt");
+        assert_eq!(journal_path_for(None, "tune-journal.txt"), "tune-journal.txt");
+        assert_eq!(journal_path_for(Some(7), "logs/journal"), "logs/journal-7");
     }
 
     #[test]

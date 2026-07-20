@@ -18,15 +18,17 @@ USAGE:
   tuners recommend <stint-file>
                     directional tune advice with evidence (blind mode: no tune input)
   tuners advise   [journal-file]
-                    history-aware advice from a tuning journal (default tune-journal.txt);
+                    history-aware advice from a tuning journal. Default: the
+                    active session car's journal (tune-journal-<car>.txt),
+                    falling back to tune-journal.txt with no session;
                     journal lines: <stint-file> | <change since previous stint>
   tuners serve    [--port 8080] [--sessions sessions] [--udp-port 20440]
                   [--journal tune-journal.txt] [--session tune-session.txt]
                     the app: records telemetry automatically (race mode only,
                     sessions split from the dashboard) and serves the dashboard
                     with charts, A/B compare, and a live view + quality meter.
-                    Tune-change notes entered at a session split are appended
-                    to the journal. If the UDP port is busy (external capture),
+                    Tune-change notes are journaled per session car
+                    (--journal is the base name: tune-journal-<car>.txt). If the UDP port is busy (external capture),
                     view-only. --udp-port 0 disables recording entirely
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
                     send synthetic telemetry (stand-in for the game); timescale
@@ -168,10 +170,21 @@ fn cmd_serve(args: &[String]) -> Result<(), String> {
 
 fn cmd_advise(args: &[String]) -> Result<(), String> {
     let journal_path = match args {
-        [] => "tune-journal.txt",
-        [p] => p.as_str(),
+        [] => {
+            // The journal belongs to the session: with an active session car,
+            // the default resolves to that car's journal file.
+            let session = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
+            let path = tuners::tuning::journal_path_for(session.car, "tune-journal.txt");
+            if let Some(car) = session.car {
+                let name = tuners::cars::car_name(car).unwrap_or("unknown car");
+                println!("journal: {path} (session car: {name})");
+            }
+            path
+        }
+        [p] => p.clone(),
         _ => return Err("usage: tuners advise [journal-file]".into()),
     };
+    let journal_path = journal_path.as_str();
     let text = std::fs::read_to_string(journal_path).map_err(|e| format!("{journal_path}: {e}"))?;
     let entries = analysis::journal::parse_journal(&text);
     if entries.is_empty() {

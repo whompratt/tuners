@@ -15,7 +15,7 @@ use crate::stint::StintWriter;
 use crate::util;
 use std::collections::VecDeque;
 use std::net::UdpSocket;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -34,7 +34,7 @@ const FREEROAM_MIN_SPEED_MPS: f32 = 5.0;
 const UNDECODABLE_FAILSAFE_RUN: u32 = 100;
 
 pub enum Action {
-    Open,
+    Open { car: i32 },
     Write { recv_us: u64, payload: Vec<u8> },
     Close,
 }
@@ -102,7 +102,7 @@ impl Cutter {
                 self.raw_failsafe = true;
                 if !self.active {
                     self.active = true;
-                    out.push(Action::Open);
+                    out.push(Action::Open { car: 0 });
                 }
                 self.flush(&mut out);
             } else if !self.active {
@@ -120,14 +120,14 @@ impl Cutter {
             if !self.active {
                 self.active = true;
                 self.car = frame.car_ordinal;
-                out.push(Action::Open);
+                out.push(Action::Open { car: self.car });
                 self.flush(&mut out);
             } else if frame.car_ordinal != 0 && self.car != 0 && frame.car_ordinal != self.car {
                 // Different car: unambiguously a different comparison unit.
                 self.close(&mut out);
                 self.active = true;
                 self.car = frame.car_ordinal;
-                out.push(Action::Open);
+                out.push(Action::Open { car: self.car });
             } else {
                 if self.car == 0 {
                     self.car = frame.car_ordinal;
@@ -222,16 +222,30 @@ pub fn new_shared() -> SharedRecorder {
     }))
 }
 
-/// Append a dashboard tune-change note to the journal against the session that
-/// just opened, seeding the previous session as baseline when the journal is new.
-fn journal_note(journal: &std::path::Path, prev: Option<&std::path::Path>, new: &std::path::Path, note: &str) {
+/// Append a dashboard tune-change note to the journal against the stint that
+/// just opened, seeding the previous stint as baseline when the journal is new
+/// (with a car-name header so per-car journal files are self-describing).
+fn journal_note(
+    journal: &std::path::Path,
+    prev: Option<&std::path::Path>,
+    new: &std::path::Path,
+    note: &str,
+    car: Option<i32>,
+) {
     let text = std::fs::read_to_string(journal).unwrap_or_default();
-    let lines = crate::analysis::journal::append_lines(
+    let mut lines = crate::analysis::journal::append_lines(
         &text,
         prev.map(|p| p.to_string_lossy()).as_deref(),
         &new.to_string_lossy(),
         note,
     );
+    if text.trim().is_empty()
+        && let Some(car) = car
+    {
+        let name = crate::cars::car_name(car).unwrap_or("unknown car");
+        lines = format!("# {name} (ordinal {car})
+{lines}");
+    }
     let write = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -253,7 +267,13 @@ fn unix_micros() -> u64 {
 /// Bind the UDP port and record forever. On bind failure, marks the status
 /// External and returns — the caller's tailer still serves the live view of
 /// whatever an external capture writes.
-pub fn run_recorder(port: u16, out_dir: PathBuf, journal: PathBuf, shared: SharedRecorder) {
+pub fn run_recorder(
+    port: u16,
+    out_dir: PathBuf,
+    journal_base: PathBuf,
+    session_file: PathBuf,
+    shared: SharedRecorder,
+) {
     let socket = match UdpSocket::bind(("0.0.0.0", port)) {
         Ok(s) => s,
         Err(e) => {
@@ -269,6 +289,8 @@ pub fn run_recorder(port: u16, out_dir: PathBuf, journal: PathBuf, shared: Share
 
     let mut cutter = Cutter::default();
     let mut writer: Option<StintWriter> = None;
+    let mut open_car: i32 = 0;
+    let mut last_closed_car: Option<i32> = None;
     let mut buf = [0u8; 2048];
     loop {
         let split = {
@@ -291,7 +313,7 @@ pub fn run_recorder(port: u16, out_dir: PathBuf, journal: PathBuf, shared: Share
 
         for action in actions {
             match action {
-                Action::Open => {
+                Action::Open { car } => {
                     let _ = std::fs::create_dir_all(&out_dir);
                     // Suffix on collision: a split + reopen inside one second must
                     // not truncate the file just closed.
@@ -305,18 +327,38 @@ pub fn run_recorder(port: u16, out_dir: PathBuf, journal: PathBuf, shared: Share
                     match StintWriter::create(&path) {
                         Ok(w) => {
                             writer = Some(w);
-                            let (note, last_closed) = {
+                            open_car = car;
+                            let last_closed = {
                                 let mut s = shared.lock().unwrap();
                                 s.mode = RecorderMode::Recording;
                                 s.file = Some(path.clone());
                                 s.packets = 0;
-                                (s.pending_note.take(), s.last_closed.clone())
+                                s.last_closed.clone()
                             };
-                            if let Some(note) = note {
-                                journal_note(&journal, last_closed.as_deref(), &path, &note);
+                            // The journal belongs to the session: notes only attach
+                            // to stints of the session's car. A pending note for a
+                            // different car stays pending until that car returns.
+                            let session = crate::tuning::TuningSession::load(&session_file);
+                            let car_matches = session.car.is_none_or(|c| c == car);
+                            let has_note = shared.lock().unwrap().pending_note.is_some();
+                            if has_note && car_matches {
+                                let note = shared.lock().unwrap().pending_note.take().unwrap();
+                                let journal = crate::tuning::journal_path_for(
+                                    session.car,
+                                    &journal_base.to_string_lossy(),
+                                );
+                                let baseline_ok =
+                                    session.car.is_none() || last_closed_car == session.car;
+                                journal_note(
+                                    Path::new(&journal),
+                                    last_closed.as_deref().filter(|_| baseline_ok),
+                                    &path,
+                                    &note,
+                                    session.car,
+                                );
                             }
                         }
-                        Err(e) => eprintln!("cannot create session file {}: {e}", path.display()),
+                        Err(e) => eprintln!("cannot create stint file {}: {e}", path.display()),
                     }
                 }
                 Action::Write { recv_us, payload } => {
@@ -330,6 +372,7 @@ pub fn run_recorder(port: u16, out_dir: PathBuf, journal: PathBuf, shared: Share
                 }
                 Action::Close => {
                     writer = None;
+                    last_closed_car = Some(open_car);
                     let mut s = shared.lock().unwrap();
                     s.mode = RecorderMode::Waiting;
                     s.last_closed = s.file.take();
@@ -376,7 +419,7 @@ mod tests {
         actions
             .iter()
             .map(|a| match a {
-                Action::Open => "open",
+                Action::Open { .. } => "open",
                 Action::Write { .. } => "write",
                 Action::Close => "close",
             })
