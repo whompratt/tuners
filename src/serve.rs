@@ -263,8 +263,15 @@ fn session_json(s: &crate::tuning::TuningSession) -> String {
     let latest = s
         .latest()
         .map_or("null".into(), |rev| map(&rev.values));
+    // Baseline included so the dashboard can summarize "delta vs baseline"
+    // instead of dumping the whole tune.
+    let baseline = s
+        .revisions
+        .first()
+        .filter(|_| s.revisions.len() > 1)
+        .map_or("null".into(), |rev| map(&rev.values));
     format!(
-        "{{\"car\":{car},\"carName\":{name},\"facts\":{},\"revisions\":{},\"latest\":{latest}}}",
+        "{{\"car\":{car},\"carName\":{name},\"facts\":{},\"revisions\":{},\"latest\":{latest},\"baseline\":{baseline}}}",
         map(&s.facts),
         s.revisions.len(),
     )

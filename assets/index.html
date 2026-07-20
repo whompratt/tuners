@@ -803,13 +803,40 @@ function renderSession() {
   $('tune-edit').style.display = active ? '' : 'none';
   $('tune-edit').textContent = s && s.latest ? 'new tune revision' : 'enter baseline tune';
   const facts = active ? Object.entries(s.facts).filter(([k]) => !k.startsWith('unit_')) : [];
-  const latest = s && s.latest ? Object.entries(s.latest) : [];
   const kv = (fields, k, v) =>
     `<span class="kv">${label(fields, k)} <b>${toDisp(k, v)}${unitLabel(k).replace(/[()]/g, '')}</b></span>`;
   $('tune-summary').innerHTML =
     facts.map(([k, v]) => kv(FACT_FIELDS, k, v)).join('') +
-    (latest.length && facts.length ? '<br>' : '') +
-    latest.map(([k, v]) => kv(TUNE_FIELDS, k, v)).join('');
+    (facts.length && s && s.revisions ? '<br>' : '') +
+    tuneDeltaSummary(s);
+}
+
+// One short line instead of the full tune: "baseline", or the delta vs baseline
+// in display units.
+function tuneDeltaSummary(s) {
+  if (!s || !s.revisions || !s.latest) return '';
+  if (s.revisions === 1) return '<span class="kv">tune <b>baseline</b></span>';
+  const base = s.baseline || {};
+  const parts = [];
+  for (const [k, v] of Object.entries(s.latest)) {
+    const b = base[k];
+    const dv = parseFloat(v), db = parseFloat(b);
+    if (b === undefined) {
+      parts.push(`<span class="kv">${label(TUNE_FIELDS, k)} <b>${toDisp(k, v)}</b> (new)</span>`);
+    } else if (!isNaN(dv) && !isNaN(db)) {
+      const u = unitOf(k);
+      const d = (dv - db) * (u ? u.k : 1);
+      const txt = d.toFixed(u ? u.dp : 2).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+      if (parseFloat(txt) !== 0) {
+        parts.push(`<span class="kv">${label(TUNE_FIELDS, k)} <b>${d > 0 ? '+' : ''}${txt}${u ? ' ' + u.l : ''}</b></span>`);
+      }
+    } else if (v !== b) {
+      parts.push(`<span class="kv">${label(TUNE_FIELDS, k)} <b>${b} → ${v}</b></span>`);
+    }
+  }
+  return parts.length
+    ? '<span class="kv" style="color:var(--muted)">vs baseline:</span>' + parts.join('')
+    : '<span class="kv">tune <b>unchanged from baseline</b></span>';
 }
 // Full names for summary chips, where the grouped form uses short labels.
 const FULL_LABEL = {
