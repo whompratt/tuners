@@ -125,6 +125,37 @@ pub fn canonical_unit(key: &str) -> Option<&'static str> {
     }
 }
 
+/// Format a canonical value in the session's display units (unit_* facts) —
+/// "11591.4436" (lb/in) becomes "207.0 kgf/mm" for a kgfmm session. Fields
+/// without units (or unparseable values) pass through unchanged.
+pub fn display_value(key: &str, canon: &str, facts: &BTreeMap<String, String>) -> String {
+    let dim = match key {
+        "tire_pressure_f" | "tire_pressure_r" => "pressure",
+        "springs_f" | "springs_r" => "springs",
+        "ride_height_f" | "ride_height_r" => "length",
+        "aero_f" | "aero_r" => "force",
+        "weight" => "mass",
+        _ => return canon.to_string(),
+    };
+    let Ok(v) = canon.parse::<f32>() else { return canon.to_string() };
+    let pref = facts.get(&format!("unit_{dim}")).map(String::as_str);
+    // (factor canonical -> display, decimals, label); default = canonical unit.
+    let (k, dp, label) = match (dim, pref) {
+        ("pressure", Some("bar")) => (0.0689476, 2, "bar"),
+        ("pressure", _) => (1.0, 1, "psi"),
+        ("springs", Some("kgfmm")) => (0.0178580, 1, "kgf/mm"),
+        ("springs", _) => (1.0, 0, "lb/in"),
+        ("length", Some("cm")) => (2.54, 1, "cm"),
+        ("length", _) => (1.0, 1, "in"),
+        ("force", Some("kgf")) => (0.453592, 0, "kgf"),
+        ("force", _) => (1.0, 0, "lb"),
+        ("mass", Some("kg")) => (0.453592, 0, "kg"),
+        ("mass", _) => (1.0, 0, "lb"),
+        _ => (1.0, 2, ""),
+    };
+    format!("{:.dp$} {label}", v * k, dp = dp)
+}
+
 /// Smallest delta worth journaling, per field, in canonical units — half a
 /// sensible display step. Guards against phantom diffs from unit-conversion
 /// round-trips (enter 700 lb/in, display 12.5 kgf/mm, re-save → 699.96).

@@ -76,9 +76,12 @@ fn enrich_with_tune(
         let known: Vec<String> = keys
             .iter()
             .filter_map(|k| {
-                rev.values.get(*k).map(|v| match crate::tuning::canonical_unit(k) {
-                    Some(unit) => format!("{} = {v} {unit}", crate::tuning::field_phrase(k)),
-                    None => format!("{} = {v}", crate::tuning::field_phrase(k)),
+                rev.values.get(*k).map(|v| {
+                    format!(
+                        "{} = {}",
+                        crate::tuning::field_phrase(k),
+                        crate::tuning::display_value(k, v, &session.facts),
+                    )
                 })
             })
             .collect();
@@ -91,8 +94,8 @@ fn enrich_with_tune(
         .map(|(k, v)| {
             (
                 crate::tuning::field_phrase(k).to_string(),
-                v.clone(),
-                crate::tuning::canonical_unit(k),
+                crate::tuning::display_value(k, v, &session.facts),
+                None,
             )
         })
         .collect()
