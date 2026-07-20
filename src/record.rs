@@ -202,9 +202,12 @@ pub struct RecorderStatus {
     pub file: Option<PathBuf>,
     pub packets: u64,
     pub split_requested: bool,
-    /// Tune-change note from the dashboard, journaled against the NEXT session
-    /// that opens (journal lines describe the change since the previous session).
+    /// Tune-change note from the dashboard, journaled against the NEXT stint
+    /// that opens (journal lines describe the change since the previous stint).
     pub pending_note: Option<String>,
+    /// Revision index the pending note diffs from (the last DRIVEN revision) —
+    /// lets consecutive saves with no stint between them net into one note.
+    pub pending_base_rev: Option<usize>,
     /// Most recently closed session — the baseline seed for an empty journal.
     pub last_closed: Option<PathBuf>,
 }
@@ -218,6 +221,7 @@ pub fn new_shared() -> SharedRecorder {
         packets: 0,
         split_requested: false,
         pending_note: None,
+        pending_base_rev: None,
         last_closed: None,
     }))
 }
@@ -342,7 +346,11 @@ pub fn run_recorder(
                             let car_matches = session.car.is_none_or(|c| c == car);
                             let has_note = shared.lock().unwrap().pending_note.is_some();
                             if has_note && car_matches {
-                                let note = shared.lock().unwrap().pending_note.take().unwrap();
+                                let note = {
+                                    let mut r = shared.lock().unwrap();
+                                    r.pending_base_rev = None;
+                                    r.pending_note.take().unwrap()
+                                };
                                 let journal = crate::tuning::journal_path_for(
                                     session.car,
                                     &journal_base.to_string_lossy(),

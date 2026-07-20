@@ -156,7 +156,7 @@ pub fn advise(
 
     let changes: Vec<_> = loaded
         .iter()
-        .map(|(e, _, _)| e.note.as_deref().and_then(journal::parse_change))
+        .map(|(e, _, _)| e.note.as_deref().map(journal::parse_clauses).unwrap_or_default())
         .collect();
     let positions = journal::track_positions(&changes);
 
@@ -176,7 +176,12 @@ pub fn advise(
                         journal::Outcome::Worsened(_) => "WORSE",
                         _ => "inconclusive",
                     };
-                    if let Some(note) = &entry.note
+                    // Reconciliation uses THE last step only, and only when it
+                    // is attributable to one family — a compound final step
+                    // (unattributable) leaves the recommendations blind rather
+                    // than reconciling against stale earlier evidence.
+                    if i == loaded.len() - 1
+                        && let Some(note) = &entry.note
                         && let Some(change) = journal::parse_change(note)
                     {
                         last_step = Some((change, outcome, note));

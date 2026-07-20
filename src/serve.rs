@@ -342,12 +342,39 @@ fn tune_post(
     if rev.values.is_empty() {
         return ("400 Bad Request", "text/plain; charset=utf-8", "empty tune".into());
     }
-    let note = s
-        .latest()
-        .map(|prev| crate::tuning::diff_note(prev, &rev))
+    // Consecutive saves with no stint between them net into ONE journal note:
+    // diff against the last DRIVEN revision (the pending chain's base), not
+    // merely the previous save. Saving arb, then remembering final drive and
+    // saving again, journals "front arb -1.5; final drive -0.14" — the change
+    // the next stint will actually be driven on.
+    let (has_pending, pending_base) = {
+        let r = recorder.lock().unwrap();
+        (r.pending_note.is_some(), r.pending_base_rev)
+    };
+    let base_idx = if has_pending {
+        pending_base
+    } else {
+        s.revisions.len().checked_sub(1)
+    };
+    let note = base_idx
+        .and_then(|i| s.revisions.get(i))
+        .map(|base| crate::tuning::diff_note(base, &rev))
         .unwrap_or_default();
     let first = s.revisions.is_empty();
     if !first && note.is_empty() {
+        // Nets to no change vs the driven tune (a pending chain was reverted):
+        // nothing to journal, drop any pending note.
+        {
+            let mut r = recorder.lock().unwrap();
+            r.pending_note = None;
+            r.pending_base_rev = None;
+        }
+        if s.latest().is_some_and(|l| l.values != rev.values) {
+            s.revisions.push(rev);
+            if let Err(e) = s.save(path) {
+                return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+            }
+        }
         return ("200 OK", "application/json", "{\"ok\":true,\"note\":null,\"changed\":false}".into());
     }
     s.revisions.push(rev);
@@ -358,6 +385,7 @@ fn tune_post(
         let mut r = recorder.lock().unwrap();
         r.split_requested = true;
         r.pending_note = Some(note.clone());
+        r.pending_base_rev = base_idx;
     }
     let note_json = if first { "null".into() } else { json_str(&note) };
     (

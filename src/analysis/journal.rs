@@ -55,6 +55,22 @@ pub fn parse_journal(text: &str) -> Vec<Entry> {
 /// advice. A direction word wins over the number's sign ("softened front arb
 /// by 2" → -2); a bare unsigned number with no direction word stays unparsed.
 pub fn parse_change(note: &str) -> Option<Change> {
+    if note.contains(';') {
+        // Compound note (multiple changes in one step): the outcome cannot be
+        // attributed to any single family. Positions still accumulate via
+        // parse_clauses.
+        return None;
+    }
+    parse_clause(note)
+}
+
+/// All parseable clauses of a (possibly compound) note — "front arb -1;
+/// final drive +0.28" yields the arb change even though attribution refuses it.
+pub fn parse_clauses(note: &str) -> Vec<Change> {
+    note.split(';').filter_map(|c| parse_clause(c.trim())).collect()
+}
+
+fn parse_clause(note: &str) -> Option<Change> {
     let t = note.to_lowercase();
     let front = t.contains("front");
     let rear = t.contains("rear");
@@ -89,14 +105,15 @@ pub fn parse_change(note: &str) -> Option<Change> {
 }
 
 /// Slider positions relative to baseline after each entry: (front, rear).
-/// A parsed change without a magnitude makes that family's position unknown
-/// from there on — direction alone can't say where you ended up.
-pub fn track_positions(changes: &[Option<Change>]) -> Vec<(Option<f32>, Option<f32>)> {
+/// Each entry may carry several clauses (compound steps still move sliders);
+/// a clause without a magnitude makes that family's position unknown from
+/// there on — direction alone can't say where you ended up.
+pub fn track_positions(changes: &[Vec<Change>]) -> Vec<(Option<f32>, Option<f32>)> {
     let (mut front, mut rear) = (Some(0.0f32), Some(0.0f32));
     changes
         .iter()
-        .map(|c| {
-            if let Some(c) = c {
+        .map(|clauses| {
+            for c in clauses {
                 let slot = match c.family {
                     Family::FrontRoll => &mut front,
                     Family::RearRoll => &mut rear,
@@ -277,12 +294,12 @@ mod tests {
 
     #[test]
     fn positions_accumulate_until_a_magnitudeless_step() {
-        let changes: Vec<Option<Change>> = vec![
-            None, // baseline
-            parse_change("front arb -2"),
-            parse_change("front arb -2"),
-            parse_change("rear arb +1"),
-            parse_change("front arb stiffer"), // direction only -> front unknown
+        let changes: Vec<Vec<Change>> = vec![
+            vec![], // baseline
+            parse_clauses("front arb -2"),
+            parse_clauses("front arb -2"),
+            parse_clauses("rear arb +1"),
+            parse_clauses("front arb stiffer"), // direction only -> front unknown
         ];
         let pos = track_positions(&changes);
         assert_eq!(pos[0], (Some(0.0), Some(0.0)));
@@ -313,6 +330,20 @@ mod tests {
             "front arb -2",
         );
         assert!(recs[0].advice.contains("go +1.0 slider units from here"), "{}", recs[0].advice);
+    }
+
+    /// A compound step's outcome is unattributable, but its clauses still
+    /// move the position tracker.
+    #[test]
+    fn compound_notes_attribute_nothing_but_track_positions() {
+        let note = "front arb -1; final drive +0.28";
+        assert_eq!(parse_change(note), None, "no single-family attribution");
+        let clauses = parse_clauses(note);
+        assert_eq!(clauses.len(), 1, "arb clause parses; final drive has no family");
+        assert_eq!(clauses[0].magnitude, Some(-1.0));
+
+        let pos = track_positions(&[vec![], parse_clauses(note)]);
+        assert_eq!(pos[1], (Some(-1.0), Some(0.0)));
     }
 
     #[test]
