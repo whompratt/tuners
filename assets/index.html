@@ -1040,6 +1040,18 @@ async function loadAdvice() {
       `${a.inProgress.split('/').pop()} is journaled but has no completed laps yet — ` +
       `its step joins the trajectory once a lap completes</div>`;
   }
+  if (a.anchor) {
+    const an = a.anchor;
+    const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
+    html += `<div style="margin-top:6px;font-size:13px;color:var(--muted)" ` +
+      `title="steps record deltas, but honest comparisons are between setup states: this is the prior stint whose setup differs least">` +
+      (an.areas
+        ? `cleanest comparison: vs step ${an.vsStep} (differs only in ${an.areas}: ${an.changes}) → ` +
+          `<span style="color:${OUTCOME_COLOR[an.word] || 'inherit'}">${an.word} ${sgn(an.deltaS)}</span>` +
+          (an.weak ? ' ⚠ single-lap side' : '') + (an.reconciled ? '' : ' (multi-area — informational)')
+        : `step ${an.vsStep} has the same setup — ${sgn(an.deltaS)} ideal is pure driver/track drift`) +
+      `</div>`;
+  }
   if (a.aba) {
     const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
     html += `<div style="margin-top:6px;font-size:13px;color:var(--muted)" ` +

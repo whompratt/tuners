@@ -18,6 +18,30 @@ pub enum Family {
     /// Differential acceleration lock, either end (the drive axle is implicit
     /// in the car). `softer` = LESS lock.
     DiffAccel,
+    /// Deceleration lock. `softer` = LESS lock. Behaviourally invisible per
+    /// the 2026-07-21 A/B (driver masks it) — outcome-led advice only.
+    DiffDecel,
+    /// Brake balance / pressure. `softer` = the value decreased (balance:
+    /// more rearward).
+    Brakes,
+    /// Rebound / bump, either end. `softer` = less damping.
+    Damping,
+}
+
+/// The Family a setup-state area (tuning::field_area) reconciles under.
+pub fn family_for_area(area: &str) -> Option<Family> {
+    Some(match area {
+        "front roll" => Family::FrontRoll,
+        "rear roll" => Family::RearRoll,
+        "gearing" => Family::Gearing,
+        "front aero" => Family::FrontAero,
+        "rear aero" => Family::RearAero,
+        "diff accel" => Family::DiffAccel,
+        "diff decel" => Family::DiffDecel,
+        "brakes" => Family::Brakes,
+        "damping" => Family::Damping,
+        _ => return None,
+    })
 }
 
 /// A step on a parameter family. Still blind to absolute setup values: the
@@ -112,10 +136,21 @@ fn parse_clause(note: &str) -> Option<Change> {
             None
         }
     };
-    if t.contains("diff") && t.contains("accel") {
+    if t.contains("diff") && (t.contains("accel") || t.contains("decel")) {
+        let family = if t.contains("decel") { Family::DiffDecel } else { Family::DiffAccel };
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
-        return Some(Change { family: Family::DiffAccel, softer, magnitude });
+        return Some(Change { family, softer, magnitude });
+    }
+    if t.contains("brake") {
+        let softer = less_more(&t)?;
+        let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change { family: Family::Brakes, softer, magnitude });
+    }
+    if ["rebound", "bump", "damping"].iter().any(|k| t.contains(k)) {
+        let softer = less_more(&t)?;
+        let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change { family: Family::Damping, softer, magnitude });
     }
     let front = t.contains("front");
     let rear = t.contains("rear");
@@ -370,7 +405,9 @@ pub fn family_area(f: Family) -> &'static str {
         Family::FrontRoll | Family::RearRoll => "balance",
         Family::Gearing => "gearing",
         Family::FrontAero | Family::RearAero => "aero",
-        Family::DiffAccel => "differential",
+        Family::DiffAccel | Family::DiffDecel => "differential",
+        Family::Brakes => "brakes",
+        Family::Damping => "damping",
     }
 }
 

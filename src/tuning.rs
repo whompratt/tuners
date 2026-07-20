@@ -95,6 +95,49 @@ pub const FIELDS: &[(&str, &str)] = &[
 /// The journal belongs to the session: with a session car set, the journal
 /// file is derived per car ("tune-journal.txt" -> "tune-journal-1314.txt") so
 /// different cars' trajectories never mix. No car -> the base path (blind mode).
+/// Coarse experiment area for a tune field — the granularity at which two
+/// setups "differ by one experiment". Setup-state comparison (advise anchor)
+/// treats a stint whose setup differs from an ancestor's in exactly one area
+/// as a clean single-family A/B, however compound the step notes in between.
+pub fn field_area(key: &str) -> &'static str {
+    match key {
+        "arb_f" | "springs_f" => "front roll",
+        "arb_r" | "springs_r" => "rear roll",
+        "aero_f" => "front aero",
+        "aero_r" => "rear aero",
+        "final_drive" => "gearing",
+        k if k.starts_with("gear_") => "gearing",
+        "diff_accel_f" | "diff_accel_r" | "diff_center" => "diff accel",
+        "diff_decel_f" | "diff_decel_r" => "diff decel",
+        "brake_balance" | "brake_pressure" => "brakes",
+        "rebound_f" | "rebound_r" | "bump_f" | "bump_r" => "damping",
+        "ride_height_f" | "ride_height_r" => "ride height",
+        "tire_pressure_f" | "tire_pressure_r" => "tire pressure",
+        "camber_f" | "camber_r" | "toe_f" | "toe_r" | "caster" => "alignment",
+        _ => "other",
+    }
+}
+
+/// Keys whose values differ between two revisions (beyond per-field noise).
+pub fn diff_keys(a: &Revision, b: &Revision) -> Vec<String> {
+    let mut keys: Vec<String> = a.values.keys().chain(b.values.keys()).cloned().collect();
+    keys.sort();
+    keys.dedup();
+    keys.retain(|k| {
+        let (va, vb) = (a.values.get(k), b.values.get(k));
+        match (va, vb) {
+            (Some(va), Some(vb)) => match (va.parse::<f32>(), vb.parse::<f32>()) {
+                (Ok(fa), Ok(fb)) => (fa - fb).abs() >= diff_epsilon(k),
+                _ => va != vb,
+            },
+            // The form always posts every filled field; absence means "not
+            // entered", not a change (mirrors diff_note).
+            _ => false,
+        }
+    });
+    keys
+}
+
 pub fn journal_path_for(car: Option<i32>, base: &str) -> String {
     match car {
         Some(car) => match base.rsplit_once('.') {

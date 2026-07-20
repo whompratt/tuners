@@ -220,6 +220,27 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             }
             println!("{line}");
         }
+        if let Some(a) = &view.anchor {
+            if a.areas.is_empty() {
+                println!(
+                    "  cleanest comparison for the last stint: step {} has the SAME \
+                     setup — the {:+.2}s ideal delta is pure driver/track drift",
+                    a.vs_step, a.delta_s,
+                );
+            } else {
+                println!(
+                    "  cleanest comparison for the last stint: vs step {} (setups \
+                     differ only in {}: {}) → {} {:+.2}s{}{}",
+                    a.vs_step,
+                    a.areas,
+                    a.changes,
+                    a.word,
+                    a.delta_s,
+                    if a.weak { "  [single-lap side — corroborate]" } else { "" },
+                    if a.reconciled { "" } else { "  [multi-area — informational]" },
+                );
+            }
+        }
         if let Some(aba) = &view.aba {
             println!(
                 "  A-B-A on {}: drift-corrected cost of the excursion {:+.2}s ideal; \

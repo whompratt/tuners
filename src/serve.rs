@@ -453,6 +453,18 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
             )
         })
         .collect();
+    let anchor = v.anchor.as_ref().map_or("null".into(), |a| {
+        format!(
+            "{{\"vsStep\":{},\"areas\":{},\"changes\":{},\"deltaS\":{:.3},\"word\":\"{}\",\"weak\":{},\"reconciled\":{}}}",
+            a.vs_step,
+            json_str(&a.areas),
+            json_str(&a.changes),
+            a.delta_s,
+            a.word,
+            a.weak,
+            a.reconciled,
+        )
+    });
     let aba = v.aba.as_ref().map_or("null".into(), |a| {
         format!(
             "{{\"families\":{},\"effectS\":{:.3},\"driftS\":{:.3}}}",
@@ -462,7 +474,7 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         )
     });
     format!(
-        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"aba\":{aba},\"inProgress\":{},\"recommendations\":[{}],\"currentTune\":[{}]}}",
+        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"inProgress\":{},\"recommendations\":[{}],\"currentTune\":[{}]}}",
         v.journal.as_deref().map_or("null".into(), json_str),
         json_str(&v.advice_for),
         steps.join(","),

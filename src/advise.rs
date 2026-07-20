@@ -39,10 +39,34 @@ pub struct AbaView {
     pub drift_s: f32,
 }
 
+/// The honest comparison for the last stint: the prior stint whose SETUP
+/// STATE differs least, which for chained compound steps ("revert X; try Y")
+/// is usually the shared baseline, not the chronological neighbor. Steps
+/// record deltas; comparisons should be between states.
+pub struct AnchorView {
+    /// 1-based trajectory index of the anchor stint.
+    pub vs_step: usize,
+    /// Experiment areas the setups differ in ("damping"); empty = same setup
+    /// (the delta is pure driver/track drift).
+    pub areas: String,
+    /// Human description of the setup difference ("front rebound +12.2; ...").
+    pub changes: String,
+    /// Ideal-lap delta anchor -> last (positive = last is slower).
+    pub delta_s: f32,
+    pub word: &'static str,
+    /// Single-flying-lap comparison on either side.
+    pub weak: bool,
+    /// Whether this comparison drove reconciliation (single-area anchors do;
+    /// multi-area anchors are informational).
+    pub reconciled: bool,
+}
+
 pub struct AdviseView {
     /// Journal file the trajectory came from; None = blind fallback (no journal).
     pub journal: Option<String>,
     pub steps: Vec<StepView>,
+    /// Setup-state comparison for the last stint (see AnchorView).
+    pub anchor: Option<AnchorView>,
     /// Present when the last two steps form an A-B-A (see AbaView).
     pub aba: Option<AbaView>,
     /// Journaled stint with no completed laps yet (still recording): excluded
@@ -96,6 +120,9 @@ fn enrich_with_tune(
             journal::Family::FrontAero => &["aero_f"],
             journal::Family::RearAero => &["aero_r"],
             journal::Family::DiffAccel => &["diff_accel_f", "diff_accel_r", "diff_center"],
+            journal::Family::DiffDecel => &["diff_decel_f", "diff_decel_r"],
+            journal::Family::Brakes => &["brake_balance", "brake_pressure"],
+            journal::Family::Damping => &["rebound_f", "rebound_r", "bump_f", "bump_r"],
         };
         let known: Vec<String> = keys
             .iter()
@@ -123,6 +150,16 @@ fn enrich_with_tune(
             )
         })
         .collect()
+}
+
+/// Trailing "YYYYMMDD-HHMMSS" stamp of a stint filename, comparable with
+/// tune revision stamps (same fixed format, so string order = time order).
+fn stint_stamp(path: &str) -> Option<&str> {
+    let name = Path::new(path).file_stem()?.to_str()?;
+    let stamp = name.get(name.len().checked_sub(15)?..)?;
+    (stamp.as_bytes()[8] == b'-'
+        && stamp.bytes().enumerate().all(|(i, b)| i == 8 || b.is_ascii_digit()))
+    .then_some(stamp)
 }
 
 /// Newest stint recording in `dir` whose first driving frame matches `car`
@@ -165,6 +202,7 @@ pub fn advise(
         return Ok(AdviseView {
             journal: None,
             steps: Vec::new(),
+            anchor: None,
             aba: None,
             in_progress: None,
             advice_for: path,
@@ -264,6 +302,88 @@ pub fn advise(
         });
     }
 
+    // Setup state per step: the latest tune revision saved before the stint
+    // began. Only bound when the stint really is the session car's — an
+    // explicitly passed foreign journal must not inherit this car's tunes.
+    let setups: Vec<Option<&crate::tuning::Revision>> = loaded
+        .iter()
+        .map(|(entry, stint, _)| {
+            let car = stint
+                .frames
+                .iter()
+                .find(|t| t.frame.car_ordinal != 0)
+                .map(|t| t.frame.car_ordinal);
+            if car.is_none() || car != session.car {
+                return None;
+            }
+            let stamp = stint_stamp(&entry.path)?;
+            session.revisions.iter().rev().find(|r| r.stamp.as_str() < stamp)
+        })
+        .collect();
+
+    // The honest comparison for the last stint is the prior stint whose SETUP
+    // differs least (ties -> most recent). Chained experiments ("revert X;
+    // try Y") make the chronological neighbor a compound comparison while the
+    // shared baseline is a clean single-area A/B.
+    let mut anchor = None;
+    let mut anchor_change: Option<(journal::Change, journal::Outcome, String, bool)> = None;
+    let n = loaded.len();
+    if let Some(Some(last_setup)) = setups.last()
+        && n >= 2
+    {
+        let mut best: Option<(usize, Vec<String>)> = None;
+        for (i, setup) in setups[..n - 1].iter().enumerate() {
+            let Some(setup) = setup else { continue };
+            let keys = crate::tuning::diff_keys(setup, last_setup);
+            if best.as_ref().is_none_or(|(_, bk)| keys.len() <= bk.len()) {
+                best = Some((i, keys));
+            }
+        }
+        if let Some((i, keys)) = best
+            && let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[n - 1].2)
+        {
+            let mut areas: Vec<&str> =
+                keys.iter().map(|k| crate::tuning::field_area(k)).collect();
+            areas.sort();
+            areas.dedup();
+            let changes = crate::tuning::diff_note(setups[i].unwrap(), last_setup);
+            let weak =
+                loaded[i].2.laps.len().min(loaded[n - 1].2.laps.len()) < 2;
+            let outcome = journal::judge(cmp.ideal_delta_s);
+            let single_family =
+                (areas.len() == 1).then(|| journal::family_for_area(areas[0])).flatten();
+            if let Some(family) = single_family {
+                let deltas: Vec<f32> = keys
+                    .iter()
+                    .filter_map(|k| {
+                        let old = setups[i].unwrap().values.get(k)?.parse::<f32>().ok()?;
+                        let new = last_setup.values.get(k)?.parse::<f32>().ok()?;
+                        Some(new - old)
+                    })
+                    .collect();
+                let change = journal::Change {
+                    family,
+                    softer: deltas.iter().sum::<f32>() < 0.0,
+                    magnitude: (deltas.len() == 1).then(|| deltas[0]),
+                };
+                anchor_change = Some((change, outcome, changes.clone(), weak));
+            }
+            anchor = Some(AnchorView {
+                vs_step: i + 1,
+                areas: areas.join(", "),
+                changes,
+                delta_s: cmp.ideal_delta_s,
+                word: match outcome {
+                    journal::Outcome::Improved(_) => "improved",
+                    journal::Outcome::Worsened(_) => "WORSE",
+                    _ => "inconclusive",
+                },
+                weak,
+                reconciled: anchor_change.is_some(),
+            });
+        }
+    }
+
     // Trailing excursion-and-revert (A-B-A): the pair's deltas cancel drift.
     // effect = (d_exc − d_rev)/2, drift = (d_exc + d_rev)/2. Requires 2+
     // flying laps on all three stints involved — single-lap ideals are the
@@ -290,7 +410,19 @@ pub fn advise(
 
     let (last_entry, last_stint, _) = loaded.last().unwrap();
     let mut recs = blind_recommendations(last_stint, &last_entry.path)?;
-    if let Some((change, outcome, note)) = last_step {
+    let anchor_drift = anchor.as_ref().is_some_and(|a| a.areas.is_empty());
+    if let Some((change, outcome, note, weak)) = &anchor_change {
+        // Setup-state comparison: a direct single-area A/B against the anchor
+        // stint — supersedes note-based reconciliation entirely.
+        if !journal::reconcile(&mut recs, *change, *outcome, note, None, *weak)
+            && let Some(rec) = journal::history_revert(*change, *outcome, note, None, *weak)
+        {
+            recs.push(rec);
+        }
+    } else if anchor_drift {
+        // Same setup as the anchor: the measured delta is pure drift; there is
+        // no change to charge it to.
+    } else if let Some((change, outcome, note)) = last_step {
         if !journal::reconcile(&mut recs, change, outcome, note, None, last_weak)
             && let Some(rec) = journal::history_revert(change, outcome, note, None, last_weak)
         {
@@ -329,11 +461,24 @@ pub fn advise(
     }
     // History-only recs arrive unsorted; keep most-confident-first for display.
     recs.sort_by_key(|r| std::cmp::Reverse(r.confidence));
-    let current_tune = enrich_with_tune(&mut recs, &session);
+    // Cite tune absolutes only when the journal's stints are the session
+    // car's — an explicitly passed foreign journal must not quote this car's
+    // sliders as if they were its own.
+    let last_car = last_stint
+        .frames
+        .iter()
+        .find(|t| t.frame.car_ordinal != 0)
+        .map(|t| t.frame.car_ordinal);
+    let current_tune = if last_car == session.car {
+        enrich_with_tune(&mut recs, &session)
+    } else {
+        Vec::new()
+    };
 
     Ok(AdviseView {
         journal: Some(journal_path.to_string()),
         steps,
+        anchor,
         aba,
         in_progress,
         advice_for: last_entry.path.clone(),
