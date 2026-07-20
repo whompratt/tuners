@@ -581,6 +581,7 @@ mod tests {
             balance_high_speed: Default::default(),
             balance_on_throttle: Default::default(),
             balance_off_throttle: Default::default(),
+            balance_on_brake: Default::default(),
             corners: None,
             wheelspin_frac: Some(0.02),
             lockup_frac: Some(0.5),

@@ -26,10 +26,28 @@ pub struct StepView {
     pub split: Option<(f32, f32)>,
 }
 
+/// Drift-corrected reading of a trailing excursion-and-revert pair: the two
+/// deltas around a net-zero setup change decompose into the excursion's true
+/// cost and the driver/track drift both stints share.
+pub struct AbaView {
+    /// Areas the excursion touched ("differential", "balance+gearing", ...).
+    pub families: String,
+    /// Ideal-lap cost of the excursion with drift cancelled (positive = the
+    /// excursion was slower).
+    pub effect_s: f32,
+    /// Per-stint drift over the pair — the noise floor for outcome margins.
+    pub drift_s: f32,
+}
+
 pub struct AdviseView {
     /// Journal file the trajectory came from; None = blind fallback (no journal).
     pub journal: Option<String>,
     pub steps: Vec<StepView>,
+    /// Present when the last two steps form an A-B-A (see AbaView).
+    pub aba: Option<AbaView>,
+    /// Journaled stint with no completed laps yet (still recording): excluded
+    /// from the trajectory, advice targets the previous stint meanwhile.
+    pub in_progress: Option<String>,
     /// Stint the recommendations are for.
     pub advice_for: String,
     pub recommendations: Vec<analysis::recommend::Recommendation>,
@@ -147,20 +165,34 @@ pub fn advise(
         return Ok(AdviseView {
             journal: None,
             steps: Vec::new(),
+            aba: None,
+            in_progress: None,
             advice_for: path,
             recommendations: recs,
             current_tune,
         });
     }
 
-    // Load and profile every stint, in journal (chronological) order.
+    // Load and profile every stint, in journal (chronological) order. The
+    // LAST entry may still be recording (journaled at the tune save, no
+    // completed laps yet): drop it gracefully and advise on the prefix. A
+    // middle entry failing is real data trouble and stays a hard error.
     let mut loaded = Vec::new();
-    for entry in &entries {
+    let mut in_progress = None;
+    for (i, entry) in entries.iter().enumerate() {
         let stint = analysis::Stint::load(entry.path.as_ref())
             .map_err(|e| format!("{}: {e}", entry.path))?;
-        let profile = analysis::profile::stint_profile(&stint.frames)
-            .map_err(|e| format!("{}: {e}", entry.path))?;
-        loaded.push((entry, stint, profile));
+        match analysis::profile::stint_profile(&stint.frames) {
+            Ok(profile) => loaded.push((entry, stint, profile)),
+            Err(_) if i == entries.len() - 1 => in_progress = Some(entry.path.clone()),
+            Err(e) => return Err(format!("{}: {e}", entry.path)),
+        }
+    }
+    if loaded.is_empty() {
+        return Err(format!(
+            "{}: no stints with completed laps in the journal yet — drive a lap first",
+            journal_path
+        ));
     }
 
     let changes: Vec<_> = loaded
@@ -177,9 +209,12 @@ pub fn advise(
     // Either side of the last comparison ran a single flying lap: the ideal
     // has no corroboration, so outcome-driven advice must not act on it.
     let mut last_weak = false;
+    // Per-step ideal deltas, for the A-B-A decomposition below.
+    let mut deltas: Vec<Option<f32>> = Vec::new();
     for i in 0..loaded.len() {
         let (entry, stint, profile) = &loaded[i];
         let mut split = None;
+        deltas.push(None);
         let outcome = if i == 0 {
             None
         } else {
@@ -188,6 +223,7 @@ pub fn advise(
                 Ok(cmp) => {
                     let attr = analysis::attribution::split_delta(prev, &cmp.bin_delta_s);
                     split = Some((attr.corner_delta_s, attr.straight_delta_s));
+                    *deltas.last_mut().unwrap() = Some(cmp.ideal_delta_s);
                     let outcome = journal::judge(cmp.ideal_delta_s);
                     let word = match outcome {
                         journal::Outcome::Improved(_) => "improved",
@@ -227,6 +263,30 @@ pub fn advise(
             split,
         });
     }
+
+    // Trailing excursion-and-revert (A-B-A): the pair's deltas cancel drift.
+    // effect = (d_exc − d_rev)/2, drift = (d_exc + d_rev)/2. Requires 2+
+    // flying laps on all three stints involved — single-lap ideals are the
+    // same trap this decomposition exists to avoid.
+    let n = loaded.len();
+    let aba = (n >= 3)
+        .then(|| {
+            let (exc, rev) = (&changes[n - 2], &changes[n - 1]);
+            let laps_ok = loaded[n - 3..].iter().all(|(_, _, p)| p.laps.len() >= 2);
+            if !laps_ok || !journal::is_reverse(exc, rev) {
+                return None;
+            }
+            let (d_exc, d_rev) = (deltas[n - 2]?, deltas[n - 1]?);
+            let mut areas: Vec<&str> =
+                exc.iter().map(|c| journal::family_area(c.family)).collect();
+            areas.dedup();
+            Some(AbaView {
+                families: areas.join("+"),
+                effect_s: (d_exc - d_rev) / 2.0,
+                drift_s: (d_exc + d_rev) / 2.0,
+            })
+        })
+        .flatten();
 
     let (last_entry, last_stint, _) = loaded.last().unwrap();
     let mut recs = blind_recommendations(last_stint, &last_entry.path)?;
@@ -274,6 +334,8 @@ pub fn advise(
     Ok(AdviseView {
         journal: Some(journal_path.to_string()),
         steps,
+        aba,
+        in_progress,
         advice_for: last_entry.path.clone(),
         recommendations: recs,
         current_tune,

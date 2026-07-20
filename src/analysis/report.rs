@@ -196,9 +196,10 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         .unwrap();
         writeln!(
             out,
-            "    balance by throttle: {} on | {} off",
+            "    balance by throttle: {} on | {} off | {} braking",
             band(&m.balance_on_throttle),
             band(&m.balance_off_throttle),
+            band(&m.balance_on_brake),
         )
         .unwrap();
     }

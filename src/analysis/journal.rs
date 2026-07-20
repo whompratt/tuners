@@ -330,6 +330,33 @@ pub fn reconcile(
     matched
 }
 
+/// Does `b` exactly undo `a`? Same clause families, each with negated
+/// magnitude (or just flipped direction when magnitudes are unknown). An
+/// excursion-and-revert pair (A-B-A) is special: comparing around it cancels
+/// driver/track drift, which cross-stint ideal deltas are otherwise soaked in.
+pub fn is_reverse(a: &[Change], b: &[Change]) -> bool {
+    if a.is_empty() || a.len() != b.len() {
+        return false;
+    }
+    let mut used = vec![false; b.len()];
+    a.iter().all(|ca| {
+        b.iter().enumerate().any(|(i, cb)| {
+            if used[i] || ca.family != cb.family {
+                return false;
+            }
+            let undone = match (ca.magnitude, cb.magnitude) {
+                (Some(ma), Some(mb)) => (ma + mb).abs() < 1e-3,
+                (None, None) => ca.softer != cb.softer,
+                _ => false,
+            };
+            if undone {
+                used[i] = true;
+            }
+            undone
+        })
+    })
+}
+
 fn outcome_word(o: Outcome) -> &'static str {
     match o {
         Outcome::Improved(_) => "improved",
@@ -338,7 +365,7 @@ fn outcome_word(o: Outcome) -> &'static str {
     }
 }
 
-fn family_area(f: Family) -> &'static str {
+pub fn family_area(f: Family) -> &'static str {
     match f {
         Family::FrontRoll | Family::RearRoll => "balance",
         Family::Gearing => "gearing",
@@ -661,6 +688,27 @@ mod tests {
             "{:?}",
             recs[0].evidence
         );
+    }
+
+    /// The McLaren diff A-B-A: "front diff accel +71; rear diff accel +40"
+    /// followed by "front diff accel -71; rear diff accel -40" is a reverse
+    /// pair — same-family clauses must pair off by magnitude, not just family.
+    #[test]
+    fn reverse_pairs_detected_by_magnitude_and_direction() {
+        let a = parse_clauses("front diff accel +71; rear diff accel +40");
+        let b = parse_clauses("front diff accel -71; rear diff accel -40");
+        assert!(is_reverse(&a, &b));
+        let partial = parse_clauses("front diff accel -71; rear diff accel -20");
+        assert!(!is_reverse(&a, &partial), "different magnitude is not a revert");
+        let short = parse_clauses("front diff accel -71");
+        assert!(!is_reverse(&a, &short), "missing clause is not a revert");
+
+        // Direction-only notes revert by flipped direction.
+        let a = parse_clauses("front arb softer");
+        let b = parse_clauses("front arb stiffer");
+        assert!(is_reverse(&a, &b));
+        assert!(!is_reverse(&a, &a.clone()));
+        assert!(!is_reverse(&[], &[]), "empty steps are not an A-B-A");
     }
 
     #[test]

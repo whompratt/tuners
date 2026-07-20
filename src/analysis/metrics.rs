@@ -114,6 +114,10 @@ pub struct StintMetrics {
     /// is the power-on balance signature (diff accel / power understeer).
     pub balance_on_throttle: BandBalance,
     pub balance_off_throttle: BandBalance,
+    /// Balance while cornering AND braking — the trail-braking signature
+    /// (brake balance / diff decel live here, not in positional phase means:
+    /// the 2026-07-21 max-decel A/B cost 0.75s with phase means unmoved).
+    pub balance_on_brake: BandBalance,
     /// Corner-event segmentation (plan 008): entry/exit phase balance across
     /// detected corners. None when the stint has no corner events.
     pub corners: Option<super::corners::CornerSummary>,
@@ -177,9 +181,9 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut cornering = 0usize;
     let mut front_slip_sum = 0.0f32;
     let mut rear_slip_sum = 0.0f32;
-    // [low speed, high speed, on throttle, off throttle] cornering bands:
-    // (samples, front slip sum, rear slip sum).
-    let mut bands = [(0usize, 0.0f32, 0.0f32); 4];
+    // [low speed, high speed, on throttle, off throttle, on brake] cornering
+    // bands: (samples, front slip sum, rear slip sum).
+    let mut bands = [(0usize, 0.0f32, 0.0f32); 5];
     let mut throttle_samples = 0usize;
     let mut wheelspin = 0usize;
     let mut brake_samples = 0usize;
@@ -270,6 +274,11 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 bands[b].0 += 1;
                 bands[b].1 += front;
                 bands[b].2 += rear;
+            }
+            if f.brake >= PEDAL_ON {
+                bands[4].0 += 1;
+                bands[4].1 += front;
+                bands[4].2 += rear;
             }
         }
 
@@ -363,6 +372,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         balance_high_speed: band_balance(bands[1]),
         balance_on_throttle: band_balance(bands[2]),
         balance_off_throttle: band_balance(bands[3]),
+        balance_on_brake: band_balance(bands[4]),
         corners: super::corners::summarize(frames),
         wheelspin_frac: (throttle_samples > 0)
             .then(|| wheelspin as f32 / throttle_samples as f32),

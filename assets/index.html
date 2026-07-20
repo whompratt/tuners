@@ -1035,6 +1035,18 @@ async function loadAdvice() {
     });
     html += '</table>';
   }
+  if (a.inProgress) {
+    html += `<div style="margin-top:6px;font-size:13px;color:var(--muted)">` +
+      `${a.inProgress.split('/').pop()} is journaled but has no completed laps yet — ` +
+      `its step joins the trajectory once a lap completes</div>`;
+  }
+  if (a.aba) {
+    const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
+    html += `<div style="margin-top:6px;font-size:13px;color:var(--muted)" ` +
+      `title="the last two steps cancel out, so comparing around them removes driver/track drift">` +
+      `A-B-A on ${a.aba.families}: drift-corrected cost ${sgn(a.aba.effectS)} ideal · ` +
+      `drift ${sgn(a.aba.driftS)}/stint (outcome margins near that drift are noise)</div>`;
+  }
   html += `<div style="margin-top:12px;font-size:13px;color:var(--muted)">advice for ${a.adviceFor.split('/').pop()}:</div>`;
   html += a.recommendations.length ? a.recommendations.map(r =>
     `<div class="adv-rec"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +

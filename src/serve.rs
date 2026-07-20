@@ -453,11 +453,20 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
             )
         })
         .collect();
+    let aba = v.aba.as_ref().map_or("null".into(), |a| {
+        format!(
+            "{{\"families\":{},\"effectS\":{:.3},\"driftS\":{:.3}}}",
+            json_str(&a.families),
+            a.effect_s,
+            a.drift_s,
+        )
+    });
     format!(
-        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"recommendations\":[{}],\"currentTune\":[{}]}}",
+        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"aba\":{aba},\"inProgress\":{},\"recommendations\":[{}],\"currentTune\":[{}]}}",
         v.journal.as_deref().map_or("null".into(), json_str),
         json_str(&v.advice_for),
         steps.join(","),
+        v.in_progress.as_deref().map_or("null".into(), json_str),
         recs.join(","),
         tune.join(","),
     )

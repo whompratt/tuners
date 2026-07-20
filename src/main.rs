@@ -220,6 +220,14 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             }
             println!("{line}");
         }
+        if let Some(aba) = &view.aba {
+            println!(
+                "  A-B-A on {}: drift-corrected cost of the excursion {:+.2}s ideal; \
+                 driver/track drift {:+.2}s per stint — outcome margins near that \
+                 drift are noise",
+                aba.families, aba.effect_s, aba.drift_s,
+            );
+        }
     }
 
     if !view.current_tune.is_empty() {
@@ -232,6 +240,12 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             })
             .collect();
         println!("\ncurrent tune (tune-session.txt): {}", vals.join(", "));
+    }
+    if let Some(p) = &view.in_progress {
+        println!(
+            "\nnote: {p} is journaled but has no completed laps yet (still \
+             recording?) — its step joins the trajectory once a lap completes"
+        );
     }
     println!("\nadvice for {}:\n", view.advice_for);
     print!("{}", analysis::report::render_recommendations(&view.recommendations));
