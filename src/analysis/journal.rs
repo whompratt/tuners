@@ -242,12 +242,14 @@ pub fn reconcile(
     outcome: Outcome,
     note: &str,
     attributed: Option<&str>,
-) {
+) -> bool {
+    let mut matched = false;
     for r in recs.iter_mut() {
         let Some(implied) = r.implied else { continue };
         if implied.family != change.family {
             continue;
         }
+        matched = true;
         let same_direction = implied.softer == change.softer;
         match (same_direction, outcome) {
             (true, Outcome::Worsened(d)) => {
@@ -313,6 +315,52 @@ pub fn reconcile(
             }
         }
     }
+    matched
+}
+
+fn family_area(f: Family) -> &'static str {
+    match f {
+        Family::FrontRoll | Family::RearRoll => "balance",
+        Family::Gearing => "gearing",
+        Family::FrontAero | Family::RearAero => "aero",
+        Family::DiffAccel => "differential",
+    }
+}
+
+/// History-only advice for a step that measurably LOST time on a family no
+/// behavioural rule currently speaks for. Behaviour rules only see problems
+/// the driver can't mask (a locked diff reads near-neutral in the throttle
+/// bands because the driver adapts) — the outcome measurement catches what
+/// behaviour hides, and a loss with no behavioural case for the change means
+/// revert it fully, not halfway (there is no signal placing the optimum
+/// in between).
+pub fn history_revert(
+    change: Change,
+    outcome: Outcome,
+    note: &str,
+    attributed: Option<&str>,
+) -> Option<Recommendation> {
+    let Outcome::Worsened(d) = outcome else { return None };
+    let mut evidence = vec![format!(
+        "that step lost {d:.2}s of ideal lap, and the car's behaviour shows no \
+         case for keeping it"
+    )];
+    let mut confidence = Confidence::High;
+    if let Some(ev) = attributed {
+        evidence.push(ev.to_string());
+        confidence = Confidence::Medium;
+    }
+    Some(Recommendation {
+        area: family_area(change.family),
+        advice: format!("revert the last change (\"{note}\"): it measurably cost lap time"),
+        evidence,
+        confidence,
+        implied: Some(Change {
+            family: change.family,
+            softer: !change.softer,
+            magnitude: change.magnitude.map(|m| -m),
+        }),
+    })
 }
 
 #[cfg(test)]
@@ -513,6 +561,45 @@ mod tests {
         assert!(recs[0].advice.contains("reduce front roll stiffness"));
         assert_eq!(recs[0].confidence, Confidence::High);
         assert!(recs[0].evidence.iter().any(|e| e.contains("moved against this advice and lost")));
+    }
+
+    /// The McLaren diff A/B: max diff lock measured WORSE but the driver adapted
+    /// so no behavioural rec carries DiffAccel — history alone must say revert,
+    /// fully (no signal places the optimum in between), with flipped direction
+    /// so a follow-up step reconciles against it.
+    #[test]
+    fn worsened_step_with_no_matching_rec_gets_history_revert() {
+        let mut recs = vec![balance_rec()];
+        let change = Change { family: Family::DiffAccel, softer: false, magnitude: Some(71.0) };
+        let outcome = Outcome::Worsened(0.25);
+        assert!(!reconcile(&mut recs, change, outcome, "front diff accel +71", Some("attr")));
+        let rec = history_revert(change, outcome, "front diff accel +71", Some("attr")).unwrap();
+        assert_eq!(rec.area, "differential");
+        assert!(rec.advice.contains("revert the last change"), "{}", rec.advice);
+        assert_eq!(rec.confidence, Confidence::Medium, "attributed caps at Medium");
+        let implied = rec.implied.unwrap();
+        assert!(implied.softer, "revert of a stiffer step points softer");
+        assert_eq!(implied.magnitude, Some(-71.0));
+
+        // Improved or unclear steps get no history-only rec.
+        assert!(history_revert(change, Outcome::Improved(-0.3), "n", None).is_none());
+        assert!(history_revert(change, Outcome::Unclear(0.05), "n", None).is_none());
+        // Direct (non-attributed) measurement keeps High confidence.
+        let direct = history_revert(change, outcome, "n", None).unwrap();
+        assert_eq!(direct.confidence, Confidence::High);
+    }
+
+    #[test]
+    fn reconcile_reports_whether_any_rec_matched() {
+        let mut recs = vec![balance_rec()];
+        let matched = reconcile(
+            &mut recs,
+            Change { family: Family::FrontRoll, softer: true, magnitude: None },
+            Outcome::Improved(-0.2),
+            "front arb softer",
+            None,
+        );
+        assert!(matched);
     }
 
     #[test]

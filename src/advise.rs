@@ -227,7 +227,11 @@ pub fn advise(
     let (last_entry, last_stint, _) = loaded.last().unwrap();
     let mut recs = blind_recommendations(last_stint, &last_entry.path)?;
     if let Some((change, outcome, note)) = last_step {
-        journal::reconcile(&mut recs, change, outcome, note, None);
+        if !journal::reconcile(&mut recs, change, outcome, note, None)
+            && let Some(rec) = journal::history_revert(change, outcome, note, None)
+        {
+            recs.push(rec);
+        }
     } else if let Some((attr, total, note)) = last_compound {
         // Channel attribution: chassis clauses are judged on the cornering
         // share of the delta, gearing clauses on the straight share.
@@ -250,15 +254,16 @@ pub fn advise(
                 journal::Family::Gearing => attr.straight_delta_s,
                 _ => attr.corner_delta_s,
             };
-            journal::reconcile(
-                &mut recs,
-                clause,
-                journal::judge(channel_delta),
-                note,
-                Some(&evidence),
-            );
+            let outcome = journal::judge(channel_delta);
+            if !journal::reconcile(&mut recs, clause, outcome, note, Some(&evidence))
+                && let Some(rec) = journal::history_revert(clause, outcome, note, Some(&evidence))
+            {
+                recs.push(rec);
+            }
         }
     }
+    // History-only recs arrive unsorted; keep most-confident-first for display.
+    recs.sort_by_key(|r| std::cmp::Reverse(r.confidence));
     let current_tune = enrich_with_tune(&mut recs, &session);
 
     Ok(AdviseView {
