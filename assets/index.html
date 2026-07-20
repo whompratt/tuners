@@ -739,11 +739,14 @@ const TUNE_FIELDS = [
   ['diff_accel', 'diff accel %'], ['diff_decel', 'diff decel %'],
   ['diff_center', 'center diff %'],
 ];
+// [key, label, type]: number | compound | check (stored as on/off)
 const FACT_FIELDS = [
-  ['front_weight_pct', 'front weight %'], ['weight', 'weight'],
-  ['tire_compound', 'tire compound'], ['abs', 'ABS (on/off)'],
-  ['tcs', 'TCS (on/off)'], ['stability', 'stability (on/off)'],
+  ['front_weight_pct', 'front weight %', 'number'], ['weight', 'weight', 'number'],
+  ['tire_compound', 'tire compound', 'compound'], ['abs', 'ABS', 'check'],
+  ['tcs', 'TCS', 'check'], ['stability', 'stability control', 'check'],
 ];
+const COMPOUNDS = ['stock', 'street', 'sport', 'semi-slick', 'slick', 'rally',
+  'offroad', 'snow', 'drag', 'drift', 'vintage'];
 let sessionData = null;
 const $ = id => document.getElementById(id);
 
@@ -796,9 +799,22 @@ function openSessionForm() {
     [...cars].map(([o, n]) => `<option value="${o}" ${o === cur ? 'selected' : ''}>${n}</option>`).join('') +
     `</select></div>` +
     `<div><label>or car ordinal (manual)</label><input id="ss-car-manual" type="number" ${cur && !cars.has(cur) ? `value="${cur}"` : ''}></div>` +
-    FACT_FIELDS.map(([k, l]) =>
-      `<div><label id="ss-label-${k}">${l}${unitLabel(k)}</label><input id="ss-${k}" value="${toDisp(k, (sessionData && sessionData.facts[k]) || '')}"></div>`
-    ).join('') +
+    FACT_FIELDS.map(([k, l, type]) => {
+      const v = (sessionData && sessionData.facts[k]) || '';
+      if (type === 'check') {
+        return `<div style="display:flex;align-items:flex-end;padding-bottom:4px">` +
+          `<label style="margin:0;display:flex;align-items:center;gap:6px;font-size:14px;color:var(--ink-2)">` +
+          `<input type="checkbox" id="ss-${k}" style="width:auto" ${v === 'on' ? 'checked' : ''}> ${l}</label></div>`;
+      }
+      if (type === 'compound') {
+        return `<div><label id="ss-label-${k}">${l}</label><select id="ss-${k}">` +
+          `<option value=""></option>` +
+          COMPOUNDS.map(c => `<option value="${c}" ${v === c ? 'selected' : ''}>${c}</option>`).join('') +
+          `</select></div>`;
+      }
+      return `<div><label id="ss-label-${k}">${l}${unitLabel(k)}</label>` +
+        `<input id="ss-${k}" type="number" step="any" value="${toDisp(k, v)}"></div>`;
+    }).join('') +
     `<div style="grid-column:1/-1;margin-top:6px;display:flex;gap:8px;align-items:baseline">
        <label style="margin:0">units</label>
        <button type="button" class="btn" id="up-imperial">imperial</button>
@@ -848,7 +864,9 @@ $('session-save').onclick = async () => {
   for (const [dim] of UNIT_DIMS) {
     if ($(`up-${dim}`)) { unitPrefs[dim] = $(`up-${dim}`).value; body.set(`unit_${dim}`, unitPrefs[dim]); }
   }
-  for (const [k] of FACT_FIELDS) body.set(k, toCanon(k, $(`ss-${k}`).value));
+  for (const [k, , type] of FACT_FIELDS) {
+    body.set(k, type === 'check' ? ($(`ss-${k}`).checked ? 'on' : 'off') : toCanon(k, $(`ss-${k}`).value));
+  }
   await fetch('/api/session', { method: 'POST', body });
   $('session-form').style.display = 'none';
   loadSession();
