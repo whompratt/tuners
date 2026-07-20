@@ -138,16 +138,6 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Balance of a session's longest stint: (index, front, rear mean |slip angle| as
-/// fraction of grip limit) — shown per trajectory row so the setting -> balance ->
-/// lap-time mapping is visible, absolute operating point included.
-fn session_balance(session: &analysis::Stint) -> Option<(f32, f32, f32)> {
-    let segments = analysis::driving_segments(&session.frames, 5.0);
-    let stint = segments.iter().max_by_key(|s| s.len())?;
-    let m = analysis::metrics::stint_metrics(stint);
-    Some((m.understeer_index?, m.cornering_front_slip?, m.cornering_rear_slip?))
-}
-
 fn cmd_serve(args: &[String]) -> Result<(), String> {
     let mut port: u16 = 8080;
     let mut sessions_dir = "sessions".to_string();
@@ -184,141 +174,64 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         [p] => p.clone(),
         _ => return Err("usage: tuners advise [journal-file]".into()),
     };
-    let journal_path = journal_path.as_str();
-    let text = std::fs::read_to_string(journal_path).map_err(|e| format!("{journal_path}: {e}"))?;
-    let entries = analysis::journal::parse_journal(&text);
-    if entries.is_empty() {
-        return Err(format!("{journal_path}: no stints listed"));
-    }
+    let view = tuners::advise::advise(&journal_path, "tune-session.txt".as_ref(), "sessions")?;
 
-    // Load and profile every session, in journal (chronological) order.
-    let mut sessions = Vec::new();
-    for entry in &entries {
-        let session = analysis::Stint::load(entry.path.as_ref())
-            .map_err(|e| format!("{}: {e}", entry.path))?;
-        let profile = analysis::profile::stint_profile(&session.frames)
-            .map_err(|e| format!("{}: {e}", entry.path))?;
-        sessions.push((entry, session, profile));
-    }
-
-    println!("tuning trajectory ({} stints):", sessions.len());
-    // Slider positions relative to baseline, from v2 delta notes (plan 005).
-    let changes: Vec<_> = sessions
-        .iter()
-        .map(|(e, _, _)| e.note.as_deref().and_then(analysis::journal::parse_change))
-        .collect();
-    let positions = analysis::journal::track_positions(&changes);
-    let mut last_step: Option<(analysis::journal::Change, analysis::journal::Outcome, &str)> = None;
-    for i in 0..sessions.len() {
-        let (entry, _, profile) = &sessions[i];
-        let mut line = format!(
-            "  {}. {}  {} lap(s)  best {}  ideal {}",
-            i + 1,
-            entry.path,
-            profile.laps.len(),
-            tuners::util::format_lap_time(profile.best_lap_time_s),
-            tuners::util::format_lap_time(profile.composite.time_s),
+    if view.journal.is_none() {
+        println!(
+            "no journal yet — blind advice on the latest stint; the journal starts \
+             with your first tune change\n"
         );
-        if let Some((idx, front, rear)) = session_balance(&sessions[i].1) {
-            line.push_str(&format!(
-                "  balance {idx:+.2} (F {:.0}%/R {:.0}% of limit)",
-                front * 100.0,
-                rear * 100.0,
-            ));
-        }
-        if let Some(note) = &entry.note {
-            line.push_str(&format!("  — {note}"));
-        }
-        // Positions only when the note trail supports them (v2 delta notes);
-        // direction-only journals stay uncluttered.
-        if let (Some(f), Some(r)) = positions[i]
-            && (f != 0.0 || r != 0.0)
-        {
-            line.push_str(&format!("  [pos F {f:+.1} / R {r:+.1}]"));
-        }
-        if i > 0 {
-            let prev = &sessions[i - 1].2;
-            match analysis::compare::compare(prev, &sessions[i].2) {
-                Ok(cmp) => {
-                    let outcome = analysis::journal::judge(cmp.ideal_delta_s);
-                    let word = match outcome {
-                        analysis::journal::Outcome::Improved(_) => "improved",
-                        analysis::journal::Outcome::Worsened(_) => "WORSE",
-                        _ => "inconclusive",
-                    };
-                    line.push_str(&format!("  → {word} (ideal {:+.2}s)", cmp.ideal_delta_s));
-                    if prev.laps.len() != sessions[i].2.laps.len() {
+    } else {
+        println!("tuning trajectory ({} stints):", view.steps.len());
+        for (i, step) in view.steps.iter().enumerate() {
+            let mut line = format!(
+                "  {}. {}  {} lap(s)  best {}  ideal {}",
+                i + 1,
+                step.path,
+                step.laps,
+                tuners::util::format_lap_time(step.best_s),
+                tuners::util::format_lap_time(step.ideal_s),
+            );
+            if let Some((idx, front, rear)) = step.balance {
+                line.push_str(&format!(
+                    "  balance {idx:+.2} (F {:.0}%/R {:.0}% of limit)",
+                    front * 100.0,
+                    rear * 100.0,
+                ));
+            }
+            if let Some(note) = &step.note {
+                line.push_str(&format!("  — {note}"));
+            }
+            if let Some((f, r)) = step.pos {
+                line.push_str(&format!("  [pos F {f:+.1} / R {r:+.1}]"));
+            }
+            match &step.outcome {
+                Some(Ok((word, delta, unequal))) => {
+                    line.push_str(&format!("  → {word} (ideal {delta:+.2}s)"));
+                    if *unequal {
                         line.push_str("  [unequal lap counts]");
                     }
-                    if let Some(note) = &entry.note
-                        && let Some(change) = analysis::journal::parse_change(note)
-                    {
-                        last_step = Some((change, outcome, note));
-                    }
                 }
-                Err(e) => line.push_str(&format!("  → not comparable ({e})")),
+                Some(Err(e)) => line.push_str(&format!("  → not comparable ({e})")),
+                None => {}
             }
+            println!("{line}");
         }
-        println!("{line}");
     }
 
-    // Blind recommendations for the latest session, reconciled with the last step.
-    let (last_entry, last_session, _) = sessions.last().unwrap();
-    let segments = analysis::driving_segments(&last_session.frames, 5.0);
-    let stint = segments
-        .iter()
-        .max_by_key(|s| s.len())
-        .ok_or("latest session has no driving stints")?;
-    let overall = analysis::metrics::stint_metrics(stint);
-    let per_lap: Vec<_> = analysis::split_laps(stint)
-        .iter()
-        .filter(|l| l.time_s.is_some() && !l.standing_start)
-        .map(|l| analysis::metrics::stint_metrics(l.frames))
-        .collect();
-    let mut recs = analysis::recommend::recommend(&overall, &per_lap);
-    if let Some((change, outcome, note)) = last_step {
-        analysis::journal::reconcile(&mut recs, change, outcome, note);
-    }
-
-    // With a tuning session on file, advice can cite the absolute values behind
-    // each directional call (design.md: inputs upgrade the recommendations).
-    let tune = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
-    if let Some(rev) = tune.latest() {
-        let vals: Vec<String> = rev
-            .values
+    if !view.current_tune.is_empty() {
+        let vals: Vec<String> = view
+            .current_tune
             .iter()
-            .map(|(k, v)| match tuners::tuning::canonical_unit(k) {
-                Some(unit) => format!("{} {v} {unit}", tuners::tuning::field_phrase(k)),
-                None => format!("{} {v}", tuners::tuning::field_phrase(k)),
+            .map(|(phrase, v, unit)| match unit {
+                Some(unit) => format!("{phrase} {v} {unit}"),
+                None => format!("{phrase} {v}"),
             })
             .collect();
-        println!(
-            "\ncurrent tune (tune-session.txt, revision {}): {}",
-            tune.revisions.len(),
-            vals.join(", "),
-        );
-        for r in &mut recs {
-            let Some(implied) = r.implied else { continue };
-            let keys: [&str; 2] = match implied.family {
-                analysis::journal::Family::FrontRoll => ["arb_f", "springs_f"],
-                analysis::journal::Family::RearRoll => ["arb_r", "springs_r"],
-            };
-            let known: Vec<String> = keys
-                .iter()
-                .filter_map(|k| {
-                    rev.values.get(*k).map(|v| match tuners::tuning::canonical_unit(k) {
-                        Some(unit) => format!("{} = {v} {unit}", tuners::tuning::field_phrase(k)),
-                        None => format!("{} = {v}", tuners::tuning::field_phrase(k)),
-                    })
-                })
-                .collect();
-            if !known.is_empty() {
-                r.evidence.push(format!("current setting: {}", known.join(", ")));
-            }
-        }
+        println!("\ncurrent tune (tune-session.txt): {}", vals.join(", "));
     }
-    println!("\nadvice for {}:\n", last_entry.path);
-    print!("{}", analysis::report::render_recommendations(&recs));
+    println!("\nadvice for {}:\n", view.advice_for);
+    print!("{}", analysis::report::render_recommendations(&view.recommendations));
     Ok(())
 }
 

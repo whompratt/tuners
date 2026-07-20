@@ -223,7 +223,8 @@ pub fn diff_note(prev: &Revision, next: &Revision) -> String {
             new_val.parse::<f32>(),
         ) {
             (Some(old), Ok(new)) => {
-                let delta = new - old;
+                // Round away f32 subtraction noise (20.70 - 19.50 = -1.2000008).
+                let delta = ((new - old) * 1e4).round() / 1e4;
                 if delta.abs() >= diff_epsilon(key) {
                     // Canonical unit suffixed so the journal is self-documenting;
                     // the math stays in one unit no matter how displays are set.
@@ -308,6 +309,13 @@ mod tests {
     fn identical_revisions_produce_no_note() {
         let a = rev("t1", &[("arb_f", "24")]);
         assert_eq!(diff_note(&a, &rev("t2", &[("arb_f", "24")])), "");
+    }
+
+    #[test]
+    fn deltas_are_rounded_not_float_noise() {
+        let a = rev("t1", &[("arb_f", "20.70")]);
+        let note = diff_note(&a, &rev("t2", &[("arb_f", "19.50")]));
+        assert_eq!(note, "front arb -1.2");
     }
 
     /// The unit round-trip case: 700 lb/in shown as 12.5 kgf/mm re-enters as

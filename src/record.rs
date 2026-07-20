@@ -349,9 +349,22 @@ pub fn run_recorder(
                                 );
                                 let baseline_ok =
                                     session.car.is_none() || last_closed_car == session.car;
+                                // Baseline seed must survive serve restarts: with no
+                                // (matching) stint closed in this process, fall back
+                                // to the newest on-disk stint of the session car.
+                                let baseline = last_closed
+                                    .filter(|_| baseline_ok)
+                                    .or_else(|| {
+                                        crate::advise::latest_stint_for_car(
+                                            &out_dir.to_string_lossy(),
+                                            session.car,
+                                        )
+                                        .map(PathBuf::from)
+                                        .filter(|p| p != &path)
+                                    });
                                 journal_note(
                                     Path::new(&journal),
-                                    last_closed.as_deref().filter(|_| baseline_ok),
+                                    baseline.as_deref(),
                                     &path,
                                     &note,
                                     session.car,

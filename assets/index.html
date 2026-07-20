@@ -99,6 +99,18 @@
     width: 100%; background: var(--page); color: var(--ink-2); font: 14px system-ui;
     border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
   }
+  .adv-table { border-collapse: collapse; font-size: 14px; margin-top: 4px; }
+  .adv-table th {
+    text-align: left; font-size: 12px; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 14px 4px 0;
+  }
+  .adv-table td { padding: 4px 14px 4px 0; border-top: 1px solid var(--border); }
+  .adv-table td.num { font-variant-numeric: tabular-nums; }
+  .adv-table a { color: var(--ink-2); }
+  .adv-table a:hover { color: var(--accent); }
+  .adv-rec { margin-top: 10px; font-size: 14px; color: var(--ink); }
+  .adv-conf { font-weight: 600; }
+  .adv-ev { font-size: 13px; color: var(--ink-2); margin: 2px 0 0 16px; }
   #tune-summary .kv { margin-right: 14px; white-space: nowrap; }
   #tune-summary .kv b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
   #rec-status .rec-dot { color: #e66767; }
@@ -264,6 +276,15 @@
         <canvas id="compare-chart" height="530"></canvas>
         <div id="compare-tip" class="tip"></div>
       </div>
+    </div>
+    <div id="advise-panel" class="panel">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0">Advice</h2>
+        <span id="advise-sub" style="color:var(--muted);font-size:13px"></span>
+        <span style="flex:1"></span>
+        <button id="advise-run" class="btn btn-go">get advice</button>
+      </div>
+      <div id="advise-body" style="margin-top:10px"></div>
     </div>
     <div id="chart-panel" class="panel" style="display:none">
       <h2>Speed by distance — flying laps</h2>
@@ -968,6 +989,66 @@ $('tune-save').onclick = async () => {
   if (r.changed) setTimeout(() => { $('tune-form').style.display = 'none'; }, 1800);
   loadSession();
 };
+
+// --- advice: trajectory + reconciled recommendations from /api/advise ---
+const OUTCOME_COLOR = { improved: '#199e70', WORSE: '#e66767', inconclusive: 'var(--muted)' };
+const CONF_COLOR = { high: '#199e70', medium: 'var(--accent)', low: 'var(--muted)' };
+document.getElementById('advise-run').onclick = loadAdvice;
+async function loadAdvice() {
+  const body = $('advise-body');
+  $('advise-sub').textContent = '';
+  body.innerHTML = '<span class="placeholder">analyzing all journaled stints…</span>';
+  const resp = await fetch('/api/advise');
+  if (!resp.ok) {
+    body.innerHTML = `<span class="placeholder">${await resp.text()}</span>`;
+    return;
+  }
+  const a = await resp.json();
+  $('advise-sub').textContent = a.journal
+    ? `journal: ${a.journal}`
+    : 'no journal yet — blind advice on the latest stint (the journal starts with your first tune change)';
+  let html = '';
+  if (a.steps.length) {
+    html += '<table class="adv-table"><tr><th></th><th>stint</th><th>laps</th><th>best</th>' +
+      '<th>ideal</th><th>balance</th><th>change</th><th>pos F/R</th><th>outcome</th></tr>';
+    a.steps.forEach((st, i) => {
+      const name = st.path.split('/').pop();
+      const bal = st.balance
+        ? `${st.balance[0] > 0 ? '+' : ''}${st.balance[0].toFixed(2)} <span style="color:var(--muted)">(F ${(st.balance[1] * 100).toFixed(0)}%/R ${(st.balance[2] * 100).toFixed(0)}%)</span>`
+        : '–';
+      let outcome = '–';
+      if (st.outcome && st.outcome.error) outcome = `<span style="color:var(--muted)">not comparable: ${st.outcome.error}</span>`;
+      else if (st.outcome) {
+        outcome = `<span style="color:${OUTCOME_COLOR[st.outcome.word] || 'inherit'}">${st.outcome.word}` +
+          ` ${st.outcome.deltaS > 0 ? '+' : ''}${st.outcome.deltaS.toFixed(2)}s</span>` +
+          (st.outcome.unequalLaps ? ' <span style="color:var(--muted)" title="unequal lap counts bias the ideal">⚠ laps</span>' : '');
+      }
+      html += `<tr><td class="num">${i + 1}</td>` +
+        `<td><a href="#" data-stint="${st.path}">${name}</a></td>` +
+        `<td class="num">${st.laps}</td><td class="num">${fmtLap(st.bestS)}</td>` +
+        `<td class="num">${fmtLap(st.idealS)}</td><td>${bal}</td>` +
+        `<td>${st.note || ''}</td>` +
+        `<td class="num">${st.pos ? `${st.pos[0] > 0 ? '+' : ''}${st.pos[0]} / ${st.pos[1] > 0 ? '+' : ''}${st.pos[1]}` : ''}</td>` +
+        `<td>${outcome}</td></tr>`;
+    });
+    html += '</table>';
+  }
+  html += `<div style="margin-top:12px;font-size:13px;color:var(--muted)">advice for ${a.adviceFor.split('/').pop()}:</div>`;
+  html += a.recommendations.length ? a.recommendations.map(r =>
+    `<div class="adv-rec"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +
+    `<b>${r.area}</b>: ${r.advice}` +
+    `<div class="adv-ev">${r.evidence.map(e => `· ${e}`).join('<br>')}</div></div>`
+  ).join('') : '<div class="adv-rec">no recommendations — nothing in this stint stood out</div>';
+  body.innerHTML = html;
+  body.querySelectorAll('a[data-stint]').forEach(link => {
+    link.onclick = ev => {
+      ev.preventDefault();
+      const file = link.dataset.stint;
+      const el = [...document.querySelectorAll('.session')].find(e => e.textContent.includes(file.split('/').pop()));
+      if (el) show(file, el);
+    };
+  });
+}
 
 // --- live view: SSE from the session `tuners capture` is recording now ---
 const STALE_MS = 3000;

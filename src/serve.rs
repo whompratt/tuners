@@ -109,6 +109,14 @@ fn handle(
             "application/json",
             session_json(&crate::tuning::TuningSession::load(session_path)),
         ),
+        ("GET", "/api/advise") => {
+            let session = crate::tuning::TuningSession::load(session_path);
+            let journal = crate::tuning::journal_path_for(session.car, "tune-journal.txt");
+            match crate::advise::advise(&journal, session_path, sessions_dir) {
+                Ok(view) => ("200 OK", "application/json", advise_json(&view)),
+                Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e),
+            }
+        }
         _ => respond(target, sessions_dir),
     };
     let _ = write!(
@@ -359,6 +367,70 @@ fn tune_post(
     )
 }
 
+/// The advise view for the dashboard: trajectory + reconciled recommendations.
+fn advise_json(v: &crate::advise::AdviseView) -> String {
+    let steps: Vec<String> = v
+        .steps
+        .iter()
+        .map(|s| {
+            let balance = s.balance.map_or("null".into(), |(i, f, r)| {
+                format!("[{i:.2},{f:.2},{r:.2}]")
+            });
+            let pos = s.pos.map_or("null".into(), |(f, r)| format!("[{f:.1},{r:.1}]"));
+            let outcome = match &s.outcome {
+                None => "null".into(),
+                Some(Ok((word, delta, unequal))) => format!(
+                    "{{\"word\":\"{word}\",\"deltaS\":{delta:.3},\"unequalLaps\":{unequal}}}"
+                ),
+                Some(Err(e)) => format!("{{\"error\":{}}}", json_str(e)),
+            };
+            format!(
+                "{{\"path\":{},\"laps\":{},\"bestS\":{:.3},\"idealS\":{:.3},\
+                 \"balance\":{balance},\"note\":{},\"pos\":{pos},\"outcome\":{outcome}}}",
+                json_str(&s.path),
+                s.laps,
+                s.best_s,
+                s.ideal_s,
+                s.note.as_deref().map_or("null".into(), json_str),
+            )
+        })
+        .collect();
+    let recs: Vec<String> = v
+        .recommendations
+        .iter()
+        .map(|r| {
+            let evidence: Vec<String> = r.evidence.iter().map(|e| json_str(e)).collect();
+            format!(
+                "{{\"confidence\":\"{}\",\"area\":{},\"advice\":{},\"evidence\":[{}]}}",
+                r.confidence.label(),
+                json_str(r.area),
+                json_str(&r.advice),
+                evidence.join(","),
+            )
+        })
+        .collect();
+    let tune: Vec<String> = v
+        .current_tune
+        .iter()
+        .map(|(phrase, value, unit)| {
+            format!(
+                "{{\"phrase\":{},\"value\":{},\"unit\":{}}}",
+                json_str(phrase),
+                json_str(value),
+                unit.map_or("null".into(), json_str),
+            )
+        })
+        .collect();
+    format!(
+        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"recommendations\":[{}],\"currentTune\":[{}]}}",
+        v.journal.as_deref().map_or("null".into(), json_str),
+        json_str(&v.advice_for),
+        steps.join(","),
+        recs.join(","),
+        tune.join(","),
+    )
+}
+
 /// Recorder status for the `state` SSE event.
 fn recorder_json(r: &crate::record::RecorderStatus) -> String {
     let mode = match &r.mode {
@@ -586,7 +658,7 @@ fn stints_json(dir: &str) -> String {
 
 /// First car seen driving in the session (bounded scan — the file may open with
 /// menu frames, but driving starts within moments in every real capture).
-fn stint_car(path: &Path) -> Option<i32> {
+pub fn stint_car(path: &Path) -> Option<i32> {
     let mut reader = crate::stint::StintReader::open(path).ok()?;
     for _ in 0..20_000 {
         let (_, payload) = reader.next_packet().ok()??;
