@@ -42,6 +42,7 @@
   }
   .ab button.on-a { border-color: #3987e5; color: #3987e5; }
   .ab button.on-b { border-color: #199e70; color: #199e70; }
+  .ab .del:hover { border-color: #e66767; color: #e66767; }
   #car-filter {
     width: 100%; margin-bottom: 10px; padding: 6px 8px;
     background: var(--surface); color: var(--ink-2);
@@ -262,7 +263,7 @@
         <div id="tooltip" class="tip"></div>
       </div>
     </div>
-    <pre id="report" class="placeholder">select a session</pre>
+    <pre id="report" class="placeholder">select a stint</pre>
   </main>
 <script>
 // reference dark categorical palette (validated, fixed order — never cycled)
@@ -359,15 +360,37 @@ function renderSessions() {
       `<span class="car">${s.carName || `car #${s.car}`}</span> · ` +
       `<span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>` +
       `<span class="ab"><button data-side="a" title="compare as A">A</button>` +
-      `<button data-side="b" title="compare as B">B</button></span>`;
+      `<button data-side="b" title="compare as B">B</button>` +
+      `<button class="del" title="delete this stint">×</button></span>`;
     if (s.file === sel.a) el.querySelector('[data-side=a]').classList.add('on-a');
     if (s.file === sel.b) el.querySelector('[data-side=b]').classList.add('on-b');
     el.onclick = () => show(s.file, el);
-    el.querySelectorAll('.ab button').forEach(btn => {
+    el.querySelectorAll('.ab button[data-side]').forEach(btn => {
       btn.onclick = ev => { ev.stopPropagation(); pick(btn.dataset.side, s.file, btn); };
     });
+    el.querySelector('.del').onclick = ev => { ev.stopPropagation(); deleteStint(s.file); };
     list.appendChild(el);
   }
+}
+
+async function deleteStint(file) {
+  const name = file.split('/').pop();
+  if (!confirm(`Delete ${name}?\n\nThis cannot be undone. If this stint is in the ` +
+      `tuning journal, advise will break until the journal is hand-edited.`)) return;
+  const resp = await fetch(`/api/stint/delete?file=${encodeURIComponent(name)}`, { method: 'POST' });
+  if (!resp.ok) { alert(`cannot delete: ${await resp.text()}`); return; }
+  if (sel.a === file) sel.a = null;
+  if (sel.b === file) sel.b = null;
+  updateCompare();
+  if (shownFile === file) {
+    shownFile = null;
+    const report = document.getElementById('report');
+    report.textContent = 'select a stint';
+    report.classList.add('placeholder');
+    document.getElementById('chart-panel').style.display = 'none';
+    lapData = null;
+  }
+  load();
 }
 
 // --- A/B comparison ---
@@ -576,7 +599,9 @@ function cmpTip(bin) {
   if (bin == null) document.getElementById('compare-tip').style.display = 'none';
 }
 
+let shownFile = null;
 async function show(file, el) {
+  shownFile = file;
   document.querySelectorAll('.session').forEach(e => e.classList.remove('active'));
   el.classList.add('active');
   const report = document.getElementById('report');
@@ -772,7 +797,7 @@ function openSessionForm() {
     `</select></div>` +
     `<div><label>or car ordinal (manual)</label><input id="ss-car-manual" type="number" ${cur && !cars.has(cur) ? `value="${cur}"` : ''}></div>` +
     FACT_FIELDS.map(([k, l]) =>
-      `<div><label>${l}${unitLabel(k)}</label><input id="ss-${k}" value="${toDisp(k, (sessionData && sessionData.facts[k]) || '')}"></div>`
+      `<div><label id="ss-label-${k}">${l}${unitLabel(k)}</label><input id="ss-${k}" value="${toDisp(k, (sessionData && sessionData.facts[k]) || '')}"></div>`
     ).join('') +
     `<div style="grid-column:1/-1;margin-top:6px;display:flex;gap:8px;align-items:baseline">
        <label style="margin:0">units</label>
@@ -793,13 +818,29 @@ function openSessionForm() {
   for (const preset of ['imperial', 'metric', 'uk']) {
     $(`up-${preset}`).onclick = () => {
       for (const [dim, u] of Object.entries(UNIT_PRESETS[preset])) $(`up-${dim}`).value = u;
+      refreshFormUnits();
     };
   }
+  for (const [dim] of UNIT_DIMS) $(`up-${dim}`).onchange = refreshFormUnits;
   $('session-form').style.display = '';
   $('tune-form').style.display = 'none';
 }
+// Unit pickers apply live: labels and entered values re-convert immediately
+// (values pass through canonical, so nothing drifts), and charts/live panel
+// preview the choice. Save persists; cancel reloads the saved prefs.
+function refreshFormUnits() {
+  const canon = {};
+  for (const [k] of FACT_FIELDS) if (FIELD_UNIT[k]) canon[k] = toCanon(k, $(`ss-${k}`).value);
+  for (const [dim] of UNIT_DIMS) if ($(`up-${dim}`)) unitPrefs[dim] = $(`up-${dim}`).value;
+  for (const [k, l] of FACT_FIELDS) if (FIELD_UNIT[k]) {
+    $(`ss-${k}`).value = toDisp(k, canon[k]);
+    $(`ss-label-${k}`).textContent = `${l}${unitLabel(k)}`;
+  }
+  if (lapData) drawChart();
+  if (cmpData) drawCompare();
+}
 $('session-edit').onclick = openSessionForm;
-$('session-cancel').onclick = () => $('session-form').style.display = 'none';
+$('session-cancel').onclick = () => { $('session-form').style.display = 'none'; loadSession(); };
 $('session-save').onclick = async () => {
   const body = new URLSearchParams();
   body.set('car', $('ss-car-manual').value || $('ss-car').value);

@@ -95,6 +95,10 @@ fn handle(
             r.pending_note = query_param(query, "note").filter(|n| !n.trim().is_empty());
             ("200 OK", "application/json", "{\"ok\":true}".to_string())
         }
+        ("POST", "/api/stint/delete") => {
+            let active = recorder.lock().unwrap().file.clone();
+            delete_stint(sessions_dir, query_param(query, "file"), active.as_deref())
+        }
         ("POST", "/api/session") => session_post(&form_params(&request_body), session_path),
         ("POST", "/api/session/tune") => {
             tune_post(&form_params(&request_body), session_path, recorder)
@@ -192,6 +196,36 @@ fn live_state_json(s: &crate::live::LiveState) -> String {
         }
     };
     format!("{{\"file\":{file},\"ageMs\":{age_ms},\"frame\":{frame}}}")
+}
+
+/// Delete one stint recording. Stricter than the read guard: only a bare
+/// filename inside the stints directory (no paths), and never the file the
+/// recorder is writing right now.
+fn delete_stint(
+    sessions_dir: &str,
+    file: Option<String>,
+    active: Option<&Path>,
+) -> (&'static str, &'static str, String) {
+    let Some(name) = file else {
+        return ("400 Bad Request", "text/plain; charset=utf-8", "missing file parameter".into());
+    };
+    if name.contains('/') || name.contains('\\') || name.contains("..") || !name.ends_with(".ftel") {
+        return ("400 Bad Request", "text/plain; charset=utf-8", "bad file parameter".into());
+    }
+    if active.and_then(|p| p.file_name()).is_some_and(|a| a.to_string_lossy() == name) {
+        return (
+            "409 Conflict",
+            "text/plain; charset=utf-8",
+            "stint is currently being recorded".into(),
+        );
+    }
+    match std::fs::remove_file(Path::new(sessions_dir).join(&name)) {
+        Ok(()) => ("200 OK", "application/json", "{\"ok\":true}".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            ("404 Not Found", "text/plain; charset=utf-8", "no such stint".into())
+        }
+        Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string()),
+    }
 }
 
 /// application/x-www-form-urlencoded body → decoded (key, value) pairs.
@@ -626,6 +660,34 @@ mod tests {
             assert!(json.contains(key), "{json} missing {key}");
         }
         assert_eq!(quality_json(None), "null");
+    }
+
+    #[test]
+    fn delete_stint_guards_and_deletes() {
+        let dir = std::env::temp_dir().join(format!("tuners-del-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir_s = dir.to_string_lossy().into_owned();
+        std::fs::write(dir.join("stint-x.ftel"), b"data").unwrap();
+
+        for bad in ["../stint-x.ftel", "sub/stint-x.ftel", "stint-x.txt"] {
+            let (status, _, _) = delete_stint(&dir_s, Some(bad.into()), None);
+            assert_eq!(status, "400 Bad Request", "{bad}");
+        }
+        let (status, _, _) = delete_stint(
+            &dir_s,
+            Some("stint-x.ftel".into()),
+            Some(dir.join("stint-x.ftel").as_path()),
+        );
+        assert_eq!(status, "409 Conflict", "active recording is protected");
+        assert!(dir.join("stint-x.ftel").exists());
+
+        let (status, _, _) = delete_stint(&dir_s, Some("stint-x.ftel".into()), None);
+        assert_eq!(status, "200 OK");
+        assert!(!dir.join("stint-x.ftel").exists());
+
+        let (status, _, _) = delete_stint(&dir_s, Some("stint-x.ftel".into()), None);
+        assert_eq!(status, "404 Not Found");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
