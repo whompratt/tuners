@@ -87,11 +87,14 @@
     gap: 10px 14px;
   }
   .form-grid label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
-  .form-grid .fg-head {
+  .fg-head {
     grid-column: 1 / -1; font-size: 12px; font-weight: 600; color: var(--accent);
-    text-transform: uppercase; letter-spacing: 0.06em; margin-top: 6px;
+    text-transform: uppercase; letter-spacing: 0.06em;
   }
-  .form-grid .fg-head:first-child { margin-top: 0; }
+  #tune-fields.form-grid {
+    display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-start;
+  }
+  .fg-col { display: flex; flex-direction: column; gap: 8px; width: 168px; }
   .form-grid input, .form-grid select {
     width: 100%; background: var(--page); color: var(--ink-2); font: 14px system-ui;
     border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
@@ -735,7 +738,10 @@ const TUNE_GROUPS = [
   ['Tire pressures', [
     ['tire_pressure_f', 'front'], ['tire_pressure_r', 'rear']]],
   ['Gearing', [
-    ['final_drive', 'final drive']]],
+    ['final_drive', 'final drive'],
+    ['gear_1', '1st'], ['gear_2', '2nd'], ['gear_3', '3rd'], ['gear_4', '4th'],
+    ['gear_5', '5th'], ['gear_6', '6th'], ['gear_7', '7th'], ['gear_8', '8th'],
+    ['gear_9', '9th'], ['gear_10', '10th']]],
   ['Alignment', [
     ['camber_f', 'front camber'], ['camber_r', 'rear camber'],
     ['toe_f', 'front toe'], ['toe_r', 'rear toe'], ['caster', 'caster']]],
@@ -816,6 +822,8 @@ const FULL_LABEL = {
   diff_accel_r: 'rear diff accel', diff_decel_r: 'rear diff decel',
   diff_center: 'center diff',
 };
+['1st','2nd','3rd','4th','5th','6th','7th','8th','9th','10th']
+  .forEach((o, i) => FULL_LABEL[`gear_${i + 1}`] = `${o} gear`);
 const label = (fields, key) =>
   (fields === TUNE_FIELDS && FULL_LABEL[key]) ||
   (fields.find(([k]) => k === key) || [key, key])[1];
@@ -906,10 +914,10 @@ $('session-save').onclick = async () => {
 function openTuneForm() {
   const latest = (sessionData && sessionData.latest) || {};
   $('tune-fields').innerHTML = TUNE_GROUPS.map(([group, fields]) =>
-    `<div class="fg-head">${group}</div>` +
+    `<div class="fg-col"><div class="fg-head">${group}</div>` +
     fields.map(([k, l]) =>
       `<div><label>${l}${unitLabel(k)}</label><input id="tf-${k}" type="number" step="any" value="${toDisp(k, latest[k] || '')}"></div>`
-    ).join('')
+    ).join('') + `</div>`
   ).join('');
   $('tune-msg').textContent = '';
   $('tune-form').style.display = '';
