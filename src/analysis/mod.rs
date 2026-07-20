@@ -3,6 +3,7 @@
 
 pub mod attribution;
 pub mod compare;
+pub mod corners;
 pub mod journal;
 pub mod metrics;
 pub mod profile;

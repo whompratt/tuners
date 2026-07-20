@@ -176,6 +176,15 @@ fn balance_rule(
             format!("by speed: {lo:+.2} below 85 mph, {hi:+.2} above")
         });
     }
+    if let Some(c) = &overall.corners
+        && let (Some(entry), Some(exit)) = supported_pair(&c.entry, &c.exit)
+    {
+        evidence.push(format!(
+            "by corner phase: {entry:+.2} into corners, {exit:+.2} out \
+             ({} corners)",
+            c.corners,
+        ));
+    }
 
     recs.push(Recommendation {
         area: "balance",
@@ -572,6 +581,7 @@ mod tests {
             balance_high_speed: Default::default(),
             balance_on_throttle: Default::default(),
             balance_off_throttle: Default::default(),
+            corners: None,
             wheelspin_frac: Some(0.02),
             lockup_frac: Some(0.5),
             suspension: Corners::default(),

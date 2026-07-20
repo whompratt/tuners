@@ -242,6 +242,7 @@ pub fn reconcile(
     outcome: Outcome,
     note: &str,
     attributed: Option<&str>,
+    weak: bool,
 ) -> bool {
     let mut matched = false;
     for r in recs.iter_mut() {
@@ -250,6 +251,17 @@ pub fn reconcile(
             continue;
         }
         matched = true;
+        // A single-flying-lap comparison has no corroboration: leave the
+        // behavioural advice untouched rather than inflate or flip it on an
+        // untrustworthy outcome.
+        if weak {
+            r.evidence.push(format!(
+                "last step (\"{note}\") measured {} but against a single flying \
+                 lap — outcome not trusted; drive more laps to corroborate",
+                outcome_word(outcome),
+            ));
+            continue;
+        }
         let same_direction = implied.softer == change.softer;
         match (same_direction, outcome) {
             (true, Outcome::Worsened(d)) => {
@@ -318,6 +330,14 @@ pub fn reconcile(
     matched
 }
 
+fn outcome_word(o: Outcome) -> &'static str {
+    match o {
+        Outcome::Improved(_) => "improved",
+        Outcome::Worsened(_) => "worse",
+        _ => "inconclusive",
+    }
+}
+
 fn family_area(f: Family) -> &'static str {
     match f {
         Family::FrontRoll | Family::RearRoll => "balance",
@@ -339,8 +359,26 @@ pub fn history_revert(
     outcome: Outcome,
     note: &str,
     attributed: Option<&str>,
+    weak: bool,
 ) -> Option<Recommendation> {
     let Outcome::Worsened(d) = outcome else { return None };
+    if weak {
+        // No corroboration: asking for data is the advice, not a revert.
+        let mut evidence =
+            vec![format!("provisional: {d:.2}s slower ideal, measured against a single flying lap")];
+        evidence.extend(attributed.map(String::from));
+        return Some(Recommendation {
+            area: family_area(change.family),
+            advice: format!(
+                "re-run this setup for more laps before reacting: the last change \
+                 (\"{note}\") measured worse, but a single-flying-lap comparison \
+                 is not trustworthy"
+            ),
+            evidence,
+            confidence: Confidence::Low,
+            implied: None,
+        });
+    }
     let mut evidence = vec![format!(
         "that step lost {d:.2}s of ideal lap, and the car's behaviour shows no \
          case for keeping it"
@@ -466,6 +504,7 @@ mod tests {
             Outcome::Worsened(0.3),
             "front arb -2",
             None,
+            false,
         );
         assert!(recs[0].advice.contains("go +1.0 slider units from here"), "{}", recs[0].advice);
     }
@@ -513,6 +552,7 @@ mod tests {
             Outcome::Worsened(0.3),
             "front arb softer",
             None,
+            false,
         );
         assert!(recs[0].advice.contains("revert about half"), "{}", recs[0].advice);
         assert_eq!(recs[0].confidence, Confidence::High);
@@ -527,6 +567,7 @@ mod tests {
             Outcome::Improved(-1.29),
             "front arb softer",
             None,
+            false,
         );
         assert!(recs[0].advice.contains("reduce front roll stiffness"));
         assert!(recs[0].evidence.iter().any(|e| e.contains("gained 1.29s")));
@@ -543,6 +584,7 @@ mod tests {
             Outcome::Improved(-0.42),
             "front arb stiffer",
             None,
+            false,
         );
         assert!(recs[0].advice.contains("hold this setting"), "{}", recs[0].advice);
         assert_eq!(recs[0].confidence, Confidence::Medium);
@@ -557,6 +599,7 @@ mod tests {
             Outcome::Worsened(0.5),
             "front arb stiffer",
             None,
+            false,
         );
         assert!(recs[0].advice.contains("reduce front roll stiffness"));
         assert_eq!(recs[0].confidence, Confidence::High);
@@ -572,8 +615,8 @@ mod tests {
         let mut recs = vec![balance_rec()];
         let change = Change { family: Family::DiffAccel, softer: false, magnitude: Some(71.0) };
         let outcome = Outcome::Worsened(0.25);
-        assert!(!reconcile(&mut recs, change, outcome, "front diff accel +71", Some("attr")));
-        let rec = history_revert(change, outcome, "front diff accel +71", Some("attr")).unwrap();
+        assert!(!reconcile(&mut recs, change, outcome, "front diff accel +71", Some("attr"), false));
+        let rec = history_revert(change, outcome, "front diff accel +71", Some("attr"), false).unwrap();
         assert_eq!(rec.area, "differential");
         assert!(rec.advice.contains("revert the last change"), "{}", rec.advice);
         assert_eq!(rec.confidence, Confidence::Medium, "attributed caps at Medium");
@@ -582,11 +625,42 @@ mod tests {
         assert_eq!(implied.magnitude, Some(-71.0));
 
         // Improved or unclear steps get no history-only rec.
-        assert!(history_revert(change, Outcome::Improved(-0.3), "n", None).is_none());
-        assert!(history_revert(change, Outcome::Unclear(0.05), "n", None).is_none());
+        assert!(history_revert(change, Outcome::Improved(-0.3), "n", None, false).is_none());
+        assert!(history_revert(change, Outcome::Unclear(0.05), "n", None, false).is_none());
         // Direct (non-attributed) measurement keeps High confidence.
-        let direct = history_revert(change, outcome, "n", None).unwrap();
+        let direct = history_revert(change, outcome, "n", None, false).unwrap();
         assert_eq!(direct.confidence, Confidence::High);
+    }
+
+    /// The single-lap revert stint: a "worse" outcome with no corroboration
+    /// must NOT produce revert advice (it told the user to re-lock the diffs);
+    /// it asks for more laps instead, and reconcile leaves matched behavioural
+    /// recs untouched apart from a hedge line.
+    #[test]
+    fn single_lap_outcome_asks_for_data_not_reverts() {
+        let change = Change { family: Family::DiffAccel, softer: true, magnitude: Some(-71.0) };
+        let rec = history_revert(change, Outcome::Worsened(0.69), "front diff accel -71", None, true)
+            .unwrap();
+        assert!(rec.advice.contains("re-run this setup"), "{}", rec.advice);
+        assert_eq!(rec.confidence, Confidence::Low);
+        assert!(rec.implied.is_none(), "no directional implication from weak data");
+
+        let mut recs = vec![balance_rec()];
+        let before = (recs[0].advice.clone(), recs[0].confidence);
+        reconcile(
+            &mut recs,
+            Change { family: Family::FrontRoll, softer: true, magnitude: None },
+            Outcome::Worsened(0.5),
+            "front arb softer",
+            None,
+            true,
+        );
+        assert_eq!((recs[0].advice.clone(), recs[0].confidence), before, "advice untouched");
+        assert!(
+            recs[0].evidence.iter().any(|e| e.contains("single flying lap")),
+            "{:?}",
+            recs[0].evidence
+        );
     }
 
     #[test]
@@ -598,6 +672,7 @@ mod tests {
             Outcome::Improved(-0.2),
             "front arb softer",
             None,
+            false,
         );
         assert!(matched);
     }
@@ -612,6 +687,7 @@ mod tests {
             Outcome::Worsened(0.3),
             "rear arb stiffer",
             None,
+            false,
         );
         assert_eq!(recs[0].advice, before);
     }

@@ -202,6 +202,17 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         )
         .unwrap();
     }
+    if let Some(c) = &m.corners {
+        writeln!(
+            out,
+            "    corners: {} events | avg apex {:.0} mph | balance {} entry | {} exit",
+            c.corners,
+            c.avg_apex_speed * MPS_TO_MPH,
+            band(&c.entry),
+            band(&c.exit),
+        )
+        .unwrap();
+    }
 
     writeln!(
         out,

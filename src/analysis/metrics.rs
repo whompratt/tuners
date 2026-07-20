@@ -114,6 +114,9 @@ pub struct StintMetrics {
     /// is the power-on balance signature (diff accel / power understeer).
     pub balance_on_throttle: BandBalance,
     pub balance_off_throttle: BandBalance,
+    /// Corner-event segmentation (plan 008): entry/exit phase balance across
+    /// detected corners. None when the stint has no corner events.
+    pub corners: Option<super::corners::CornerSummary>,
     /// Drive-wheel spin as a fraction of on-throttle samples. None if never on throttle.
     pub wheelspin_frac: Option<f32>,
     /// Any-wheel lockup as a fraction of on-brake samples. None if never on brake.
@@ -360,6 +363,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         balance_high_speed: band_balance(bands[1]),
         balance_on_throttle: band_balance(bands[2]),
         balance_off_throttle: band_balance(bands[3]),
+        corners: super::corners::summarize(frames),
         wheelspin_frac: (throttle_samples > 0)
             .then(|| wheelspin as f32 / throttle_samples as f32),
         lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),

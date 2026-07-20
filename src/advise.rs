@@ -174,6 +174,9 @@ pub fn advise(
     // Compound final step: (attribution, total ideal delta, note) for
     // per-clause channel reconciliation below.
     let mut last_compound: Option<(analysis::attribution::Attribution, f32, &str)> = None;
+    // Either side of the last comparison ran a single flying lap: the ideal
+    // has no corroboration, so outcome-driven advice must not act on it.
+    let mut last_weak = false;
     for i in 0..loaded.len() {
         let (entry, stint, profile) = &loaded[i];
         let mut split = None;
@@ -197,6 +200,7 @@ pub fn advise(
                     if i == loaded.len() - 1
                         && let Some(note) = &entry.note
                     {
+                        last_weak = prev.laps.len().min(profile.laps.len()) < 2;
                         if let Some(change) = journal::parse_change(note) {
                             last_step = Some((change, outcome, note));
                         } else if !journal::parse_clauses(note).is_empty() {
@@ -227,8 +231,8 @@ pub fn advise(
     let (last_entry, last_stint, _) = loaded.last().unwrap();
     let mut recs = blind_recommendations(last_stint, &last_entry.path)?;
     if let Some((change, outcome, note)) = last_step {
-        if !journal::reconcile(&mut recs, change, outcome, note, None)
-            && let Some(rec) = journal::history_revert(change, outcome, note, None)
+        if !journal::reconcile(&mut recs, change, outcome, note, None, last_weak)
+            && let Some(rec) = journal::history_revert(change, outcome, note, None, last_weak)
         {
             recs.push(rec);
         }
@@ -255,8 +259,9 @@ pub fn advise(
                 _ => attr.corner_delta_s,
             };
             let outcome = journal::judge(channel_delta);
-            if !journal::reconcile(&mut recs, clause, outcome, note, Some(&evidence))
-                && let Some(rec) = journal::history_revert(clause, outcome, note, Some(&evidence))
+            if !journal::reconcile(&mut recs, clause, outcome, note, Some(&evidence), last_weak)
+                && let Some(rec) =
+                    journal::history_revert(clause, outcome, note, Some(&evidence), last_weak)
             {
                 recs.push(rec);
             }
