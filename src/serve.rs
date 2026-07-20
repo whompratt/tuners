@@ -405,6 +405,9 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
                 format!("[{i:.2},{f:.2},{r:.2}]")
             });
             let pos = s.pos.map_or("null".into(), |(f, r)| format!("[{f:.1},{r:.1}]"));
+            let split = s
+                .split
+                .map_or("null".into(), |(c, st)| format!("[{c:.3},{st:.3}]"));
             let outcome = match &s.outcome {
                 None => "null".into(),
                 Some(Ok((word, delta, unequal))) => format!(
@@ -414,7 +417,8 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
             };
             format!(
                 "{{\"path\":{},\"laps\":{},\"bestS\":{:.3},\"idealS\":{:.3},\
-                 \"balance\":{balance},\"note\":{},\"pos\":{pos},\"outcome\":{outcome}}}",
+                 \"balance\":{balance},\"note\":{},\"pos\":{pos},\"outcome\":{outcome},\
+                 \"split\":{split}}}",
                 json_str(&s.path),
                 s.laps,
                 s.best_s,

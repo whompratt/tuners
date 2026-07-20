@@ -9,6 +9,9 @@ use super::recommend::{Confidence, Recommendation};
 pub enum Family {
     FrontRoll,
     RearRoll,
+    /// Final drive and per-gear ratios. Direction semantics: `softer` = the
+    /// value decreased = LONGER gearing (higher final drive number = shorter).
+    Gearing,
 }
 
 /// A step on a parameter family. Still blind to absolute setup values: the
@@ -72,6 +75,25 @@ pub fn parse_clauses(note: &str) -> Vec<Change> {
 
 fn parse_clause(note: &str) -> Option<Change> {
     let t = note.to_lowercase();
+    let number = |t: &str| {
+        t.split_whitespace()
+            .map(|tok| tok.trim_end_matches([',', ')', ':']))
+            .find_map(|tok| tok.parse::<f32>().ok().map(|v| (v, tok.starts_with(['+', '-']))))
+    };
+    if t.contains("final drive") || t.contains("gear") {
+        let num = number(&t);
+        let softer = if t.contains("short") {
+            false // shorter gearing = higher number
+        } else if t.contains("long") {
+            true
+        } else if let Some((v, true)) = num {
+            v < 0.0
+        } else {
+            return None;
+        };
+        let magnitude = num.map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change { family: Family::Gearing, softer, magnitude });
+    }
     let front = t.contains("front");
     let rear = t.contains("rear");
     if front == rear {
@@ -117,6 +139,7 @@ pub fn track_positions(changes: &[Vec<Change>]) -> Vec<(Option<f32>, Option<f32>
                 let slot = match c.family {
                     Family::FrontRoll => &mut front,
                     Family::RearRoll => &mut rear,
+                    Family::Gearing => continue, // not a tracked slider position
                 };
                 *slot = match (*slot, c.magnitude) {
                     (Some(p), Some(m)) => Some(p + m),
@@ -175,7 +198,16 @@ pub fn judge(ideal_delta_s: f32) -> Outcome {
 /// recommendation pointing the same direction as a step that just LOST time gets
 /// replaced by "revert half" — the behavioural signal alone would push past the
 /// optimum forever (some understeer is lap-time-optimal).
-pub fn reconcile(recs: &mut [Recommendation], change: Change, outcome: Outcome, note: &str) {
+/// `attributed`: evidence line when the outcome was channel-attributed out of
+/// a compound step (corner/straight split) rather than measured directly — it
+/// is attached to every touched recommendation and caps confidence at Medium.
+pub fn reconcile(
+    recs: &mut [Recommendation],
+    change: Change,
+    outcome: Outcome,
+    note: &str,
+    attributed: Option<&str>,
+) {
     for r in recs.iter_mut() {
         let Some(implied) = r.implied else { continue };
         if implied.family != change.family {
@@ -238,6 +270,12 @@ pub fn reconcile(recs: &mut [Recommendation], change: Change, outcome: Outcome, 
                 r.confidence = Confidence::High;
             }
             (false, Outcome::Unclear(_)) | (_, Outcome::NotComparable) => {}
+        }
+        if let Some(ev) = attributed {
+            r.evidence.push(ev.to_string());
+            if r.confidence == Confidence::High {
+                r.confidence = Confidence::Medium;
+            }
         }
     }
 }
@@ -328,6 +366,7 @@ mod tests {
             Change { family: Family::FrontRoll, softer: true, magnitude: Some(-2.0) },
             Outcome::Worsened(0.3),
             "front arb -2",
+            None,
         );
         assert!(recs[0].advice.contains("go +1.0 slider units from here"), "{}", recs[0].advice);
     }
@@ -339,8 +378,11 @@ mod tests {
         let note = "front arb -1; final drive +0.28";
         assert_eq!(parse_change(note), None, "no single-family attribution");
         let clauses = parse_clauses(note);
-        assert_eq!(clauses.len(), 1, "arb clause parses; final drive has no family");
+        assert_eq!(clauses.len(), 2, "arb and gearing clauses both parse");
         assert_eq!(clauses[0].magnitude, Some(-1.0));
+        assert_eq!(clauses[1].family, Family::Gearing);
+        assert_eq!(clauses[1].magnitude, Some(0.28));
+        assert!(!clauses[1].softer, "positive final drive delta = shorter gearing");
 
         let pos = track_positions(&[vec![], parse_clauses(note)]);
         assert_eq!(pos[1], (Some(-1.0), Some(0.0)));
@@ -371,6 +413,7 @@ mod tests {
             Change { family: Family::FrontRoll, softer: true, magnitude: None },
             Outcome::Worsened(0.3),
             "front arb softer",
+            None,
         );
         assert!(recs[0].advice.contains("revert about half"), "{}", recs[0].advice);
         assert_eq!(recs[0].confidence, Confidence::High);
@@ -384,6 +427,7 @@ mod tests {
             Change { family: Family::FrontRoll, softer: true, magnitude: None },
             Outcome::Improved(-1.29),
             "front arb softer",
+            None,
         );
         assert!(recs[0].advice.contains("reduce front roll stiffness"));
         assert!(recs[0].evidence.iter().any(|e| e.contains("gained 1.29s")));
@@ -399,6 +443,7 @@ mod tests {
             Change { family: Family::FrontRoll, softer: false, magnitude: None },
             Outcome::Improved(-0.42),
             "front arb stiffer",
+            None,
         );
         assert!(recs[0].advice.contains("hold this setting"), "{}", recs[0].advice);
         assert_eq!(recs[0].confidence, Confidence::Medium);
@@ -412,6 +457,7 @@ mod tests {
             Change { family: Family::FrontRoll, softer: false, magnitude: None },
             Outcome::Worsened(0.5),
             "front arb stiffer",
+            None,
         );
         assert!(recs[0].advice.contains("reduce front roll stiffness"));
         assert_eq!(recs[0].confidence, Confidence::High);
@@ -427,6 +473,7 @@ mod tests {
             Change { family: Family::RearRoll, softer: false, magnitude: None },
             Outcome::Worsened(0.3),
             "rear arb stiffer",
+            None,
         );
         assert_eq!(recs[0].advice, before);
     }

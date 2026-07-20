@@ -208,6 +208,9 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             match &step.outcome {
                 Some(Ok((word, delta, unequal))) => {
                     line.push_str(&format!("  → {word} (ideal {delta:+.2}s)"));
+                    if let Some((c, st)) = step.split {
+                        line.push_str(&format!("  [corners {c:+.2}s / straights {st:+.2}s]"));
+                    }
                     if *unequal {
                         line.push_str("  [unequal lap counts]");
                     }

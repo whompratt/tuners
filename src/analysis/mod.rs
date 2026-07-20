@@ -1,6 +1,7 @@
 //! Session analysis: recorded frames → tuning-relevant observations.
 //! Metrics are measured facts only; prescriptive advice lives elsewhere.
 
+pub mod attribution;
 pub mod compare;
 pub mod journal;
 pub mod metrics;

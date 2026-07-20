@@ -246,7 +246,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 .into(),
             evidence,
             confidence: Confidence::Medium,
-            implied: None,
+            implied: Some(Change { family: Family::Gearing, softer: true, magnitude: None }),
         });
         return;
     }
@@ -279,7 +279,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 top_time * 100.0,
             )],
             confidence: Confidence::Medium,
-            implied: None,
+            implied: Some(Change { family: Family::Gearing, softer: false, magnitude: None }),
         });
     }
 }

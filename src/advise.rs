@@ -22,6 +22,8 @@ pub struct StepView {
     /// Measured outcome vs the previous step: Ok((word, ideal delta, unequal
     /// laps)) or Err(reason) when not comparable. None for the first step.
     pub outcome: Option<Result<(&'static str, f32, bool), String>>,
+    /// The outcome split into (cornering, straight) road — where the time moved.
+    pub split: Option<(f32, f32)>,
 }
 
 pub struct AdviseView {
@@ -69,9 +71,10 @@ fn enrich_with_tune(
     let Some(rev) = session.latest() else { return Vec::new() };
     for r in recs.iter_mut() {
         let Some(implied) = r.implied else { continue };
-        let keys: [&str; 2] = match implied.family {
-            journal::Family::FrontRoll => ["arb_f", "springs_f"],
-            journal::Family::RearRoll => ["arb_r", "springs_r"],
+        let keys: &[&str] = match implied.family {
+            journal::Family::FrontRoll => &["arb_f", "springs_f"],
+            journal::Family::RearRoll => &["arb_r", "springs_r"],
+            journal::Family::Gearing => &["final_drive"],
         };
         let known: Vec<String> = keys
             .iter()
@@ -165,29 +168,37 @@ pub fn advise(
 
     let mut steps = Vec::new();
     let mut last_step: Option<(journal::Change, journal::Outcome, &str)> = None;
+    // Compound final step: (attribution, total ideal delta, note) for
+    // per-clause channel reconciliation below.
+    let mut last_compound: Option<(analysis::attribution::Attribution, f32, &str)> = None;
     for i in 0..loaded.len() {
         let (entry, stint, profile) = &loaded[i];
+        let mut split = None;
         let outcome = if i == 0 {
             None
         } else {
             let prev = &loaded[i - 1].2;
             match analysis::compare::compare(prev, profile) {
                 Ok(cmp) => {
+                    let attr = analysis::attribution::split_delta(prev, &cmp.bin_delta_s);
+                    split = Some((attr.corner_delta_s, attr.straight_delta_s));
                     let outcome = journal::judge(cmp.ideal_delta_s);
                     let word = match outcome {
                         journal::Outcome::Improved(_) => "improved",
                         journal::Outcome::Worsened(_) => "WORSE",
                         _ => "inconclusive",
                     };
-                    // Reconciliation uses THE last step only, and only when it
-                    // is attributable to one family — a compound final step
-                    // (unattributable) leaves the recommendations blind rather
-                    // than reconciling against stale earlier evidence.
+                    // Reconciliation uses THE last step only. Single-family
+                    // steps reconcile on the measured outcome; compound steps
+                    // reconcile per clause on channel-attributed deltas below.
                     if i == loaded.len() - 1
                         && let Some(note) = &entry.note
-                        && let Some(change) = journal::parse_change(note)
                     {
-                        last_step = Some((change, outcome, note));
+                        if let Some(change) = journal::parse_change(note) {
+                            last_step = Some((change, outcome, note));
+                        } else if !journal::parse_clauses(note).is_empty() {
+                            last_compound = Some((attr, cmp.ideal_delta_s, note));
+                        }
                     }
                     Some(Ok((word, cmp.ideal_delta_s, prev.laps.len() != profile.laps.len())))
                 }
@@ -206,13 +217,44 @@ pub fn advise(
                 _ => None,
             },
             outcome,
+            split,
         });
     }
 
     let (last_entry, last_stint, _) = loaded.last().unwrap();
     let mut recs = blind_recommendations(last_stint, &last_entry.path)?;
     if let Some((change, outcome, note)) = last_step {
-        journal::reconcile(&mut recs, change, outcome, note);
+        journal::reconcile(&mut recs, change, outcome, note, None);
+    } else if let Some((attr, total, note)) = last_compound {
+        // Channel attribution: chassis clauses are judged on the cornering
+        // share of the delta, gearing clauses on the straight share.
+        let evidence = format!(
+            "outcome attributed from a compound step (\"{note}\"): corners \
+             {:+.2}s / straights {:+.2}s of {total:+.2}s total ({:.0}% of lap \
+             time is cornering) — inferred from where the time moved, not \
+             measured in isolation",
+            attr.corner_delta_s,
+            attr.straight_delta_s,
+            attr.corner_share * 100.0,
+        );
+        let mut seen = Vec::new();
+        for clause in journal::parse_clauses(note) {
+            if seen.contains(&clause.family) {
+                continue;
+            }
+            seen.push(clause.family);
+            let channel_delta = match clause.family {
+                journal::Family::Gearing => attr.straight_delta_s,
+                _ => attr.corner_delta_s,
+            };
+            journal::reconcile(
+                &mut recs,
+                clause,
+                journal::judge(channel_delta),
+                note,
+                Some(&evidence),
+            );
+        }
     }
     let current_tune = enrich_with_tune(&mut recs, &session);
 

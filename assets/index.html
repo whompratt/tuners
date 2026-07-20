@@ -1019,8 +1019,10 @@ async function loadAdvice() {
       let outcome = '–';
       if (st.outcome && st.outcome.error) outcome = `<span style="color:var(--muted)">not comparable: ${st.outcome.error}</span>`;
       else if (st.outcome) {
+        const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
         outcome = `<span style="color:${OUTCOME_COLOR[st.outcome.word] || 'inherit'}">${st.outcome.word}` +
-          ` ${st.outcome.deltaS > 0 ? '+' : ''}${st.outcome.deltaS.toFixed(2)}s</span>` +
+          ` ${sgn(st.outcome.deltaS)}</span>` +
+          (st.split ? ` <span style="color:var(--muted)" title="where the time moved, by road type">corners ${sgn(st.split[0])} / straights ${sgn(st.split[1])}</span>` : '') +
           (st.outcome.unequalLaps ? ' <span style="color:var(--muted)" title="unequal lap counts bias the ideal">⚠ laps</span>' : '');
       }
       html += `<tr><td class="num">${i + 1}</td>` +
