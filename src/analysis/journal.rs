@@ -312,6 +312,9 @@ pub fn reconcile(
                 r.evidence
                     .push(format!("last step in this direction lost {d:.2}s of ideal lap"));
                 r.confidence = Confidence::High;
+                // The advice now points the other way; implied must follow it
+                // (limit checks and future reconciliation read the direction).
+                r.implied = Some(Change { softer: !implied.softer, ..implied });
             }
             (true, Outcome::Improved(d)) => {
                 r.evidence.push(format!(
@@ -344,6 +347,9 @@ pub fn reconcile(
                      trust the measured outcomes here"
                         .into(),
                 );
+                // "Hold" advises no direction — clear implied so nothing
+                // downstream pushes either way.
+                r.implied = None;
             }
             (false, Outcome::Worsened(d)) => {
                 r.evidence.push(format!(

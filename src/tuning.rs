@@ -95,6 +95,26 @@ pub const FIELDS: &[(&str, &str)] = &[
 /// The journal belongs to the session: with a session car set, the journal
 /// file is derived per car ("tune-journal.txt" -> "tune-journal-1314.txt") so
 /// different cars' trajectories never mix. No car -> the base path (blind mode).
+/// Slider range for a field, from a `limit_<key>` session fact holding
+/// "min..max" in canonical units (the game shows per-car ranges in its
+/// tuning UI; the user records them once per car).
+pub fn limit_of(facts: &BTreeMap<String, String>, key: &str) -> Option<(f32, f32)> {
+    let v = facts.get(&format!("limit_{key}"))?;
+    let (a, b) = v.split_once("..")?;
+    let (min, max) = (a.trim().parse().ok()?, b.trim().parse().ok()?);
+    (min < max).then_some((min, max))
+}
+
+/// Is `value` pinned at the bound the advised direction would push past?
+/// `softer` follows the journal convention: softer = the value decreased.
+pub fn pinned(value: f32, (min, max): (f32, f32), softer: bool, key: &str) -> bool {
+    if softer {
+        value - min < diff_epsilon(key)
+    } else {
+        max - value < diff_epsilon(key)
+    }
+}
+
 /// Coarse experiment area for a tune field — the granularity at which two
 /// setups "differ by one experiment". Setup-state comparison (advise anchor)
 /// treats a stint whose setup differs from an ancestor's in exactly one area
@@ -323,6 +343,23 @@ pub fn diff_note(prev: &Revision, next: &Revision) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn limits_parse_and_pin() {
+        let mut facts = BTreeMap::new();
+        facts.insert("limit_arb_f".to_string(), "1..65".to_string());
+        facts.insert("limit_bad".to_string(), "65..1".to_string());
+        assert_eq!(limit_of(&facts, "arb_f"), Some((1.0, 65.0)));
+        assert_eq!(limit_of(&facts, "bad"), None, "inverted range rejected");
+        assert_eq!(limit_of(&facts, "arb_r"), None);
+
+        let lim = (1.0, 65.0);
+        assert!(pinned(1.0, lim, true, "arb_f"), "at min, advising softer");
+        assert!(!pinned(1.0, lim, false, "arb_f"), "at min, stiffer has headroom");
+        assert!(pinned(65.0, lim, false, "arb_f"));
+        assert!(!pinned(30.0, lim, true, "arb_f"));
+    }
+
 
     fn rev(stamp: &str, pairs: &[(&str, &str)]) -> Revision {
         Revision {

@@ -107,8 +107,47 @@ fn blind_recommendations(
     Ok(analysis::recommend::recommend(&overall, &per_lap))
 }
 
-/// Attach current-tune absolutes to family-matched recommendations and build
-/// the display list of the latest revision.
+fn family_keys(family: journal::Family) -> &'static [&'static str] {
+    match family {
+        journal::Family::FrontRoll => &["arb_f", "springs_f"],
+        journal::Family::RearRoll => &["arb_r", "springs_r"],
+        journal::Family::Gearing => &["final_drive"],
+        journal::Family::FrontAero => &["aero_f"],
+        journal::Family::RearAero => &["aero_r"],
+        journal::Family::DiffAccel => &["diff_accel_f", "diff_accel_r", "diff_center"],
+        journal::Family::DiffDecel => &["diff_decel_f", "diff_decel_r"],
+        journal::Family::Brakes => &["brake_balance", "brake_pressure"],
+        journal::Family::Damping => &["rebound_f", "rebound_r", "bump_f", "bump_r"],
+    }
+}
+
+/// When a family's advised direction is exhausted (all sliders pinned at the
+/// advised bound), the other end of the car often offers the same balance
+/// change from the opposite side. Returns (partner family, partner direction,
+/// replacement advice).
+fn exhausted_flip(
+    family: journal::Family,
+    softer: bool,
+) -> Option<(journal::Family, bool, &'static str)> {
+    use journal::Family as F;
+    let (partner, text): (F, &str) = match (family, softer) {
+        (F::FrontRoll, true) => (F::RearRoll, "front roll sliders are at minimum — stiffen the rear instead (rear anti-roll bar first)"),
+        (F::FrontRoll, false) => (F::RearRoll, "front roll sliders are at maximum — soften the rear instead"),
+        (F::RearRoll, true) => (F::FrontRoll, "rear roll sliders are at minimum — stiffen the front instead (front anti-roll bar first)"),
+        (F::RearRoll, false) => (F::FrontRoll, "rear roll sliders are at maximum — soften the front instead"),
+        (F::FrontAero, false) => (F::RearAero, "front aero is at maximum — reduce rear aero instead"),
+        (F::FrontAero, true) => (F::RearAero, "front aero is at minimum — add rear aero instead"),
+        (F::RearAero, false) => (F::FrontAero, "rear aero is at maximum — reduce front aero instead"),
+        (F::RearAero, true) => (F::FrontAero, "rear aero is at minimum — add front aero instead"),
+        _ => return None,
+    };
+    Some((partner, !softer, text))
+}
+
+/// Attach current-tune absolutes (with slider headroom when limits are on
+/// file) to family-matched recommendations and build the display list of the
+/// latest revision. Advice whose direction is exhausted flips to the partner
+/// end of the car, or is downgraded when no partner exists.
 fn enrich_with_tune(
     recs: &mut [analysis::recommend::Recommendation],
     session: &TuningSession,
@@ -116,31 +155,64 @@ fn enrich_with_tune(
     let Some(rev) = session.latest() else { return Vec::new() };
     for r in recs.iter_mut() {
         let Some(implied) = r.implied else { continue };
-        let keys: &[&str] = match implied.family {
-            journal::Family::FrontRoll => &["arb_f", "springs_f"],
-            journal::Family::RearRoll => &["arb_r", "springs_r"],
-            journal::Family::Gearing => &["final_drive"],
-            journal::Family::FrontAero => &["aero_f"],
-            journal::Family::RearAero => &["aero_r"],
-            journal::Family::DiffAccel => &["diff_accel_f", "diff_accel_r", "diff_center"],
-            journal::Family::DiffDecel => &["diff_decel_f", "diff_decel_r"],
-            journal::Family::Brakes => &["brake_balance", "brake_pressure"],
-            journal::Family::Damping => &["rebound_f", "rebound_r", "bump_f", "bump_r"],
-        };
-        let known: Vec<String> = keys
-            .iter()
-            .filter_map(|k| {
-                rev.values.get(*k).map(|v| {
-                    format!(
-                        "{} = {}",
-                        crate::tuning::field_phrase(k),
-                        crate::tuning::display_value(k, v, &session.facts),
-                    )
-                })
-            })
-            .collect();
+        let keys = family_keys(implied.family);
+        let mut known = Vec::new();
+        let mut with_limit = 0usize;
+        let mut pinned = 0usize;
+        let mut primary_pinned = false;
+        for (idx, k) in keys.iter().enumerate() {
+            let Some(v) = rev.values.get(*k) else { continue };
+            let mut line = format!(
+                "{} = {}",
+                crate::tuning::field_phrase(k),
+                crate::tuning::display_value(k, v, &session.facts),
+            );
+            if let (Ok(val), Some(lim)) =
+                (v.parse::<f32>(), crate::tuning::limit_of(&session.facts, k))
+            {
+                with_limit += 1;
+                line.push_str(&format!(
+                    " (range {}..{})",
+                    crate::tuning::display_value(k, &lim.0.to_string(), &session.facts),
+                    crate::tuning::display_value(k, &lim.1.to_string(), &session.facts),
+                ));
+                if crate::tuning::pinned(val, lim, implied.softer, k) {
+                    pinned += 1;
+                    primary_pinned |= idx == 0;
+                    line.push_str(if implied.softer { " AT MINIMUM" } else { " AT MAXIMUM" });
+                }
+            }
+            known.push(line);
+        }
         if !known.is_empty() {
             r.evidence.push(format!("current setting: {}", known.join(", ")));
+        }
+        // Exhausted = every slider of the family has a known limit and sits
+        // at the advised bound. Unknown limits never claim exhaustion.
+        if with_limit > 0 && with_limit == known.len() && pinned == with_limit {
+            if let Some((pf, ps, text)) = exhausted_flip(implied.family, implied.softer) {
+                r.evidence.push(format!("advised direction exhausted (was: {})", r.advice));
+                r.advice = text.to_string();
+                r.implied =
+                    Some(journal::Change { family: pf, softer: ps, magnitude: None });
+            } else {
+                r.evidence.push(
+                    "every slider on this channel is already at the advised bound — \
+                     direction exhausted"
+                        .into(),
+                );
+                r.confidence = analysis::recommend::Confidence::Low;
+            }
+        } else if primary_pinned && keys.len() > 1 {
+            r.evidence.push(format!(
+                "{} is at its bound — work with {}",
+                crate::tuning::field_phrase(keys[0]),
+                keys[1..]
+                    .iter()
+                    .map(|k| crate::tuning::field_phrase(k))
+                    .collect::<Vec<_>>()
+                    .join(" / "),
+            ));
         }
     }
     rev.values
@@ -508,4 +580,92 @@ pub fn advise(
         recommendations: recs,
         current_tune,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::recommend::{Confidence, Recommendation};
+    use crate::tuning::Revision;
+
+    fn balance_rec() -> Recommendation {
+        Recommendation {
+            area: "balance",
+            advice: "reduce front roll stiffness".into(),
+            evidence: vec![],
+            confidence: Confidence::High,
+            implied: Some(journal::Change {
+                family: journal::Family::FrontRoll,
+                softer: true,
+                magnitude: None,
+            }),
+        }
+    }
+
+    fn session_with(values: &[(&str, &str)], facts: &[(&str, &str)]) -> TuningSession {
+        let mut s = TuningSession::default();
+        let mut rev = Revision { stamp: "20260721-000000".into(), ..Default::default() };
+        for (k, v) in values {
+            rev.values.insert(k.to_string(), v.to_string());
+        }
+        s.revisions.push(rev);
+        for (k, v) in facts {
+            s.facts.insert(k.to_string(), v.to_string());
+        }
+        s
+    }
+
+    /// Front roll advised softer with both front sliders at minimum: the
+    /// advice flips to stiffening the rear, implied direction included.
+    #[test]
+    fn exhausted_front_softening_flips_to_rear() {
+        let session = session_with(
+            &[("arb_f", "1"), ("springs_f", "100")],
+            &[("limit_arb_f", "1..65"), ("limit_springs_f", "100..800")],
+        );
+        let mut recs = vec![balance_rec()];
+        enrich_with_tune(&mut recs, &session);
+        assert!(recs[0].advice.contains("stiffen the rear instead"), "{}", recs[0].advice);
+        let implied = recs[0].implied.unwrap();
+        assert_eq!(implied.family, journal::Family::RearRoll);
+        assert!(!implied.softer);
+        assert!(recs[0].evidence.iter().any(|e| e.contains("AT MINIMUM")), "{:?}", recs[0].evidence);
+        assert!(recs[0].evidence.iter().any(|e| e.contains("advised direction exhausted")));
+    }
+
+    /// Only the primary slider pinned: advice stands, evidence points at the
+    /// secondary slider instead of flipping ends.
+    #[test]
+    fn primary_pinned_points_at_secondary() {
+        let session = session_with(
+            &[("arb_f", "1"), ("springs_f", "300")],
+            &[("limit_arb_f", "1..65"), ("limit_springs_f", "100..800")],
+        );
+        let mut recs = vec![balance_rec()];
+        enrich_with_tune(&mut recs, &session);
+        assert!(recs[0].advice.contains("reduce front roll stiffness"), "{}", recs[0].advice);
+        assert_eq!(recs[0].implied.unwrap().family, journal::Family::FrontRoll);
+        assert!(
+            recs[0].evidence.iter().any(|e| e.contains("work with front springs")),
+            "{:?}",
+            recs[0].evidence
+        );
+    }
+
+    /// No limits on file: values cited, no exhaustion claims possible.
+    #[test]
+    fn unknown_limits_never_claim_exhaustion() {
+        let session = session_with(&[("arb_f", "1"), ("springs_f", "100")], &[]);
+        let mut recs = vec![balance_rec()];
+        enrich_with_tune(&mut recs, &session);
+        assert!(recs[0].advice.contains("reduce front roll stiffness"));
+        assert!(recs[0].evidence.iter().all(|e| !e.contains("MINIMUM")));
+    }
+
+    #[test]
+    fn stint_stamps_parse_from_both_naming_schemes() {
+        assert_eq!(stint_stamp("sessions/stint-20260720-233644.ftel"), Some("20260720-233644"));
+        assert_eq!(stint_stamp("sessions/session-20260719-115355.ftel"), Some("20260719-115355"));
+        assert_eq!(stint_stamp("sessions/other.ftel"), None);
+    }
 }

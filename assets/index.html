@@ -343,6 +343,12 @@ const toCanon = (key, v) => {
   return !u || isNaN(n) ? v : String(Math.round((n / u.k) * 1e4) / 1e4);
 };
 const unitLabel = key => { const u = unitOf(key); return u ? ` (${u.l})` : ''; };
+// slider-limit facts hold "min..max" in canonical units; convert per side
+const limToDisp = (k, v) => v ? v.split('..').map(x => toDisp(k, x)).join('..') : '';
+const limToCanon = (k, v) => {
+  const m = v.trim().match(/^(-?[\d.]+)\s*\.\.\s*(-?[\d.]+)$/);
+  return m ? `${toCanon(k, m[1])}..${toCanon(k, m[2])}` : '';
+};
 // telemetry display: speed from m/s, temps from °F
 const SPD = () => UNITS.speed[unitPrefs.speed] || UNITS.speed.mph;
 const tempDisp = f => unitPrefs.temp === 'c' ? (f - 32) / 1.8 : f;
@@ -964,7 +970,9 @@ function openTuneForm() {
   $('tune-fields').innerHTML = TUNE_GROUPS.map(([group, fields]) =>
     `<div class="fg-col"><div class="fg-head">${group}</div>` +
     fields.map(([k, l]) =>
-      `<div><label>${l}${unitLabel(k)}</label><input id="tf-${k}" type="number" step="any" value="${toDisp(k, latest[k] || '')}"></div>`
+      `<div><label>${l}${unitLabel(k)}</label><input id="tf-${k}" type="number" step="any" value="${toDisp(k, latest[k] || '')}">` +
+      `<input id="tf-lim-${k}" type="text" placeholder="min..max" title="slider range on this car (for limit-aware advice)" ` +
+      `style="width:76px;opacity:.65;margin-left:4px" value="${limToDisp(k, (sessionData && sessionData.facts[`limit_${k}`]) || '')}"></div>`
     ).join('') + `</div>`
   ).join('');
   $('tune-msg').textContent = '';
@@ -975,6 +983,17 @@ function openTuneForm() {
 $('tune-edit').onclick = openTuneForm;
 $('tune-cancel').onclick = () => $('tune-form').style.display = 'none';
 $('tune-save').onclick = async () => {
+  // Limits are session facts, not tune revisions: save the changed ones first.
+  const limBody = new URLSearchParams();
+  for (const [k] of TUNE_FIELDS) {
+    const el = $(`tf-lim-${k}`);
+    if (!el) continue;
+    const canon = el.value.trim() === '' ? '' : limToCanon(k, el.value);
+    const cur = (sessionData && sessionData.facts[`limit_${k}`]) || '';
+    if (el.value.trim() !== '' && canon === '') { $('tune-msg').textContent = `bad range for ${k}: use min..max`; return; }
+    if (canon !== cur) limBody.set(`limit_${k}`, canon);
+  }
+  if ([...limBody].length) await fetch('/api/session', { method: 'POST', body: limBody });
   const body = new URLSearchParams();
   for (const [k] of TUNE_FIELDS) {
     const v = $(`tf-${k}`).value;
