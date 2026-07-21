@@ -1038,23 +1038,26 @@ async function loadAdvice() {
   let html = '';
   if (a.steps.length) {
     html += '<table class="adv-table"><tr><th></th><th>stint</th><th>laps</th><th>best</th>' +
-      '<th>ideal</th><th>balance</th><th>change</th><th>pos F/R</th><th>outcome</th></tr>';
+      '<th>ideal</th><th>balance</th><th>change</th><th>pos F/R</th><th>outcome</th>' +
+      '<th title="corner-entry share of the delta">entry</th>' +
+      '<th title="corner-exit share of the delta">exit</th>' +
+      '<th title="straights share of the delta">straights</th><th></th></tr>';
     a.steps.forEach((st, i) => {
       const name = st.path.split('/').pop();
       const bal = st.balance
         ? `${st.balance[0] > 0 ? '+' : ''}${st.balance[0].toFixed(2)} <span style="color:var(--muted)">(F ${(st.balance[1] * 100).toFixed(0)}%/R ${(st.balance[2] * 100).toFixed(0)}%)</span>`
         : '–';
-      let outcome = '–';
+      const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
+      const share = v => v == null ? '' :
+        `<span style="color:${v > 0.02 ? '#e66767' : v < -0.02 ? '#199e70' : 'var(--muted)'}">${sgn(v)}</span>`;
+      let outcome = '–', warn = '';
       if (st.outcome && st.outcome.error) outcome = `<span style="color:var(--muted)">not comparable: ${st.outcome.error}</span>`;
       else if (st.outcome) {
-        const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
         outcome = `<span style="color:${OUTCOME_COLOR[st.outcome.word] || 'inherit'}">${st.outcome.word}` +
-          ` ${sgn(st.outcome.deltaS)}</span>` +
-          (st.split ? ` <span style="color:var(--muted)" title="where the time moved: corner entry / corner exit / straights">entry ${sgn(st.split[0])} / exit ${sgn(st.split[1])} / straights ${sgn(st.split[2])}</span>` : '') +
-          (st.outcome.unequalLaps ? ' <span style="color:var(--muted)" title="unequal lap counts bias the ideal">⚠ laps</span>' : '');
+          ` ${sgn(st.outcome.deltaS)}</span>`;
+        if (st.outcome.unequalLaps) warn = '<span style="color:var(--muted)" title="unequal lap counts bias the ideal">⚠</span>';
       }
       if (st.anchor) {
-        const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
         outcome += st.anchor.areas
           ? `<br><span style="color:var(--muted)" title="honest setup-state verdict: compared against the prior stint with the smallest setup difference">vs step ${st.anchor.vsStep} (${st.anchor.areas}): <span style="color:${OUTCOME_COLOR[st.anchor.word] || 'inherit'}">${st.anchor.word} ${sgn(st.anchor.deltaS)}</span>${st.anchor.weak ? ' ⚠' : ''}</span>`
           : `<br><span style="color:var(--muted)">same setup as step ${st.anchor.vsStep}: ${sgn(st.anchor.deltaS)} = drift</span>`;

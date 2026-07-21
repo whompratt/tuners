@@ -241,6 +241,43 @@ fn enrich_with_tune(
         .collect()
 }
 
+/// Least-squares quadratic fit y = ax² + bx + c over the points, solved via
+/// normal equations. None when degenerate (needs 3+ distinct x).
+fn quad_fit(pts: &[(f32, f32)]) -> Option<(f64, f64, f64)> {
+    let mut xs: Vec<f32> = pts.iter().map(|p| p.0).collect();
+    xs.sort_by(f32::total_cmp);
+    xs.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+    if xs.len() < 3 {
+        return None;
+    }
+    let (mut s1, mut s2, mut s3, mut s4) = (0f64, 0f64, 0f64, 0f64);
+    let (mut t0, mut t1, mut t2) = (0f64, 0f64, 0f64);
+    let s0 = pts.len() as f64;
+    for &(x, y) in pts {
+        let (x, y) = (x as f64, y as f64);
+        s1 += x;
+        s2 += x * x;
+        s3 += x * x * x;
+        s4 += x * x * x * x;
+        t0 += y;
+        t1 += x * y;
+        t2 += x * x * y;
+    }
+    let det3 = |m: [[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let d = det3([[s4, s3, s2], [s3, s2, s1], [s2, s1, s0]]);
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let a = det3([[t2, s3, s2], [t1, s2, s1], [t0, s1, s0]]) / d;
+    let b = det3([[s4, t2, s2], [s3, t1, s1], [s2, t0, s0]]) / d;
+    let c = det3([[s4, s3, t2], [s3, s2, t1], [s2, s1, t0]]) / d;
+    Some((a, b, c))
+}
+
 /// The tune field a note clause is about, matched by field phrase (auto-
 /// generated notes use these phrases verbatim). Longest match wins so
 /// "front tire pressure" is not mistaken for a shorter overlapping phrase.
@@ -662,8 +699,8 @@ pub fn advise(
     // Latest evidence per family: newest endpoint wins; a direct setup A/B
     // beats a note-based reading of the same endpoint; nearest ancestor
     // breaks remaining ties (least drift).
-    let mut latest: Vec<Measurement> = Vec::new();
-    for m in measurements {
+    let mut latest: Vec<&Measurement> = Vec::new();
+    for m in &measurements {
         match latest.iter_mut().find(|l| l.change.family == m.change.family) {
             Some(l) => {
                 if (m.j, m.direct, m.i) > (l.j, l.direct, l.i) {
@@ -733,6 +770,115 @@ pub fn advise(
             ));
         }
     }
+    // ---- response curves: the campaign's measured landscape per slider ----
+    // Chained deltas from non-weak measurements build a cumulative curve over
+    // a slider's tried values. With 3+ points, meaningful spread, and an
+    // interior minimum, the quadratic fit's vertex is the estimated optimum —
+    // interpolation over the mapped landscape instead of last-step bisection
+    // ("decaying improvement" reads as a curve shape, not a single verdict).
+    let mut curve_fams: Vec<journal::Family> = Vec::new();
+    for m in &measurements {
+        if !curve_fams.contains(&m.change.family) {
+            curve_fams.push(m.change.family);
+        }
+    }
+    for family in curve_fams {
+        let fam_ms: Vec<&Measurement> = measurements
+            .iter()
+            .filter(|m| m.change.family == family && !m.weak)
+            .collect();
+        let mut axis: Vec<&str> = fam_ms.iter().filter_map(|m| m.key.as_deref()).collect();
+        axis.sort();
+        axis.dedup();
+        let [key] = axis[..] else { continue }; // mixed or unknown slider axis
+        let value_of = |idx: usize| -> Option<f32> {
+            setups.get(idx)?.as_ref()?.values.get(key)?.parse::<f32>().ok()
+        };
+        let mut edges: Vec<(usize, f32, f32, f32)> = fam_ms
+            .iter()
+            .filter_map(|m| {
+                let d = match m.outcome {
+                    journal::Outcome::Improved(d)
+                    | journal::Outcome::Worsened(d)
+                    | journal::Outcome::Unclear(d) => d,
+                    journal::Outcome::NotComparable => return None,
+                };
+                Some((m.j, value_of(m.i)?, value_of(m.j)?, d))
+            })
+            .collect();
+        edges.sort_by_key(|e| e.0);
+        // Accumulate cumulative deltas per tried value, averaging repeats.
+        let mut nodes: Vec<(f32, f32, usize)> = Vec::new();
+        if let Some(&(_, v0, ..)) = edges.first() {
+            nodes.push((v0, 0.0, 1));
+        }
+        for (_, vf, vt, d) in edges {
+            let Some(cum_f) = nodes.iter().find(|n| (n.0 - vf).abs() < 1e-3).map(|n| n.1)
+            else {
+                continue;
+            };
+            let cum_t = cum_f + d;
+            match nodes.iter_mut().find(|n| (n.0 - vt).abs() < 1e-3) {
+                Some(n) => {
+                    n.1 = (n.1 * n.2 as f32 + cum_t) / (n.2 + 1) as f32;
+                    n.2 += 1;
+                }
+                None => nodes.push((vt, cum_t, 1)),
+            }
+        }
+        if nodes.len() < 3 {
+            continue;
+        }
+        let (lo, hi) = nodes.iter().fold((f32::MAX, f32::MIN), |(lo, hi), n| {
+            (lo.min(n.1), hi.max(n.1))
+        });
+        if hi - lo < 0.10 {
+            continue; // landscape flat vs the outcome noise floor
+        }
+        let pts: Vec<(f32, f32)> = nodes.iter().map(|n| (n.0, n.1)).collect();
+        let Some((a, b, _)) = quad_fit(&pts) else { continue };
+        if a <= 0.0 {
+            continue; // no interior minimum measured
+        }
+        let mut vertex = (-b / (2.0 * a)) as f32;
+        let (vmin, vmax) = nodes.iter().fold((f32::MAX, f32::MIN), |(mn, mx), n| {
+            (mn.min(n.0), mx.max(n.0))
+        });
+        if vertex < vmin || vertex > vmax {
+            continue; // extrapolation — leave step-based advice in charge
+        }
+        if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
+            vertex = vertex.clamp(lim.0, lim.1);
+        }
+        let vertex = (vertex * 10.0).round() / 10.0;
+        let phrase = crate::tuning::field_phrase(key);
+        let mut sorted = nodes.clone();
+        sorted.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let landscape: Vec<String> = sorted
+            .iter()
+            .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
+            .collect();
+        for r in recs
+            .iter_mut()
+            .filter(|r| r.implied.is_some_and(|i| i.family == family))
+        {
+            r.suggestion = Some(format!(
+                "{phrase}: {}",
+                crate::tuning::display_value(key, &vertex.to_string(), &session.facts),
+            ));
+            r.advice = format!(
+                "probe the estimated optimum: the campaign's measured response for \
+                 {phrase} bottoms out near {vertex} — validate with an A/B"
+            );
+            r.confidence = analysis::recommend::Confidence::Medium;
+            r.evidence.push(format!(
+                "measured landscape ({phrase}): {} (cumulative ideal delta vs \
+                 first tried value; lower = faster)",
+                landscape.join(", "),
+            ));
+        }
+    }
+
     // History-only recs arrive unsorted; keep most-confident-first for display.
     recs.sort_by_key(|r| std::cmp::Reverse(r.confidence));
     // Cite tune absolutes only when the journal's stints are the session
@@ -891,6 +1037,27 @@ mod tests {
             recs[0].evidence
         );
         assert!(recs[0].evidence.iter().all(|e| !e.contains("exhausted")));
+    }
+
+    /// The user's worked example: front ARB 10..16 with lap times showing
+    /// decaying improvement then a slowdown — the fitted optimum sits between
+    /// 14 and 15, not at the best tried value or a bisection of the last step.
+    #[test]
+    fn quad_fit_finds_the_interior_optimum() {
+        // Cumulative deltas from lap times 60.0, 59.0, 58.3, 58.0, 58.5.
+        let pts = [(10.0, 0.0), (12.0, -1.0), (14.0, -1.7), (15.0, -2.0), (16.0, -1.5)];
+        let (a, b, _) = quad_fit(&pts).unwrap();
+        assert!(a > 0.0, "upward curvature (a minimum exists)");
+        let vertex = (-b / (2.0 * a)) as f32;
+        assert!((14.0..=15.2).contains(&vertex), "vertex {vertex}");
+
+        // Monotonic data has no trustworthy interior minimum.
+        let mono = [(10.0, 0.0), (12.0, -1.0), (14.0, -2.0)];
+        if let Some((a, b, _)) = quad_fit(&mono) {
+            let v = (-b / (2.0 * a)) as f32;
+            assert!(!(10.0..=14.0).contains(&v) || a <= 0.0, "no interior vertex: a={a} v={v}");
+        }
+        assert!(quad_fit(&[(10.0, 0.0), (12.0, -1.0)]).is_none(), "2 points fit nothing");
     }
 
     #[test]
