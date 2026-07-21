@@ -407,7 +407,7 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
             let pos = s.pos.map_or("null".into(), |(f, r)| format!("[{f:.1},{r:.1}]"));
             let split = s
                 .split
-                .map_or("null".into(), |(c, st)| format!("[{c:.3},{st:.3}]"));
+                .map_or("null".into(), |(e, x, st)| format!("[{e:.3},{x:.3},{st:.3}]"));
             let outcome = match &s.outcome {
                 None => "null".into(),
                 Some(Ok((word, delta, unequal))) => format!(
@@ -455,7 +455,7 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         .collect();
     let anchor = v.anchor.as_ref().map_or("null".into(), |a| {
         format!(
-            "{{\"vsStep\":{},\"areas\":{},\"changes\":{},\"deltaS\":{:.3},\"word\":\"{}\",\"weak\":{},\"reconciled\":{}}}",
+            "{{\"vsStep\":{},\"areas\":{},\"changes\":{},\"deltaS\":{:.3},\"word\":\"{}\",\"weak\":{},\"reconciled\":{},\"split\":[{:.3},{:.3},{:.3}]}}",
             a.vs_step,
             json_str(&a.areas),
             json_str(&a.changes),
@@ -463,6 +463,9 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
             a.word,
             a.weak,
             a.reconciled,
+            a.split.0,
+            a.split.1,
+            a.split.2,
         )
     });
     let aba = v.aba.as_ref().map_or("null".into(), |a| {

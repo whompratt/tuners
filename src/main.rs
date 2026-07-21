@@ -208,8 +208,10 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             match &step.outcome {
                 Some(Ok((word, delta, unequal))) => {
                     line.push_str(&format!("  → {word} (ideal {delta:+.2}s)"));
-                    if let Some((c, st)) = step.split {
-                        line.push_str(&format!("  [corners {c:+.2}s / straights {st:+.2}s]"));
+                    if let Some((e, x, st)) = step.split {
+                        line.push_str(&format!(
+                            "  [entry {e:+.2}s / exit {x:+.2}s / straights {st:+.2}s]"
+                        ));
                     }
                     if *unequal {
                         line.push_str("  [unequal lap counts]");
@@ -230,12 +232,16 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             } else {
                 println!(
                     "  cleanest comparison for the last stint: vs step {} (setups \
-                     differ only in {}: {}) → {} {:+.2}s{}{}",
+                     differ only in {}: {}) → {} {:+.2}s  [entry {:+.2}s / exit \
+                     {:+.2}s / straights {:+.2}s]{}{}",
                     a.vs_step,
                     a.areas,
                     a.changes,
                     a.word,
                     a.delta_s,
+                    a.split.0,
+                    a.split.1,
+                    a.split.2,
                     if a.weak { "  [single-lap side — corroborate]" } else { "" },
                     if a.reconciled { "" } else { "  [multi-area — informational]" },
                 );

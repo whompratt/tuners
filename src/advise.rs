@@ -22,8 +22,9 @@ pub struct StepView {
     /// Measured outcome vs the previous step: Ok((word, ideal delta, unequal
     /// laps)) or Err(reason) when not comparable. None for the first step.
     pub outcome: Option<Result<(&'static str, f32, bool), String>>,
-    /// The outcome split into (cornering, straight) road — where the time moved.
-    pub split: Option<(f32, f32)>,
+    /// Where the time moved vs the previous step: (corner entry, corner exit,
+    /// straights). Corner total = entry + exit.
+    pub split: Option<(f32, f32, f32)>,
 }
 
 /// Drift-corrected reading of a trailing excursion-and-revert pair: the two
@@ -59,6 +60,8 @@ pub struct AnchorView {
     /// Whether this comparison drove reconciliation (single-area anchors do;
     /// multi-area anchors are informational).
     pub reconciled: bool,
+    /// Where the time moved vs the anchor: (entry, exit, straights).
+    pub split: (f32, f32, f32),
 }
 
 pub struct AdviseView {
@@ -260,7 +263,7 @@ pub fn advise(
             match analysis::compare::compare(prev, profile) {
                 Ok(cmp) => {
                     let attr = analysis::attribution::split_delta(prev, &cmp.bin_delta_s);
-                    split = Some((attr.corner_delta_s, attr.straight_delta_s));
+                    split = Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s));
                     *deltas.last_mut().unwrap() = Some(cmp.ideal_delta_s);
                     let outcome = journal::judge(cmp.ideal_delta_s);
                     let word = match outcome {
@@ -342,6 +345,7 @@ pub fn advise(
         if let Some((i, keys)) = best
             && let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[n - 1].2)
         {
+            let attr = analysis::attribution::split_delta(&loaded[i].2, &cmp.bin_delta_s);
             let mut areas: Vec<&str> =
                 keys.iter().map(|k| crate::tuning::field_area(k)).collect();
             areas.sort();
@@ -380,6 +384,7 @@ pub fn advise(
                 },
                 weak,
                 reconciled: anchor_change.is_some(),
+                split: (attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s),
             });
         }
     }
@@ -419,6 +424,18 @@ pub fn advise(
         {
             recs.push(rec);
         }
+        if let Some(a) = &anchor {
+            let (e, x, st) = a.split;
+            for r in recs.iter_mut().filter(|r| {
+                r.implied.is_some_and(|i| i.family == change.family)
+            }) {
+                r.evidence.push(format!(
+                    "where the time moved vs step {}: corner entry {e:+.2}s / \
+                     exit {x:+.2}s / straights {st:+.2}s",
+                    a.vs_step,
+                ));
+            }
+        }
     } else if anchor_drift {
         // Same setup as the anchor: the measured delta is pure drift; there is
         // no change to charge it to.
@@ -432,11 +449,12 @@ pub fn advise(
         // Channel attribution: chassis clauses are judged on the cornering
         // share of the delta, gearing clauses on the straight share.
         let evidence = format!(
-            "outcome attributed from a compound step (\"{note}\"): corners \
-             {:+.2}s / straights {:+.2}s of {total:+.2}s total ({:.0}% of lap \
-             time is cornering) — inferred from where the time moved, not \
-             measured in isolation",
-            attr.corner_delta_s,
+            "outcome attributed from a compound step (\"{note}\"): corner entry \
+             {:+.2}s / exit {:+.2}s / straights {:+.2}s of {total:+.2}s total \
+             ({:.0}% of lap time is cornering) — inferred from where the time \
+             moved, not measured in isolation",
+            attr.entry_delta_s,
+            attr.exit_delta_s,
             attr.straight_delta_s,
             attr.corner_share * 100.0,
         );
@@ -446,8 +464,13 @@ pub fn advise(
                 continue;
             }
             seen.push(clause.family);
+            // Each family is judged on the road its fingerprint lives on.
+            // Calibrated 2026-07-21: brake bias showed cleanly on entry even
+            // inside a compound step; diff lock (accel AND decel) measured
+            // SPREAD across phases, so both judge on the corner total.
             let channel_delta = match clause.family {
                 journal::Family::Gearing => attr.straight_delta_s,
+                journal::Family::Brakes => attr.entry_delta_s,
                 _ => attr.corner_delta_s,
             };
             let outcome = journal::judge(channel_delta);

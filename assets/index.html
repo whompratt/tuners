@@ -1022,7 +1022,7 @@ async function loadAdvice() {
         const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
         outcome = `<span style="color:${OUTCOME_COLOR[st.outcome.word] || 'inherit'}">${st.outcome.word}` +
           ` ${sgn(st.outcome.deltaS)}</span>` +
-          (st.split ? ` <span style="color:var(--muted)" title="where the time moved, by road type">corners ${sgn(st.split[0])} / straights ${sgn(st.split[1])}</span>` : '') +
+          (st.split ? ` <span style="color:var(--muted)" title="where the time moved: corner entry / corner exit / straights">entry ${sgn(st.split[0])} / exit ${sgn(st.split[1])} / straights ${sgn(st.split[2])}</span>` : '') +
           (st.outcome.unequalLaps ? ' <span style="color:var(--muted)" title="unequal lap counts bias the ideal">⚠ laps</span>' : '');
       }
       html += `<tr><td class="num">${i + 1}</td>` +
@@ -1048,6 +1048,7 @@ async function loadAdvice() {
       (an.areas
         ? `cleanest comparison: vs step ${an.vsStep} (differs only in ${an.areas}: ${an.changes}) → ` +
           `<span style="color:${OUTCOME_COLOR[an.word] || 'inherit'}">${an.word} ${sgn(an.deltaS)}</span>` +
+          ` <span title="where the time moved: corner entry / corner exit / straights">entry ${sgn(an.split[0])} / exit ${sgn(an.split[1])} / straights ${sgn(an.split[2])}</span>` +
           (an.weak ? ' ⚠ single-lap side' : '') + (an.reconciled ? '' : ' (multi-area — informational)')
         : `step ${an.vsStep} has the same setup — ${sgn(an.deltaS)} ideal is pure driver/track drift`) +
       `</div>`;
