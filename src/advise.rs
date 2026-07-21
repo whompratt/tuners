@@ -227,6 +227,18 @@ fn enrich_with_tune(
         .collect()
 }
 
+/// The tune field a note clause is about, matched by field phrase (auto-
+/// generated notes use these phrases verbatim). Longest match wins so
+/// "front tire pressure" is not mistaken for a shorter overlapping phrase.
+fn key_from_phrase(text: &str) -> Option<String> {
+    let t = text.to_lowercase();
+    crate::tuning::FIELDS
+        .iter()
+        .filter(|(_, phrase)| t.contains(phrase))
+        .max_by_key(|(_, phrase)| phrase.len())
+        .map(|(k, _)| k.to_string())
+}
+
 /// Trailing "YYYYMMDD-HHMMSS" stamp of a stint filename, comparable with
 /// tune revision stamps (same fixed format, so string order = time order).
 fn stint_stamp(path: &str) -> Option<&str> {
@@ -490,6 +502,9 @@ pub fn advise(
         i: usize,
         j: usize,
         direct: bool,
+        /// The single slider the measurement moved, when identifiable —
+        /// lets advice resolve concrete target values.
+        key: Option<String>,
     }
     let mut measurements: Vec<Measurement> = Vec::new();
     for j in 1..n {
@@ -533,6 +548,7 @@ pub fn advise(
                 i,
                 j,
                 direct: true,
+                key: (vals.len() == 1).then(|| keys[0].clone()),
             });
         }
     }
@@ -549,6 +565,7 @@ pub fn advise(
                 i: j - 1,
                 j,
                 direct: false,
+                key: key_from_phrase(note),
             });
         } else {
             let evidence = format!(
@@ -562,7 +579,8 @@ pub fn advise(
                 attr.corner_share * 100.0,
             );
             let mut seen = Vec::new();
-            for clause in journal::parse_clauses(note) {
+            for clause_text in note.split(';').map(str::trim) {
+                let Some(clause) = journal::parse_change(clause_text) else { continue };
                 if seen.contains(&clause.family) {
                     continue;
                 }
@@ -579,12 +597,13 @@ pub fn advise(
                 measurements.push(Measurement {
                     change: clause,
                     outcome: journal::judge(channel_delta),
-                    desc: note.clone(),
+                    desc: clause_text.to_string(),
                     attributed: Some(evidence.clone()),
                     weak: weaks[j],
                     i: j - 1,
                     j,
                     direct: false,
+                    key: key_from_phrase(clause_text),
                 });
             }
         }
@@ -657,6 +676,39 @@ pub fn advise(
     } else {
         Vec::new()
     };
+
+    // Directional advice becomes a concrete target when the family's evidence
+    // names the slider and the setup is on file: "go +0.5 from here" resolves
+    // to "front arb 17 → 17.5". Values are based on the LAST STINT's setup —
+    // the state the advice was judged against — not a saved-but-undriven
+    // revision, and clamp to the slider's known range.
+    if let Some(Some(base)) = setups.last() {
+        for r in recs.iter_mut() {
+            let Some(implied) = r.implied else { continue };
+            let Some(delta) = implied.magnitude else { continue };
+            let Some(key) = latest
+                .iter()
+                .find(|m| m.change.family == implied.family)
+                .and_then(|m| m.key.as_deref())
+            else {
+                continue;
+            };
+            let Some(cur) = base.values.get(key).and_then(|v| v.parse::<f32>().ok()) else {
+                continue;
+            };
+            let mut target = cur + delta;
+            if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
+                target = target.clamp(lim.0, lim.1);
+            }
+            let round = |v: f32| (v * 1e4).round() / 1e4;
+            r.advice.push_str(&format!(
+                " — suggested: {} {} → {}",
+                crate::tuning::field_phrase(key),
+                crate::tuning::display_value(key, &round(cur).to_string(), &session.facts),
+                crate::tuning::display_value(key, &round(target).to_string(), &session.facts),
+            ));
+        }
+    }
 
     Ok(AdviseView {
         journal: Some(journal_path.to_string()),

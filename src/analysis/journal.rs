@@ -313,8 +313,14 @@ pub fn reconcile(
                     .push(format!("last step in this direction lost {d:.2}s of ideal lap"));
                 r.confidence = Confidence::High;
                 // The advice now points the other way; implied must follow it
-                // (limit checks and future reconciliation read the direction).
-                r.implied = Some(Change { softer: !implied.softer, ..implied });
+                // (limit checks and future reconciliation read the direction),
+                // and carries the half-revert delta so a concrete target value
+                // can be resolved when the setup is on file.
+                r.implied = Some(Change {
+                    softer: !implied.softer,
+                    magnitude: change.magnitude.map(|m| -m / 2.0),
+                    ..implied
+                });
             }
             (true, Outcome::Improved(d)) => {
                 r.evidence.push(format!(
@@ -577,6 +583,11 @@ mod tests {
             false,
         );
         assert!(recs[0].advice.contains("go +1.0 slider units from here"), "{}", recs[0].advice);
+        // The implied change follows the rewritten advice: flipped direction,
+        // half the measured magnitude — resolvable to a concrete target value.
+        let implied = recs[0].implied.unwrap();
+        assert!(!implied.softer);
+        assert_eq!(implied.magnitude, Some(1.0));
     }
 
     /// A compound step's outcome is unattributable, but its clauses still
