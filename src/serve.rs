@@ -415,10 +415,20 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
                 ),
                 Some(Err(e)) => format!("{{\"error\":{}}}", json_str(e)),
             };
+            let row_anchor = s.anchor.as_ref().map_or("null".into(), |a| {
+                format!(
+                    "{{\"vsStep\":{},\"areas\":{},\"deltaS\":{:.3},\"word\":\"{}\",\"weak\":{}}}",
+                    a.vs_step,
+                    json_str(&a.areas),
+                    a.delta_s,
+                    a.word,
+                    a.weak,
+                )
+            });
             format!(
                 "{{\"path\":{},\"laps\":{},\"bestS\":{:.3},\"idealS\":{:.3},\
                  \"balance\":{balance},\"note\":{},\"pos\":{pos},\"outcome\":{outcome},\
-                 \"split\":{split}}}",
+                 \"split\":{split},\"anchor\":{row_anchor}}}",
                 json_str(&s.path),
                 s.laps,
                 s.best_s,

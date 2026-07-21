@@ -25,6 +25,20 @@ pub struct StepView {
     /// Where the time moved vs the previous step: (corner entry, corner exit,
     /// straights). Corner total = entry + exit.
     pub split: Option<(f32, f32, f32)>,
+    /// The step's honest setup-state verdict when its minimal-diff ancestor
+    /// is NOT the previous step (chained experiments make the neighbor
+    /// comparison compound while a shared baseline is the clean A/B).
+    pub anchor: Option<RowAnchor>,
+}
+
+/// Compact per-row anchor: comparison against the prior stint with the
+/// smallest setup difference. Empty areas = same setup (pure drift).
+pub struct RowAnchor {
+    pub vs_step: usize,
+    pub areas: String,
+    pub delta_s: f32,
+    pub word: &'static str,
+    pub weak: bool,
 }
 
 /// Drift-corrected reading of a trailing excursion-and-revert pair: the two
@@ -374,6 +388,7 @@ pub fn advise(
             },
             outcome,
             split,
+            anchor: None,
         });
     }
 
@@ -395,6 +410,42 @@ pub fn advise(
             session.revisions.iter().rev().find(|r| r.stamp.as_str() < stamp)
         })
         .collect();
+
+    // Per-row honest verdicts: each step compared against its minimal-diff
+    // ancestor, shown only when that ancestor is NOT the previous step (the
+    // row's own outcome column already covers the neighbor) and not for the
+    // last step (the prominent anchor line below covers it).
+    let n = loaded.len();
+    for j in 1..n.saturating_sub(1) {
+        let Some(sj) = setups[j] else { continue };
+        let mut best: Option<(usize, Vec<String>)> = None;
+        for (i, si) in setups[..j].iter().enumerate() {
+            let Some(si) = si else { continue };
+            let keys = crate::tuning::diff_keys(si, sj);
+            if best.as_ref().is_none_or(|(_, bk)| keys.len() <= bk.len()) {
+                best = Some((i, keys));
+            }
+        }
+        let Some((i, keys)) = best else { continue };
+        if i == j - 1 {
+            continue;
+        }
+        let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else { continue };
+        let mut areas: Vec<&str> = keys.iter().map(|k| crate::tuning::field_area(k)).collect();
+        areas.sort();
+        areas.dedup();
+        steps[j].anchor = Some(RowAnchor {
+            vs_step: i + 1,
+            areas: areas.join(", "),
+            delta_s: cmp.ideal_delta_s,
+            word: match journal::judge(cmp.ideal_delta_s) {
+                journal::Outcome::Improved(_) => "improved",
+                journal::Outcome::Worsened(_) => "WORSE",
+                _ => "inconclusive",
+            },
+            weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2,
+        });
+    }
 
     // The honest comparison for the last stint is the prior stint whose SETUP
     // differs least (ties -> most recent). Chained experiments ("revert X;

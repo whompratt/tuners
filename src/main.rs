@@ -220,6 +220,23 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                 Some(Err(e)) => line.push_str(&format!("  → not comparable ({e})")),
                 None => {}
             }
+            if let Some(a) = &step.anchor {
+                if a.areas.is_empty() {
+                    line.push_str(&format!(
+                        "  [same setup as step {}: {:+.2}s = drift]",
+                        a.vs_step, a.delta_s
+                    ));
+                } else {
+                    line.push_str(&format!(
+                        "  [vs step {} ({}): {} {:+.2}s{}]",
+                        a.vs_step,
+                        a.areas,
+                        a.word,
+                        a.delta_s,
+                        if a.weak { ", single-lap" } else { "" },
+                    ));
+                }
+            }
             println!("{line}");
         }
         if let Some(a) = &view.anchor {

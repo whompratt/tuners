@@ -1053,6 +1053,12 @@ async function loadAdvice() {
           (st.split ? ` <span style="color:var(--muted)" title="where the time moved: corner entry / corner exit / straights">entry ${sgn(st.split[0])} / exit ${sgn(st.split[1])} / straights ${sgn(st.split[2])}</span>` : '') +
           (st.outcome.unequalLaps ? ' <span style="color:var(--muted)" title="unequal lap counts bias the ideal">⚠ laps</span>' : '');
       }
+      if (st.anchor) {
+        const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
+        outcome += st.anchor.areas
+          ? `<br><span style="color:var(--muted)" title="honest setup-state verdict: compared against the prior stint with the smallest setup difference">vs step ${st.anchor.vsStep} (${st.anchor.areas}): <span style="color:${OUTCOME_COLOR[st.anchor.word] || 'inherit'}">${st.anchor.word} ${sgn(st.anchor.deltaS)}</span>${st.anchor.weak ? ' ⚠' : ''}</span>`
+          : `<br><span style="color:var(--muted)">same setup as step ${st.anchor.vsStep}: ${sgn(st.anchor.deltaS)} = drift</span>`;
+      }
       html += `<tr><td class="num">${i + 1}</td>` +
         `<td><a href="#" data-stint="${st.path}">${name}</a></td>` +
         `<td class="num">${st.laps}</td><td class="num">${fmtLap(st.bestS)}</td>` +
