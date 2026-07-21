@@ -836,7 +836,11 @@ function renderSession() {
   $('session-edit').textContent = active ? 'session settings' : 'set up session';
   $('tune-edit').style.display = active ? '' : 'none';
   $('tune-edit').textContent = s && s.latest ? 'new tune revision' : 'enter baseline tune';
-  const facts = active ? Object.entries(s.facts).filter(([k]) => !k.startsWith('unit_')) : [];
+  // unit_* are display prefs and limit_* are slider ranges (canonical units,
+  // shown in the tune form and advice evidence) — neither is a car fact.
+  const facts = active
+    ? Object.entries(s.facts).filter(([k]) => !k.startsWith('unit_') && !k.startsWith('limit_'))
+    : [];
   const kv = (fields, k, v) =>
     `<span class="kv">${label(fields, k)} <b>${toDisp(k, v)}${unitLabel(k).replace(/[()]/g, '')}</b></span>`;
   $('tune-summary').innerHTML =
