@@ -92,17 +92,35 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("diff_center", "center diff balance"),
 ];
 
-/// The journal belongs to the session: with a session car set, the journal
-/// file is derived per car ("tune-journal.txt" -> "tune-journal-1314.txt") so
-/// different cars' trajectories never mix. No car -> the base path (blind mode).
-/// Slider range for a field, from a `limit_<key>` session fact holding
-/// "min..max" in canonical units (the game shows per-car ranges in its
-/// tuning UI; the user records them once per car).
+/// Slider ranges fixed across every car (FH6 tuning UI, user-recorded
+/// 2026-07-21). Car-specific ranges (springs, ride height, aero) return None
+/// and need `limit_<key>` session facts.
+pub fn universal_limit(key: &str) -> Option<(f32, f32)> {
+    Some(match key {
+        "tire_pressure_f" | "tire_pressure_r" => (15.0, 55.0),
+        "final_drive" => (2.2, 6.1),
+        k if k.starts_with("gear_") => (0.48, 6.0),
+        "camber_f" | "camber_r" | "toe_f" | "toe_r" => (-5.0, 5.0),
+        "caster" => (1.0, 7.0),
+        "arb_f" | "arb_r" => (1.0, 65.0),
+        "rebound_f" | "rebound_r" | "bump_f" | "bump_r" => (1.0, 20.0),
+        "brake_balance" | "diff_center" => (0.0, 100.0),
+        "diff_accel_f" | "diff_accel_r" | "diff_decel_f" | "diff_decel_r" => (0.0, 100.0),
+        "brake_pressure" => (0.0, 200.0),
+        _ => return None,
+    })
+}
+
+/// Slider range for a field: a `limit_<key>` session fact ("min..max" in
+/// canonical units) when recorded, else the universal range when the game
+/// fixes it across cars.
 pub fn limit_of(facts: &BTreeMap<String, String>, key: &str) -> Option<(f32, f32)> {
-    let v = facts.get(&format!("limit_{key}"))?;
-    let (a, b) = v.split_once("..")?;
-    let (min, max) = (a.trim().parse().ok()?, b.trim().parse().ok()?);
-    (min < max).then_some((min, max))
+    let explicit = facts.get(&format!("limit_{key}")).and_then(|v| {
+        let (a, b) = v.split_once("..")?;
+        let (min, max): (f32, f32) = (a.trim().parse().ok()?, b.trim().parse().ok()?);
+        (min < max).then_some((min, max))
+    });
+    explicit.or_else(|| universal_limit(key))
 }
 
 /// Is `value` pinned at the bound the advised direction would push past?
@@ -158,6 +176,9 @@ pub fn diff_keys(a: &Revision, b: &Revision) -> Vec<String> {
     keys
 }
 
+/// The journal belongs to the session: with a session car set, the journal
+/// file is derived per car ("tune-journal.txt" -> "tune-journal-1314.txt") so
+/// different cars' trajectories never mix. No car -> the base path (blind mode).
 pub fn journal_path_for(car: Option<i32>, base: &str) -> String {
     match car {
         Some(car) => match base.rsplit_once('.') {
@@ -351,7 +372,12 @@ mod tests {
         facts.insert("limit_bad".to_string(), "65..1".to_string());
         assert_eq!(limit_of(&facts, "arb_f"), Some((1.0, 65.0)));
         assert_eq!(limit_of(&facts, "bad"), None, "inverted range rejected");
-        assert_eq!(limit_of(&facts, "arb_r"), None);
+        assert_eq!(limit_of(&facts, "arb_r"), Some((1.0, 65.0)), "universal fallback");
+        assert_eq!(limit_of(&facts, "springs_f"), None, "car-specific, not recorded");
+        assert_eq!(limit_of(&facts, "brake_pressure"), Some((0.0, 200.0)));
+        // A recorded fact overrides the universal range.
+        facts.insert("limit_arb_f".to_string(), "5..40".to_string());
+        assert_eq!(limit_of(&facts, "arb_f"), Some((5.0, 40.0)));
 
         let lim = (1.0, 65.0);
         assert!(pinned(1.0, lim, true, "arb_f"), "at min, advising softer");

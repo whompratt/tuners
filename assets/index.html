@@ -343,6 +343,13 @@ const toCanon = (key, v) => {
   return !u || isNaN(n) ? v : String(Math.round((n / u.k) * 1e4) / 1e4);
 };
 const unitLabel = key => { const u = unitOf(key); return u ? ` (${u.l})` : ''; };
+// slider ranges fixed across cars (FH6 UI); car-specific fields need input
+const UNIVERSAL_LIMITS = (k) =>
+  k.startsWith('tire_pressure') ? '15..55' : k === 'final_drive' ? '2.2..6.1' :
+  k.startsWith('gear_') ? '0.48..6' : k === 'caster' ? '1..7' :
+  /^(camber|toe)_/.test(k) ? '-5..5' : /^arb_/.test(k) ? '1..65' :
+  /^(rebound|bump)_/.test(k) ? '1..20' : k === 'brake_pressure' ? '0..200' :
+  (/^diff_/.test(k) || k === 'brake_balance') ? '0..100' : null;
 // slider-limit facts hold "min..max" in canonical units; convert per side
 const limToDisp = (k, v) => v ? v.split('..').map(x => toDisp(k, x)).join('..') : '';
 const limToCanon = (k, v) => {
@@ -971,8 +978,10 @@ function openTuneForm() {
     `<div class="fg-col"><div class="fg-head">${group}</div>` +
     fields.map(([k, l]) =>
       `<div><label>${l}${unitLabel(k)}</label><input id="tf-${k}" type="number" step="any" value="${toDisp(k, latest[k] || '')}">` +
-      `<input id="tf-lim-${k}" type="text" placeholder="min..max" title="slider range on this car (for limit-aware advice)" ` +
-      `style="width:76px;opacity:.65;margin-left:4px" value="${limToDisp(k, (sessionData && sessionData.facts[`limit_${k}`]) || '')}"></div>`
+      (UNIVERSAL_LIMITS(k) && !(sessionData && sessionData.facts[`limit_${k}`])
+        ? `<span style="opacity:.45;font-size:11px;margin-left:4px" title="range fixed across cars">${UNIVERSAL_LIMITS(k)}</span>`
+        : `<input id="tf-lim-${k}" type="text" placeholder="min..max" title="slider range on this car (for limit-aware advice)" ` +
+          `style="width:76px;opacity:.65;margin-left:4px" value="${limToDisp(k, (sessionData && sessionData.facts[`limit_${k}`]) || '')}">`) + `</div>`
     ).join('') + `</div>`
   ).join('');
   $('tune-msg').textContent = '';

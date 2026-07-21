@@ -652,14 +652,20 @@ mod tests {
         );
     }
 
-    /// No limits on file: values cited, no exhaustion claims possible.
+    /// Springs have no universal range: with no fact recorded, a pinned arb
+    /// points at the springs but never claims the whole direction exhausted.
     #[test]
     fn unknown_limits_never_claim_exhaustion() {
         let session = session_with(&[("arb_f", "1"), ("springs_f", "100")], &[]);
         let mut recs = vec![balance_rec()];
         enrich_with_tune(&mut recs, &session);
-        assert!(recs[0].advice.contains("reduce front roll stiffness"));
-        assert!(recs[0].evidence.iter().all(|e| !e.contains("MINIMUM")));
+        assert!(recs[0].advice.contains("reduce front roll stiffness"), "{}", recs[0].advice);
+        assert!(
+            recs[0].evidence.iter().any(|e| e.contains("work with front springs")),
+            "{:?}",
+            recs[0].evidence
+        );
+        assert!(recs[0].evidence.iter().all(|e| !e.contains("exhausted")));
     }
 
     #[test]
