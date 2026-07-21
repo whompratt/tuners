@@ -433,9 +433,10 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         .map(|r| {
             let evidence: Vec<String> = r.evidence.iter().map(|e| json_str(e)).collect();
             format!(
-                "{{\"confidence\":\"{}\",\"area\":{},\"advice\":{},\"evidence\":[{}]}}",
+                "{{\"confidence\":\"{}\",\"area\":{},\"suggestion\":{},\"advice\":{},\"evidence\":[{}]}}",
                 r.confidence.label(),
                 json_str(r.area),
+                r.suggestion.as_deref().map_or("null".into(), json_str),
                 json_str(&r.advice),
                 evidence.join(","),
             )

@@ -452,6 +452,7 @@ pub fn history_revert(
             ),
             evidence,
             confidence: Confidence::Low,
+            suggestion: None,
             implied: None,
         });
     }
@@ -469,6 +470,7 @@ pub fn history_revert(
         advice: format!("revert the last change (\"{note}\"): it measurably cost lap time"),
         evidence,
         confidence,
+        suggestion: None,
         implied: Some(Change {
             family: change.family,
             softer: !change.softer,
@@ -620,6 +622,7 @@ mod tests {
             advice: "reduce front roll stiffness".into(),
             evidence: vec!["understeer +0.3".into()],
             confidence: Confidence::High,
+            suggestion: None,
             implied: Some(Change { family: Family::FrontRoll, softer: true, magnitude: None }),
         }
     }

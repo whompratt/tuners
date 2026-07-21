@@ -639,11 +639,32 @@ pub fn advise(
         }
     }
     // History-only reverts stay scoped to the LAST stint's own deviation from
-    // its anchor — a past experiment already reverted needs no advice.
+    // its anchor — a past experiment already reverted needs no advice. The
+    // suggestion is the anchor's own values: reverting fully means returning
+    // to a measured state, not arithmetic.
     if let Some((change, outcome, note, weak)) = &anchor_change
         && !matched_families.contains(&change.family)
-        && let Some(rec) = journal::history_revert(*change, *outcome, note, None, *weak)
+        && let Some(mut rec) = journal::history_revert(*change, *outcome, note, None, *weak)
     {
+        if let Some(a) = &anchor
+            && let (Some(Some(anchor_setup)), Some(Some(last_setup))) =
+                (setups.get(a.vs_step - 1), setups.last())
+        {
+            let parts: Vec<String> = crate::tuning::diff_keys(anchor_setup, last_setup)
+                .iter()
+                .filter_map(|k| {
+                    let v = anchor_setup.values.get(k)?;
+                    Some(format!(
+                        "{}: {}",
+                        crate::tuning::field_phrase(k),
+                        crate::tuning::display_value(k, v, &session.facts),
+                    ))
+                })
+                .collect();
+            if !parts.is_empty() {
+                rec.suggestion = Some(parts.join(", "));
+            }
+        }
         recs.push(rec);
     }
     if let Some((change, ..)) = &anchor_change
@@ -677,37 +698,49 @@ pub fn advise(
         Vec::new()
     };
 
-    // Directional advice becomes a concrete target when the family's evidence
-    // names the slider and the setup is on file: "go +0.5 from here" resolves
-    // to "front arb 17 → 17.5". Values are based on the LAST STINT's setup —
-    // the state the advice was judged against — not a saved-but-undriven
-    // revision, and clamp to the slider's known range.
-    if let Some(Some(base)) = setups.last() {
-        for r in recs.iter_mut() {
-            let Some(implied) = r.implied else { continue };
-            let Some(delta) = implied.magnitude else { continue };
-            let Some(key) = latest
-                .iter()
-                .find(|m| m.change.family == implied.family)
-                .and_then(|m| m.key.as_deref())
-            else {
-                continue;
-            };
-            let Some(cur) = base.values.get(key).and_then(|v| v.parse::<f32>().ok()) else {
-                continue;
-            };
-            let mut target = cur + delta;
-            if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
-                target = target.clamp(lim.0, lim.1);
-            }
-            let round = |v: f32| (v * 1e4).round() / 1e4;
-            r.advice.push_str(&format!(
-                " — suggested: {} {} → {}",
-                crate::tuning::field_phrase(key),
-                crate::tuning::display_value(key, &round(cur).to_string(), &session.facts),
-                crate::tuning::display_value(key, &round(target).to_string(), &session.facts),
-            ));
+    // The suggestion headline: the concrete setting to try. With the last
+    // stint's setup on file, an ABSOLUTE value ("front arb: 17.5"), clamped
+    // to the slider's range; blind, the DELTA to apply ("front arb: +0.5").
+    // Values base on the last stint's setup — the state the advice was
+    // judged against — never a saved-but-undriven revision.
+    let round = |v: f32| (v * 1e4).round() / 1e4;
+    let base = setups.last().copied().flatten();
+    for r in recs.iter_mut() {
+        if r.suggestion.is_some() {
+            continue;
         }
+        let Some(implied) = r.implied else { continue };
+        let Some(delta) = implied.magnitude else { continue };
+        let Some(key) = latest
+            .iter()
+            .find(|m| m.change.family == implied.family)
+            .and_then(|m| m.key.as_deref())
+        else {
+            continue;
+        };
+        let phrase = crate::tuning::field_phrase(key);
+        // The headline now carries the value; the relative phrasing from
+        // blind-mode reconciliation becomes redundant.
+        r.advice = r
+            .advice
+            .replace(&format!(" (go {delta:+.1} slider units from here)"), "");
+        r.suggestion = match base.and_then(|b| b.values.get(key)?.parse::<f32>().ok()) {
+            Some(cur) => {
+                let mut target = cur + delta;
+                if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
+                    target = target.clamp(lim.0, lim.1);
+                }
+                Some(format!(
+                    "{phrase}: {}",
+                    crate::tuning::display_value(key, &round(target).to_string(), &session.facts),
+                ))
+            }
+            None => Some(format!(
+                "{phrase}: {}{}",
+                if delta > 0.0 { "+" } else { "" },
+                crate::tuning::display_value(key, &round(delta).to_string(), &session.facts),
+            )),
+        };
     }
 
     Ok(AdviseView {
@@ -734,6 +767,7 @@ mod tests {
             advice: "reduce front roll stiffness".into(),
             evidence: vec![],
             confidence: Confidence::High,
+            suggestion: None,
             implied: Some(journal::Change {
                 family: journal::Family::FrontRoll,
                 softer: true,

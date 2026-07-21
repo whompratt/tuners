@@ -79,6 +79,10 @@ impl Confidence {
 #[derive(Debug)]
 pub struct Recommendation {
     pub area: &'static str,
+    /// The concrete setting to try, shown as the headline when resolvable:
+    /// "front arb: 17.5" (absolute, setup on file) or "front arb: +0.5"
+    /// (delta, blind mode). Filled by the advise layer.
+    pub suggestion: Option<String>,
     pub advice: String,
     pub evidence: Vec<String>,
     pub confidence: Confidence,
@@ -191,6 +195,7 @@ fn balance_rule(
         advice: advice.into(),
         evidence,
         confidence,
+        suggestion: None,
         implied: Some(Change {
             family: if understeer { Family::FrontRoll } else { Family::RearRoll },
             softer: true,
@@ -240,6 +245,7 @@ fn aero_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             if understeer { "understeer" } else { "oversteer" },
         )],
         confidence: if overall.surface_loose { Confidence::Low } else { Confidence::Medium },
+        suggestion: None,
         implied: Some(Change {
             family: if understeer { Family::FrontAero } else { Family::RearAero },
             softer: false,
@@ -297,6 +303,7 @@ fn power_balance_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         advice,
         evidence,
         confidence: Confidence::Medium,
+        suggestion: None,
         implied: Some(Change { family: Family::DiffAccel, softer: true, magnitude: None }),
     });
 }
@@ -338,7 +345,7 @@ fn tire_pressure_rule(
                 "heat is partly scrub from the balance issue above — fix balance first".into(),
             );
         }
-        recs.push(Recommendation { area: "tires", advice, evidence, confidence, implied: None });
+        recs.push(Recommendation { area: "tires", suggestion: None, advice, evidence, confidence, implied: None });
     }
 }
 
@@ -364,6 +371,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             crate::packet::drivetrain_name(overall.drivetrain_type),
         )],
         confidence: if spin >= WHEELSPIN_HIGH { Confidence::High } else { Confidence::Medium },
+        suggestion: None,
         implied: Some(Change { family: Family::DiffAccel, softer: true, magnitude: None }),
     });
 }
@@ -387,6 +395,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 .into(),
             evidence,
             confidence: Confidence::Medium,
+            suggestion: None,
             implied: Some(Change { family: Family::Gearing, softer: true, magnitude: None }),
         });
         return;
@@ -420,6 +429,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 top_time * 100.0,
             )],
             confidence: Confidence::Medium,
+            suggestion: None,
             implied: Some(Change { family: Family::Gearing, softer: false, magnitude: None }),
         });
     }
@@ -443,6 +453,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                     bottomed * 100.0
                 )],
                 confidence: Confidence::Medium,
+                suggestion: None,
                 implied: None,
             });
         }
@@ -459,6 +470,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                     topped * 100.0
                 )],
                 confidence: Confidence::Low,
+                suggestion: None,
                 implied: None,
             });
         }
@@ -501,6 +513,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 ),
                 evidence,
                 confidence: Confidence::High,
+                suggestion: None,
                 implied: None,
             });
         } else if rev >= under_rev && topped >= under_topped {
@@ -519,6 +532,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                     format!("{axle} at full extension {:.1}% of the stint", topped * 100.0),
                 ],
                 confidence: if loose { Confidence::Medium } else { Confidence::High },
+                suggestion: None,
                 implied: None,
             });
         } else if !loose && rev > 0.0 && rev <= OVERDAMPED_REV_TARMAC {
@@ -534,6 +548,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                      baseline {baseline})"
                 )],
                 confidence: Confidence::Low,
+                suggestion: None,
                 implied: None,
             });
         }

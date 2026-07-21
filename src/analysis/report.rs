@@ -58,7 +58,10 @@ pub fn render_recommendations(recs: &[super::recommend::Recommendation]) -> Stri
         return out;
     }
     for r in recs {
-        writeln!(out, "[{}] {}: {}", r.confidence.label(), r.area, r.advice).unwrap();
+        match &r.suggestion {
+            Some(sg) => writeln!(out, "[{}] {} — {}", r.confidence.label(), sg, r.advice).unwrap(),
+            None => writeln!(out, "[{}] {}: {}", r.confidence.label(), r.area, r.advice).unwrap(),
+        }
         for e in &r.evidence {
             writeln!(out, "    · {e}").unwrap();
         }

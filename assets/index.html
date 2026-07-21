@@ -1091,7 +1091,7 @@ async function loadAdvice() {
   html += `<div style="margin-top:12px;font-size:13px;color:var(--muted)">advice for ${a.adviceFor.split('/').pop()}:</div>`;
   html += a.recommendations.length ? a.recommendations.map(r =>
     `<div class="adv-rec"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +
-    `<b>${r.area}</b>: ${r.advice}` +
+    (r.suggestion ? `<b>${r.suggestion}</b> — ${r.advice}` : `<b>${r.area}</b>: ${r.advice}`) +
     `<div class="adv-ev">${r.evidence.map(e => `· ${e}`).join('<br>')}</div></div>`
   ).join('') : '<div class="adv-rec">no recommendations — nothing in this stint stood out</div>';
   body.innerHTML = html;
