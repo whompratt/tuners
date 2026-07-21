@@ -528,11 +528,13 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         )
     });
     format!(
-        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"landscapes\":[{}],\"inProgress\":{},\"recommendations\":[{}],\"currentTune\":[{}]}}",
+        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"landscapes\":[{}],\"driftFloor\":{},\"inProgress\":{},\"recommendations\":[{}],\"currentTune\":[{}]}}",
         v.journal.as_deref().map_or("null".into(), json_str),
         json_str(&v.advice_for),
         steps.join(","),
         landscapes.join(","),
+        v.drift_floor
+            .map_or("null".into(), |(n, f)| format!("[{n},{f:.3}]")),
         v.in_progress.as_deref().map_or("null".into(), json_str),
         recs.join(","),
         tune.join(","),

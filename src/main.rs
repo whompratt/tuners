@@ -285,6 +285,13 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             .collect();
         println!("\ncurrent tune (tune-session.txt): {}", vals.join(", "));
     }
+    if let Some((pairs, floor)) = view.drift_floor {
+        println!(
+            "  measured drift floor: ±{floor:.2}s across {pairs} same-setup pair{} — \
+             single-comparison margins below this are noise",
+            if pairs == 1 { "" } else { "s" },
+        );
+    }
     let mapped: Vec<_> = view.landscapes.iter().filter(|l| l.nodes.len() >= 2).collect();
     if !mapped.is_empty() {
         println!("\nmeasured landscapes (cumulative ideal delta vs first tried; lower = faster):");

@@ -122,6 +122,9 @@ pub struct AdviseView {
     pub in_progress: Option<String>,
     /// Per-family measured landscapes (see LandscapeView).
     pub landscapes: Vec<LandscapeView>,
+    /// Largest |ideal delta| measured between SAME-setup stints — the
+    /// campaign's own noise floor. (count of same-setup pairs, floor s).
+    pub drift_floor: Option<(usize, f32)>,
     /// Stint the recommendations are for.
     pub advice_for: String,
     pub recommendations: Vec<analysis::recommend::Recommendation>,
@@ -392,7 +395,33 @@ pub fn advise(
 ) -> Result<AdviseView, String> {
     let session = TuningSession::load(session_path);
     let text = std::fs::read_to_string(journal_path).unwrap_or_default();
-    let entries = journal::parse_journal(&text);
+    let mut entries = journal::parse_journal(&text);
+
+    // Stints of the session car recorded AFTER the last journal entry join
+    // the trajectory as implicit no-change steps. Journal lines are written
+    // on tune saves, so a stint driven without touching anything — the
+    // same-setup repeat that measures pure drift — would otherwise be
+    // invisible to advice.
+    if let Some(last_stamp) = entries.last().and_then(|e| stint_stamp(&e.path)) {
+        let last_stamp = last_stamp.to_string();
+        let mut extra: Vec<String> = std::fs::read_dir(stints_dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let path = e.path();
+                (path.extension().is_some_and(|x| x == "ftel")
+                    && stint_stamp(&path.to_string_lossy())
+                        .is_some_and(|s| s > last_stamp.as_str())
+                    && session.car.is_some()
+                    && crate::serve::stint_car(&path) == session.car)
+                    .then(|| format!("{stints_dir}/{}", e.file_name().to_string_lossy()))
+            })
+            .collect();
+        extra.sort();
+        entries.extend(extra.into_iter().map(|path| journal::Entry { path, note: None }));
+    }
 
     if entries.is_empty() {
         // No journal yet: blind advice on the session car's latest stint.
@@ -409,6 +438,7 @@ pub fn advise(
             aba: None,
             in_progress: None,
             landscapes: Vec::new(),
+            drift_floor: None,
             advice_for: path,
             recommendations: recs,
             current_tune,
@@ -513,6 +543,27 @@ pub fn advise(
             session.revisions.iter().rev().find(|r| r.stamp.as_str() < stamp)
         })
         .collect();
+
+    // The campaign's own noise floor: |ideal delta| across SAME-setup stint
+    // pairs is pure driver/track drift. Verdicts with margins below the
+    // worst observed drift are provisional, and advice must say so.
+    let mut drift_obs: Vec<f32> = Vec::new();
+    for j in 1..loaded.len() {
+        for i in 0..j {
+            let (Some(si), Some(sj)) = (setups[i], setups[j]) else { continue };
+            if !crate::tuning::diff_keys(si, sj).is_empty() {
+                continue;
+            }
+            if loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2 {
+                continue;
+            }
+            if let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) {
+                drift_obs.push(cmp.ideal_delta_s.abs());
+            }
+        }
+    }
+    let drift_floor = (!drift_obs.is_empty())
+        .then(|| (drift_obs.len(), drift_obs.iter().fold(0.0f32, |a, b| a.max(*b))));
 
     // Per-row honest verdicts: each step compared against its minimal-diff
     // ancestor, shown only when that ancestor is NOT the previous step (the
@@ -1060,6 +1111,36 @@ pub fn advise(
         });
     }
 
+    // Drift-aware honesty: a High-confidence conclusion resting on a single
+    // comparison whose margin is under the measured same-setup drift gets
+    // capped and labeled. Multi-point landscapes are less exposed (averaged
+    // nodes), so curve-based Medium suggestions stand with a note.
+    if let Some((pairs, floor)) = drift_floor {
+        for r in recs.iter_mut() {
+            let Some(implied) = r.implied else { continue };
+            let Some(m) = latest.iter().find(|m| m.change.family == implied.family) else {
+                continue;
+            };
+            let margin = match m.outcome {
+                journal::Outcome::Improved(d)
+                | journal::Outcome::Worsened(d)
+                | journal::Outcome::Unclear(d) => d.abs(),
+                journal::Outcome::NotComparable => continue,
+            };
+            if margin < floor {
+                r.evidence.push(format!(
+                    "provisional: the deciding margin ({margin:.2}s) is under the \
+                     measured same-setup drift (±{floor:.2}s over {pairs} repeat \
+                     pair{}) — corroborate before trusting it",
+                    if pairs == 1 { "" } else { "s" },
+                ));
+                if r.confidence == analysis::recommend::Confidence::High {
+                    r.confidence = analysis::recommend::Confidence::Medium;
+                }
+            }
+        }
+    }
+
     // History-only recs arrive unsorted; keep most-confident-first for display.
     recs.sort_by_key(|r| std::cmp::Reverse(r.confidence));
     // Cite tune absolutes only when the journal's stints are the session
@@ -1128,6 +1209,7 @@ pub fn advise(
         aba,
         in_progress,
         landscapes,
+        drift_floor,
         advice_for: last_entry.path.clone(),
         recommendations: recs,
         current_tune,
