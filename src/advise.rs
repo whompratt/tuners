@@ -567,6 +567,18 @@ pub fn advise(
         })
         .collect();
 
+    // "suspect" in a journal note is the driver's own verdict on that stint
+    // (unfamiliar car, chaotic drive, traffic): every measurement touching it
+    // is treated as weak — kept visible, never trusted alone.
+    let suspect: Vec<bool> = loaded
+        .iter()
+        .map(|(e, _, _)| {
+            e.note
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase().contains("suspect"))
+        })
+        .collect();
+
     // The campaign's own noise floor: |ideal delta| across SAME-setup stint
     // pairs is pure driver/track drift. Verdicts with margins below the
     // worst observed drift are provisional, and advice must say so.
@@ -651,8 +663,9 @@ pub fn advise(
             areas.sort();
             areas.dedup();
             let changes = crate::tuning::diff_note(setups[i].unwrap(), last_setup);
-            let weak =
-                loaded[i].2.laps.len().min(loaded[n - 1].2.laps.len()) < 2;
+            let weak = loaded[i].2.laps.len().min(loaded[n - 1].2.laps.len()) < 2
+                || suspect[i]
+                || suspect[n - 1];
             let outcome = journal::judge(cmp.ideal_delta_s);
             let single_family =
                 (areas.len() == 1).then(|| journal::family_for_area(areas[0])).flatten();
@@ -781,7 +794,9 @@ pub fn advise(
                     j + 1
                 ),
                 attributed: None,
-                weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2,
+                weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
+                    || suspect[i]
+                    || suspect[j],
                 i,
                 j,
                 direct: true,
@@ -800,7 +815,7 @@ pub fn advise(
                 outcome: journal::judge(delta),
                 desc: note.clone(),
                 attributed: None,
-                weak: weaks[j],
+                weak: weaks[j] || suspect[j - 1] || suspect[j],
                 i: j - 1,
                 j,
                 direct: false,
@@ -841,7 +856,7 @@ pub fn advise(
                     outcome: journal::judge(channel_delta),
                     desc: clause_text.to_string(),
                     attributed: Some(evidence.clone()),
-                    weak: weaks[j],
+                    weak: weaks[j] || suspect[j - 1] || suspect[j],
                     i: j - 1,
                     j,
                     direct: false,
