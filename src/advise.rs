@@ -311,6 +311,35 @@ fn quad_fit(pts: &[(f32, f32)]) -> Option<(f64, f64, f64)> {
     Some((a, b, c))
 }
 
+/// Where to probe next to extend a mapped landscape: past the best tried
+/// value, away from the worse side, by a quarter of the mapped span —
+/// bracketing the optimum from the good side. None when the landscape is
+/// flat vs the noise floor, the best value is interior (the curve fit owns
+/// that case), or the slider's range allows no new point.
+fn probe_value(nodes: &[(f32, f32, usize)], lim: Option<(f32, f32)>) -> Option<f32> {
+    let (first, last) = (nodes.first()?, nodes.last()?);
+    let (lo, hi) = nodes
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), n| (lo.min(n.1), hi.max(n.1)));
+    if nodes.len() < 2 || hi - lo < 0.10 {
+        return None;
+    }
+    let best = nodes.iter().min_by(|a, b| a.1.total_cmp(&b.1))?;
+    let dir = if (best.0 - first.0).abs() < 1e-3 {
+        -1.0
+    } else if (best.0 - last.0).abs() < 1e-3 {
+        1.0
+    } else {
+        return None; // interior best: the fit's vertex is the suggestion
+    };
+    let mut v = best.0 + dir * (last.0 - first.0) * 0.25;
+    if let Some((mn, mx)) = lim {
+        v = v.clamp(mn, mx);
+    }
+    let v = (v * 10.0).round() / 10.0;
+    ((v - best.0).abs() > 1e-3).then_some(v)
+}
+
 /// The tune field a note clause is about, matched by field phrase (auto-
 /// generated notes use these phrases verbatim). Longest match wins so
 /// "front tire pressure" is not mistaken for a shorter overlapping phrase.
@@ -974,6 +1003,46 @@ pub fn advise(
                 }
             }
         }
+        // No interior optimum mapped: the workflow's data ask — one stint at
+        // a specific value past the good edge extends the landscape where it
+        // matters. Not an optimization claim; explicitly a probe.
+        if vertex_out.is_none()
+            && let Some(key) = key.as_deref()
+            && let Some(v) = probe_value(&nodes, crate::tuning::limit_of(&session.facts, key))
+        {
+            let phrase = crate::tuning::field_phrase(key);
+            let best = nodes
+                .iter()
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|n| n.0)
+                .unwrap_or(v);
+            let mapped: Vec<String> = nodes
+                .iter()
+                .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
+                .collect();
+            recs.push(analysis::recommend::Recommendation {
+                area: "probe",
+                suggestion: Some(format!(
+                    "{phrase}: {}",
+                    crate::tuning::display_value(key, &v.to_string(), &session.facts),
+                )),
+                advice: format!(
+                    "data probe: the mapped response for {phrase} still improves \
+                     at its edge — one stint at this value brackets the optimum \
+                     from the good side"
+                ),
+                evidence: vec![format!(
+                    "mapped so far: {} (cumulative ideal delta; lower = faster)",
+                    mapped.join(", "),
+                )],
+                confidence: analysis::recommend::Confidence::Low,
+                implied: Some(journal::Change {
+                    family,
+                    softer: v < best,
+                    magnitude: None,
+                }),
+            });
+        }
         landscapes.push(LandscapeView {
             area: journal::family_area(family),
             phrase: key
@@ -1168,6 +1237,32 @@ mod tests {
             assert!(!(10.0..=14.0).contains(&v) || a <= 0.0, "no interior vertex: a={a} v={v}");
         }
         assert!(quad_fit(&[(10.0, 0.0), (12.0, -1.0)]).is_none(), "2 points fit nothing");
+    }
+
+    /// Probes extend the landscape past the good edge; interior optima and
+    /// flat landscapes ask for nothing.
+    #[test]
+    fn probe_extends_the_mapped_edge() {
+        // Better at the low end: probe below it by a quarter span.
+        let nodes = [(29.0, -0.21, 1), (100.0, 0.22, 1)];
+        let v = probe_value(&nodes, Some((0.0, 100.0))).unwrap();
+        assert!((v - 11.2).abs() < 0.11, "{v}");
+        // Clamped by the slider range but still a new point.
+        let nodes = [(12.0, 0.0, 1), (100.0, 0.63, 1)];
+        assert_eq!(probe_value(&nodes, Some((0.0, 100.0))), Some(0.0));
+        // Better at the high end: probe above.
+        let nodes = [(20.0, 0.31, 1), (52.0, 0.0, 1)];
+        let v = probe_value(&nodes, Some((0.0, 100.0))).unwrap();
+        assert!((v - 60.0).abs() < 0.11, "{v}");
+        // Interior best: the fit's vertex owns it.
+        let nodes = [(17.0, -0.16, 1), (18.0, -0.49, 1), (20.7, 0.0, 1)];
+        assert_eq!(probe_value(&nodes, None), None);
+        // Flat landscape: nothing worth a stint.
+        let nodes = [(3.35, -0.04, 1), (3.63, 0.03, 1)];
+        assert_eq!(probe_value(&nodes, None), None);
+        // Best pinned at the slider bound: no new point exists.
+        let nodes = [(0.0, -0.3, 1), (50.0, 0.2, 1)];
+        assert_eq!(probe_value(&nodes, Some((0.0, 100.0))), None);
     }
 
     #[test]
