@@ -315,19 +315,18 @@ pub fn advise(
     let positions = journal::track_positions(&changes);
 
     let mut steps = Vec::new();
-    let mut last_step: Option<(journal::Change, journal::Outcome, &str)> = None;
-    // Compound final step: (attribution, total ideal delta, note) for
-    // per-clause channel reconciliation below.
-    let mut last_compound: Option<(analysis::attribution::Attribution, f32, &str)> = None;
-    // Either side of the last comparison ran a single flying lap: the ideal
-    // has no corroboration, so outcome-driven advice must not act on it.
-    let mut last_weak = false;
-    // Per-step ideal deltas, for the A-B-A decomposition below.
+    // Per-step comparison products vs the previous step, for the measurement
+    // harvest and A-B-A decomposition below. weak = either side ran a single
+    // flying lap (no corroboration).
     let mut deltas: Vec<Option<f32>> = Vec::new();
+    let mut attrs: Vec<Option<analysis::attribution::Attribution>> = Vec::new();
+    let mut weaks: Vec<bool> = Vec::new();
     for i in 0..loaded.len() {
         let (entry, stint, profile) = &loaded[i];
         let mut split = None;
         deltas.push(None);
+        attrs.push(None);
+        weaks.push(false);
         let outcome = if i == 0 {
             None
         } else {
@@ -337,25 +336,14 @@ pub fn advise(
                     let attr = analysis::attribution::split_delta(prev, &cmp.bin_delta_s);
                     split = Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s));
                     *deltas.last_mut().unwrap() = Some(cmp.ideal_delta_s);
-                    let outcome = journal::judge(cmp.ideal_delta_s);
-                    let word = match outcome {
+                    *attrs.last_mut().unwrap() = Some(attr);
+                    *weaks.last_mut().unwrap() =
+                        prev.laps.len().min(profile.laps.len()) < 2;
+                    let word = match journal::judge(cmp.ideal_delta_s) {
                         journal::Outcome::Improved(_) => "improved",
                         journal::Outcome::Worsened(_) => "WORSE",
                         _ => "inconclusive",
                     };
-                    // Reconciliation uses THE last step only. Single-family
-                    // steps reconcile on the measured outcome; compound steps
-                    // reconcile per clause on channel-attributed deltas below.
-                    if i == loaded.len() - 1
-                        && let Some(note) = &entry.note
-                    {
-                        last_weak = prev.laps.len().min(profile.laps.len()) < 2;
-                        if let Some(change) = journal::parse_change(note) {
-                            last_step = Some((change, outcome, note));
-                        } else if !journal::parse_clauses(note).is_empty() {
-                            last_compound = Some((attr, cmp.ideal_delta_s, note));
-                        }
-                    }
                     Some(Ok((word, cmp.ideal_delta_s, prev.laps.len() != profile.laps.len())))
                 }
                 Err(e) => Some(Err(e)),
@@ -485,73 +473,173 @@ pub fn advise(
         })
         .flatten();
 
-    let (last_entry, last_stint, _) = loaded.last().unwrap();
-    let mut recs = blind_recommendations(last_stint, &last_entry.path)?;
-    let anchor_drift = anchor.as_ref().is_some_and(|a| a.areas.is_empty());
-    if let Some((change, outcome, note, weak)) = &anchor_change {
-        // Setup-state comparison: a direct single-area A/B against the anchor
-        // stint — supersedes note-based reconciliation entirely.
-        if !journal::reconcile(&mut recs, *change, *outcome, note, None, *weak)
-            && let Some(rec) = journal::history_revert(*change, *outcome, note, None, *weak)
-        {
-            recs.push(rec);
-        }
-        if let Some(a) = &anchor {
-            let (e, x, st) = a.split;
-            for r in recs.iter_mut().filter(|r| {
-                r.implied.is_some_and(|i| i.family == change.family)
-            }) {
-                r.evidence.push(format!(
-                    "where the time moved vs step {}: corner entry {e:+.2}s / \
-                     exit {x:+.2}s / straights {st:+.2}s",
-                    a.vs_step,
-                ));
-            }
-        }
-    } else if anchor_drift {
-        // Same setup as the anchor: the measured delta is pure drift; there is
-        // no change to charge it to.
-    } else if let Some((change, outcome, note)) = last_step {
-        if !journal::reconcile(&mut recs, change, outcome, note, None, last_weak)
-            && let Some(rec) = journal::history_revert(change, outcome, note, None, last_weak)
-        {
-            recs.push(rec);
-        }
-    } else if let Some((attr, total, note)) = last_compound {
-        // Channel attribution: chassis clauses are judged on the cornering
-        // share of the delta, gearing clauses on the straight share.
-        let evidence = format!(
-            "outcome attributed from a compound step (\"{note}\"): corner entry \
-             {:+.2}s / exit {:+.2}s / straights {:+.2}s of {total:+.2}s total \
-             ({:.0}% of lap time is cornering) — inferred from where the time \
-             moved, not measured in isolation",
-            attr.entry_delta_s,
-            attr.exit_delta_s,
-            attr.straight_delta_s,
-            attr.corner_share * 100.0,
-        );
-        let mut seen = Vec::new();
-        for clause in journal::parse_clauses(note) {
-            if seen.contains(&clause.family) {
+    // ------ campaign measurements: every stint pair is evidence ------
+    // DIRECT: ordered pairs whose setups differ in exactly one area — a clean
+    // A/B for that family regardless of how many steps lie between. NOTE-
+    // BASED: adjacent steps via their journal note; single-family notes
+    // measure on the total delta, compound notes get channel-attributed per
+    // family (capped Medium downstream). Reconciliation then uses each
+    // family's LATEST measurement, so knowledge from earlier steps keeps
+    // tempering advice instead of evaporating when the topic changes.
+    struct Measurement {
+        change: journal::Change,
+        outcome: journal::Outcome,
+        desc: String,
+        attributed: Option<String>,
+        weak: bool,
+        i: usize,
+        j: usize,
+        direct: bool,
+    }
+    let mut measurements: Vec<Measurement> = Vec::new();
+    for j in 1..n {
+        for i in 0..j {
+            let (Some(si), Some(sj)) = (setups[i], setups[j]) else { continue };
+            let keys = crate::tuning::diff_keys(si, sj);
+            if keys.is_empty() {
                 continue;
             }
-            seen.push(clause.family);
-            // Each family is judged on the road its fingerprint lives on.
-            // Calibrated 2026-07-21: brake bias showed cleanly on entry even
-            // inside a compound step; diff lock (accel AND decel) measured
-            // SPREAD across phases, so both judge on the corner total.
-            let channel_delta = match clause.family {
-                journal::Family::Gearing => attr.straight_delta_s,
-                journal::Family::Brakes => attr.entry_delta_s,
-                _ => attr.corner_delta_s,
+            let mut areas: Vec<&str> =
+                keys.iter().map(|k| crate::tuning::field_area(k)).collect();
+            areas.sort();
+            areas.dedup();
+            let [area] = areas[..] else { continue };
+            let Some(family) = journal::family_for_area(area) else { continue };
+            let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else {
+                continue;
             };
-            let outcome = journal::judge(channel_delta);
-            if !journal::reconcile(&mut recs, clause, outcome, note, Some(&evidence), last_weak)
-                && let Some(rec) =
-                    journal::history_revert(clause, outcome, note, Some(&evidence), last_weak)
-            {
-                recs.push(rec);
+            let vals: Vec<f32> = keys
+                .iter()
+                .filter_map(|k| {
+                    Some(sj.values.get(k)?.parse::<f32>().ok()?
+                        - si.values.get(k)?.parse::<f32>().ok()?)
+                })
+                .collect();
+            measurements.push(Measurement {
+                change: journal::Change {
+                    family,
+                    softer: vals.iter().sum::<f32>() < 0.0,
+                    magnitude: (vals.len() == 1).then(|| vals[0]),
+                },
+                outcome: journal::judge(cmp.ideal_delta_s),
+                desc: format!(
+                    "{} (steps {}→{})",
+                    crate::tuning::diff_note(si, sj),
+                    i + 1,
+                    j + 1
+                ),
+                attributed: None,
+                weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2,
+                i,
+                j,
+                direct: true,
+            });
+        }
+    }
+    for j in 1..n {
+        let Some(note) = &loaded[j].0.note else { continue };
+        let (Some(delta), Some(attr)) = (deltas[j], attrs[j]) else { continue };
+        if let Some(change) = journal::parse_change(note) {
+            measurements.push(Measurement {
+                change,
+                outcome: journal::judge(delta),
+                desc: note.clone(),
+                attributed: None,
+                weak: weaks[j],
+                i: j - 1,
+                j,
+                direct: false,
+            });
+        } else {
+            let evidence = format!(
+                "outcome attributed from a compound step (\"{note}\"): corner entry \
+                 {:+.2}s / exit {:+.2}s / straights {:+.2}s of {delta:+.2}s total \
+                 ({:.0}% of lap time is cornering) — inferred from where the time \
+                 moved, not measured in isolation",
+                attr.entry_delta_s,
+                attr.exit_delta_s,
+                attr.straight_delta_s,
+                attr.corner_share * 100.0,
+            );
+            let mut seen = Vec::new();
+            for clause in journal::parse_clauses(note) {
+                if seen.contains(&clause.family) {
+                    continue;
+                }
+                seen.push(clause.family);
+                // Judged on the road the family's fingerprint lives on.
+                // Calibrated 2026-07-21: brake bias shows cleanly on entry
+                // even inside a compound step; diff lock (accel AND decel)
+                // measured SPREAD across phases -> corner total.
+                let channel_delta = match clause.family {
+                    journal::Family::Gearing => attr.straight_delta_s,
+                    journal::Family::Brakes => attr.entry_delta_s,
+                    _ => attr.corner_delta_s,
+                };
+                measurements.push(Measurement {
+                    change: clause,
+                    outcome: journal::judge(channel_delta),
+                    desc: note.clone(),
+                    attributed: Some(evidence.clone()),
+                    weak: weaks[j],
+                    i: j - 1,
+                    j,
+                    direct: false,
+                });
             }
+        }
+    }
+    // Latest evidence per family: newest endpoint wins; a direct setup A/B
+    // beats a note-based reading of the same endpoint; nearest ancestor
+    // breaks remaining ties (least drift).
+    let mut latest: Vec<Measurement> = Vec::new();
+    for m in measurements {
+        match latest.iter_mut().find(|l| l.change.family == m.change.family) {
+            Some(l) => {
+                if (m.j, m.direct, m.i) > (l.j, l.direct, l.i) {
+                    *l = m;
+                }
+            }
+            None => latest.push(m),
+        }
+    }
+
+    let (last_entry, last_stint, _) = loaded.last().unwrap();
+    let mut recs = blind_recommendations(last_stint, &last_entry.path)?;
+    let mut matched_families: Vec<journal::Family> = Vec::new();
+    for m in &latest {
+        if journal::reconcile(
+            &mut recs,
+            m.change,
+            m.outcome,
+            &m.desc,
+            m.attributed.as_deref(),
+            m.weak,
+        ) {
+            matched_families.push(m.change.family);
+        }
+    }
+    // History-only reverts stay scoped to the LAST stint's own deviation from
+    // its anchor — a past experiment already reverted needs no advice.
+    if let Some((change, outcome, note, weak)) = &anchor_change
+        && !matched_families.contains(&change.family)
+        && let Some(rec) = journal::history_revert(*change, *outcome, note, None, *weak)
+    {
+        recs.push(rec);
+    }
+    if let Some((change, ..)) = &anchor_change
+        && let Some(a) = &anchor
+    {
+        let (e, x, st) = a.split;
+        for r in recs
+            .iter_mut()
+            .filter(|r| r.implied.is_some_and(|i| i.family == change.family))
+        {
+            r.evidence.push(format!(
+                "where the time moved vs step {}: corner entry {e:+.2}s / \
+                 exit {x:+.2}s / straights {st:+.2}s",
+                a.vs_step,
+            ));
         }
     }
     // History-only recs arrive unsorted; keep most-confident-first for display.
