@@ -1095,6 +1095,59 @@ pub fn advise(
                 }
             }
         }
+        // The best MEASURED node beats the current setting with no fitted
+        // optimum to point elsewhere: returning to a measured state outranks
+        // bisection between it and here. (The fit path owns interior optima.)
+        if vertex_out.is_none()
+            && let Some(key) = key.as_deref()
+            && let Some(cur) = setups
+                .last()
+                .copied()
+                .flatten()
+                .and_then(|b| b.values.get(key)?.parse::<f32>().ok())
+            && let Some(best) = nodes
+                .iter()
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .copied()
+            && let Some(cur_node) = nodes.iter().find(|n| (n.0 - cur).abs() < 1e-3)
+            && (best.0 - cur).abs() > 1e-3
+            && cur_node.1 - best.1 >= drift_floor.map_or(0.10, |(_, f)| f.max(0.10))
+        {
+            let phrase = crate::tuning::field_phrase(key);
+            let gap = cur_node.1 - best.1;
+            for r in recs
+                .iter_mut()
+                .filter(|r| r.implied.is_some_and(|i| i.family == family))
+            {
+                r.suggestion = Some(format!(
+                    "{phrase}: {}",
+                    crate::tuning::display_value(key, &best.0.to_string(), &session.facts),
+                ));
+                r.advice = format!(
+                    "return to the best measured setting: {phrase} {} beat the \
+                     current value by {gap:.2}s. An interior optimum may exist \
+                     between the two — a midpoint stint is the exploratory \
+                     alternative",
+                    best.0,
+                );
+                r.confidence = analysis::recommend::Confidence::Medium;
+                r.implied = Some(journal::Change {
+                    family,
+                    softer: best.0 < cur,
+                    magnitude: None,
+                });
+                r.evidence.push(format!(
+                    "measured landscape ({phrase}): {} (cumulative ideal delta; \
+                     lower = faster)",
+                    nodes
+                        .iter()
+                        .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ));
+            }
+        }
+
         // No interior optimum mapped: the workflow's data ask — one stint at
         // a specific value past the good edge extends the landscape where it
         // matters. Not an optimization claim; explicitly a probe.
