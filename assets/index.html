@@ -1068,7 +1068,11 @@ async function loadAdvice() {
         `<td class="num">${fmtLap(st.idealS)}</td><td>${bal}</td>` +
         `<td>${st.note || ''}</td>` +
         `<td class="num">${st.pos ? `${st.pos[0] > 0 ? '+' : ''}${st.pos[0]} / ${st.pos[1] > 0 ? '+' : ''}${st.pos[1]}` : ''}</td>` +
-        `<td>${outcome}</td></tr>`;
+        `<td>${outcome}</td>` +
+        `<td class="num">${st.split ? share(st.split[0]) : ''}</td>` +
+        `<td class="num">${st.split ? share(st.split[1]) : ''}</td>` +
+        `<td class="num">${st.split ? share(st.split[2]) : ''}</td>` +
+        `<td>${warn}</td></tr>`;
     });
     html += '</table>';
   }
