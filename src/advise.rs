@@ -393,7 +393,7 @@ pub fn advise(
     session_path: &Path,
     stints_dir: &str,
 ) -> Result<AdviseView, String> {
-    let session = TuningSession::load(session_path);
+    let mut session = TuningSession::load(session_path);
     let text = std::fs::read_to_string(journal_path).unwrap_or_default();
     let mut entries = journal::parse_journal(&text);
 
@@ -443,6 +443,29 @@ pub fn advise(
             recommendations: recs,
             current_tune,
         });
+    }
+
+    // A journal for another car (explicitly passed while a different session
+    // is active) resolves that car's ARCHIVED session file, so its setups,
+    // facts, and landscapes work instead of degrading to blind mode.
+    if let Some(first) = entries.first()
+        && let Ok(stint) = analysis::Stint::load(first.path.as_ref())
+    {
+        let journal_car = stint
+            .frames
+            .iter()
+            .find(|t| t.frame.car_ordinal != 0)
+            .map(|t| t.frame.car_ordinal);
+        if journal_car.is_some() && journal_car != session.car {
+            let per_car = crate::tuning::journal_path_for(
+                journal_car,
+                &session_path.to_string_lossy(),
+            );
+            let archived = TuningSession::load(per_car.as_ref());
+            if archived.car == journal_car {
+                session = archived;
+            }
+        }
     }
 
     // Load and profile every stint, in journal (chronological) order. The

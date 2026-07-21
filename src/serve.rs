@@ -291,10 +291,30 @@ fn session_post(
     path: &Path,
 ) -> (&'static str, &'static str, String) {
     let reset = params.iter().any(|(k, v)| k == "reset" && v == "1");
+    let posted_car: Option<i32> = params
+        .iter()
+        .find(|(k, _)| k == "car")
+        .and_then(|(_, v)| v.parse().ok());
+    let current = crate::tuning::TuningSession::load(path);
     let mut s = if reset {
         crate::tuning::TuningSession::default()
+    } else if posted_car.is_some() && current.car.is_some() && posted_car != current.car {
+        // Switching cars = switching SESSIONS: archive the active session to
+        // its per-car file (tune-session-<ordinal>.txt, same scheme as
+        // journals) and resume the new car's archived session if one exists.
+        // Nothing is lost — switching back restores the whole campaign.
+        let base = path.to_string_lossy();
+        let archive = crate::tuning::journal_path_for(current.car, &base);
+        let _ = current.save(archive.as_ref());
+        let resumed =
+            crate::tuning::TuningSession::load(crate::tuning::journal_path_for(posted_car, &base).as_ref());
+        if resumed.car == posted_car {
+            resumed
+        } else {
+            crate::tuning::TuningSession::default()
+        }
     } else {
-        crate::tuning::TuningSession::load(path)
+        current
     };
     for (k, v) in params {
         match k.as_str() {
@@ -784,6 +804,45 @@ pub fn stint_car(path: &Path) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    /// Switching the session car archives the active campaign to its per-car
+    /// file and restores it intact when switching back.
+    #[test]
+    fn car_switch_archives_and_restores_sessions() {
+        let dir =
+            std::env::temp_dir().join(format!("tuners-car-switch-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tune-session.txt");
+
+        // McLaren session with a revision on file.
+        let mut s = crate::tuning::TuningSession { car: Some(1314), ..Default::default() };
+        s.facts.insert("abs".into(), "on".into());
+        s.revisions.push(crate::tuning::Revision {
+            stamp: "20260721-000000".into(),
+            values: [("arb_f".to_string(), "18.5".to_string())].into_iter().collect(),
+        });
+        s.save(&path).unwrap();
+
+        // Switch to an RWD car: fresh session, McLaren archived.
+        super::session_post(&[("car".into(), "227".into())], &path);
+        let now = crate::tuning::TuningSession::load(&path);
+        assert_eq!(now.car, Some(227));
+        assert!(now.revisions.is_empty(), "fresh session for the new car");
+        let archived = crate::tuning::TuningSession::load(
+            crate::tuning::journal_path_for(Some(1314), &path.to_string_lossy()).as_ref(),
+        );
+        assert_eq!(archived.car, Some(1314));
+        assert_eq!(archived.revisions.len(), 1, "campaign archived intact");
+
+        // Switch back: the McLaren campaign is restored, revisions included.
+        super::session_post(&[("car".into(), "1314".into())], &path);
+        let restored = crate::tuning::TuningSession::load(&path);
+        assert_eq!(restored.car, Some(1314));
+        assert_eq!(restored.revisions.len(), 1);
+        assert_eq!(restored.facts.get("abs").map(String::as_str), Some("on"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]
