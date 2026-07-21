@@ -78,6 +78,37 @@ pub struct AnchorView {
     pub split: (f32, f32, f32),
 }
 
+/// One measured effect for a family: a stint pair whose setups isolate it
+/// (direct) or a channel-attributed note reading.
+pub struct MeasurementView {
+    pub from_step: usize,
+    pub to_step: usize,
+    pub desc: String,
+    pub delta_s: f32,
+    /// (entry, exit, straights) share of the step's delta, when known.
+    pub split: Option<(f32, f32, f32)>,
+    pub weak: bool,
+    pub direct: bool,
+}
+
+/// A family's measured landscape over one slider: every tried value with its
+/// cumulative delta, the fitted curve when trustworthy, and the raw
+/// measurements behind it. The data behind "view a change's effects
+/// historically".
+pub struct LandscapeView {
+    pub area: &'static str,
+    /// Slider label when the axis is a single known key, else the area.
+    pub phrase: String,
+    pub key: Option<String>,
+    /// (value, cumulative ideal delta s, samples), ascending by value.
+    pub nodes: Vec<(f32, f32, usize)>,
+    /// y = ax² + bx + c least-squares fit over the nodes (3+ nodes).
+    pub fit: Option<(f32, f32, f32)>,
+    /// Estimated optimum (interior fit vertex with meaningful spread).
+    pub vertex: Option<f32>,
+    pub measurements: Vec<MeasurementView>,
+}
+
 pub struct AdviseView {
     /// Journal file the trajectory came from; None = blind fallback (no journal).
     pub journal: Option<String>,
@@ -89,6 +120,8 @@ pub struct AdviseView {
     /// Journaled stint with no completed laps yet (still recording): excluded
     /// from the trajectory, advice targets the previous stint meanwhile.
     pub in_progress: Option<String>,
+    /// Per-family measured landscapes (see LandscapeView).
+    pub landscapes: Vec<LandscapeView>,
     /// Stint the recommendations are for.
     pub advice_for: String,
     pub recommendations: Vec<analysis::recommend::Recommendation>,
@@ -343,6 +376,7 @@ pub fn advise(
             anchor: None,
             aba: None,
             in_progress: None,
+            landscapes: Vec::new(),
             advice_for: path,
             recommendations: recs,
             current_tune,
@@ -593,6 +627,14 @@ pub fn advise(
         /// The single slider the measurement moved, when identifiable —
         /// lets advice resolve concrete target values.
         key: Option<String>,
+        /// (entry, exit, straights) split of the pair's delta.
+        split: Option<(f32, f32, f32)>,
+        /// Fit for response-curve building: direct pairs and single-family
+        /// notes always; attributed compound clauses only when every sibling
+        /// clause is gearing (judged on straights, orthogonal to the corner
+        /// share this clause is judged on). A corner-channel sibling would
+        /// contaminate the curve.
+        clean: bool,
     }
     let mut measurements: Vec<Measurement> = Vec::new();
     for j in 1..n {
@@ -611,6 +653,7 @@ pub fn advise(
             let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else {
                 continue;
             };
+            let mattr = analysis::attribution::split_delta(&loaded[i].2, &cmp.bin_delta_s);
             let vals: Vec<f32> = keys
                 .iter()
                 .filter_map(|k| {
@@ -637,6 +680,8 @@ pub fn advise(
                 j,
                 direct: true,
                 key: (vals.len() == 1).then(|| keys[0].clone()),
+                split: Some((mattr.entry_delta_s, mattr.exit_delta_s, mattr.straight_delta_s)),
+                clean: true,
             });
         }
     }
@@ -654,6 +699,8 @@ pub fn advise(
                 j,
                 direct: false,
                 key: key_from_phrase(note),
+                split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
+                clean: true,
             });
         } else {
             let evidence = format!(
@@ -666,6 +713,7 @@ pub fn advise(
                 attr.straight_delta_s,
                 attr.corner_share * 100.0,
             );
+            let clauses: Vec<journal::Change> = journal::parse_clauses(note);
             let mut seen = Vec::new();
             for clause_text in note.split(';').map(str::trim) {
                 let Some(clause) = journal::parse_change(clause_text) else { continue };
@@ -692,6 +740,21 @@ pub fn advise(
                     j,
                     direct: false,
                     key: key_from_phrase(clause_text),
+                    split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
+                    clean: clauses.iter().all(|c| {
+                        // Judged-channel overlap: gearing reads straights,
+                        // brakes reads entry, everything else the corner
+                        // total (entry included). Siblings on a disjoint
+                        // channel can't contaminate this clause's reading.
+                        let chan = |f: journal::Family| match f {
+                            journal::Family::Gearing => 0u8,   // straights
+                            journal::Family::Brakes => 1,      // entry
+                            _ => 2,                            // corner total
+                        };
+                        let (a, b) = (chan(clause.family), chan(c.family));
+                        c.family == clause.family
+                            || (a != b && !(a >= 1 && b >= 1)) // entry ⊂ corner
+                    }),
                 });
             }
         }
@@ -770,113 +833,159 @@ pub fn advise(
             ));
         }
     }
-    // ---- response curves: the campaign's measured landscape per slider ----
+    // ---- measured landscapes: the campaign's response per slider ----
     // Chained deltas from non-weak measurements build a cumulative curve over
-    // a slider's tried values. With 3+ points, meaningful spread, and an
-    // interior minimum, the quadratic fit's vertex is the estimated optimum —
-    // interpolation over the mapped landscape instead of last-step bisection
-    // ("decaying improvement" reads as a curve shape, not a single verdict).
+    // a slider's tried values ("decaying improvement" reads as a curve shape,
+    // not a single verdict). With 3+ points, meaningful spread, and an
+    // interior minimum, the fit's vertex becomes the suggestion —
+    // interpolation over the mapped landscape instead of last-step bisection.
+    // Every family's landscape is kept on the view for the history panel.
     let mut curve_fams: Vec<journal::Family> = Vec::new();
     for m in &measurements {
         if !curve_fams.contains(&m.change.family) {
             curve_fams.push(m.change.family);
         }
     }
+    let mut landscapes: Vec<LandscapeView> = Vec::new();
     for family in curve_fams {
-        let fam_ms: Vec<&Measurement> = measurements
+        let fam_all: Vec<&Measurement> = measurements
             .iter()
-            .filter(|m| m.change.family == family && !m.weak)
+            .filter(|m| m.change.family == family)
             .collect();
-        let mut axis: Vec<&str> = fam_ms.iter().filter_map(|m| m.key.as_deref()).collect();
-        axis.sort();
-        axis.dedup();
-        let [key] = axis[..] else { continue }; // mixed or unknown slider axis
-        let value_of = |idx: usize| -> Option<f32> {
-            setups.get(idx)?.as_ref()?.values.get(key)?.parse::<f32>().ok()
-        };
-        let mut edges: Vec<(usize, f32, f32, f32)> = fam_ms
+        let mviews: Vec<MeasurementView> = fam_all
             .iter()
-            .filter_map(|m| {
-                let d = match m.outcome {
+            .map(|m| MeasurementView {
+                from_step: m.i + 1,
+                to_step: m.j + 1,
+                desc: m.desc.clone(),
+                delta_s: match m.outcome {
                     journal::Outcome::Improved(d)
                     | journal::Outcome::Worsened(d)
                     | journal::Outcome::Unclear(d) => d,
-                    journal::Outcome::NotComparable => return None,
-                };
-                Some((m.j, value_of(m.i)?, value_of(m.j)?, d))
+                    journal::Outcome::NotComparable => 0.0,
+                },
+                split: m.split,
+                weak: m.weak,
+                direct: m.direct,
             })
             .collect();
-        edges.sort_by_key(|e| e.0);
-        // Accumulate cumulative deltas per tried value, averaging repeats.
+
+        // Axis: the single slider all non-weak keyed measurements agree on.
+        let mut axis: Vec<&str> = fam_all
+            .iter()
+            .filter(|m| !m.weak)
+            .filter_map(|m| m.key.as_deref())
+            .collect();
+        axis.sort();
+        axis.dedup();
+        let key: Option<String> = match axis[..] {
+            [k] => Some(k.to_string()),
+            _ => None,
+        };
+
         let mut nodes: Vec<(f32, f32, usize)> = Vec::new();
-        if let Some(&(_, v0, ..)) = edges.first() {
-            nodes.push((v0, 0.0, 1));
-        }
-        for (_, vf, vt, d) in edges {
-            let Some(cum_f) = nodes.iter().find(|n| (n.0 - vf).abs() < 1e-3).map(|n| n.1)
-            else {
-                continue;
+        if let Some(key) = key.as_deref() {
+            let value_of = |idx: usize| -> Option<f32> {
+                setups.get(idx)?.as_ref()?.values.get(key)?.parse::<f32>().ok()
             };
-            let cum_t = cum_f + d;
-            match nodes.iter_mut().find(|n| (n.0 - vt).abs() < 1e-3) {
-                Some(n) => {
-                    n.1 = (n.1 * n.2 as f32 + cum_t) / (n.2 + 1) as f32;
-                    n.2 += 1;
+            let mut edges: Vec<(usize, f32, f32, f32)> = fam_all
+                .iter()
+                .filter(|m| !m.weak && m.clean)
+                .filter_map(|m| {
+                    let d = match m.outcome {
+                        journal::Outcome::Improved(d)
+                        | journal::Outcome::Worsened(d)
+                        | journal::Outcome::Unclear(d) => d,
+                        journal::Outcome::NotComparable => return None,
+                    };
+                    Some((m.j, value_of(m.i)?, value_of(m.j)?, d))
+                })
+                .collect();
+            edges.sort_by_key(|e| e.0);
+            // Accumulate cumulative deltas per tried value, averaging repeats.
+            if let Some(&(_, v0, ..)) = edges.first() {
+                nodes.push((v0, 0.0, 1));
+            }
+            for (_, vf, vt, d) in edges {
+                let Some(cum_f) =
+                    nodes.iter().find(|n| (n.0 - vf).abs() < 1e-3).map(|n| n.1)
+                else {
+                    continue;
+                };
+                let cum_t = cum_f + d;
+                match nodes.iter_mut().find(|n| (n.0 - vt).abs() < 1e-3) {
+                    Some(n) => {
+                        n.1 = (n.1 * n.2 as f32 + cum_t) / (n.2 + 1) as f32;
+                        n.2 += 1;
+                    }
+                    None => nodes.push((vt, cum_t, 1)),
                 }
-                None => nodes.push((vt, cum_t, 1)),
+            }
+            nodes.sort_by(|x, y| x.0.total_cmp(&y.0));
+        }
+
+        let pts: Vec<(f32, f32)> = nodes.iter().map(|n| (n.0, n.1)).collect();
+        let fit = quad_fit(&pts).map(|(a, b, c)| (a as f32, b as f32, c as f32));
+        let (lo, hi) = nodes
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), n| (lo.min(n.1), hi.max(n.1)));
+        let mut vertex_out = None;
+        if let (Some((a, b, _)), Some(key)) = (fit, key.as_deref())
+            && a > 0.0
+            && nodes.len() >= 3
+            && hi - lo >= 0.10
+        {
+            let mut vertex = -b / (2.0 * a);
+            let (vmin, vmax) = (nodes.first().unwrap().0, nodes.last().unwrap().0);
+            if vertex >= vmin && vertex <= vmax {
+                if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
+                    vertex = vertex.clamp(lim.0, lim.1);
+                }
+                let vertex = (vertex * 10.0).round() / 10.0;
+                vertex_out = Some(vertex);
+                let phrase = crate::tuning::field_phrase(key);
+                let landscape: Vec<String> = nodes
+                    .iter()
+                    .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
+                    .collect();
+                for r in recs
+                    .iter_mut()
+                    .filter(|r| r.implied.is_some_and(|i| i.family == family))
+                {
+                    r.suggestion = Some(format!(
+                        "{phrase}: {}",
+                        crate::tuning::display_value(
+                            key,
+                            &vertex.to_string(),
+                            &session.facts
+                        ),
+                    ));
+                    r.advice = format!(
+                        "probe the estimated optimum: the campaign's measured \
+                         response for {phrase} bottoms out near {vertex} — \
+                         validate with an A/B"
+                    );
+                    r.confidence = analysis::recommend::Confidence::Medium;
+                    r.evidence.push(format!(
+                        "measured landscape ({phrase}): {} (cumulative ideal \
+                         delta vs first tried value; lower = faster)",
+                        landscape.join(", "),
+                    ));
+                }
             }
         }
-        if nodes.len() < 3 {
-            continue;
-        }
-        let (lo, hi) = nodes.iter().fold((f32::MAX, f32::MIN), |(lo, hi), n| {
-            (lo.min(n.1), hi.max(n.1))
+        landscapes.push(LandscapeView {
+            area: journal::family_area(family),
+            phrase: key
+                .as_deref()
+                .map(|k| crate::tuning::field_phrase(k).to_string())
+                .unwrap_or_else(|| journal::family_area(family).to_string()),
+            key,
+            nodes,
+            fit,
+            vertex: vertex_out,
+            measurements: mviews,
         });
-        if hi - lo < 0.10 {
-            continue; // landscape flat vs the outcome noise floor
-        }
-        let pts: Vec<(f32, f32)> = nodes.iter().map(|n| (n.0, n.1)).collect();
-        let Some((a, b, _)) = quad_fit(&pts) else { continue };
-        if a <= 0.0 {
-            continue; // no interior minimum measured
-        }
-        let mut vertex = (-b / (2.0 * a)) as f32;
-        let (vmin, vmax) = nodes.iter().fold((f32::MAX, f32::MIN), |(mn, mx), n| {
-            (mn.min(n.0), mx.max(n.0))
-        });
-        if vertex < vmin || vertex > vmax {
-            continue; // extrapolation — leave step-based advice in charge
-        }
-        if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
-            vertex = vertex.clamp(lim.0, lim.1);
-        }
-        let vertex = (vertex * 10.0).round() / 10.0;
-        let phrase = crate::tuning::field_phrase(key);
-        let mut sorted = nodes.clone();
-        sorted.sort_by(|x, y| x.0.total_cmp(&y.0));
-        let landscape: Vec<String> = sorted
-            .iter()
-            .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
-            .collect();
-        for r in recs
-            .iter_mut()
-            .filter(|r| r.implied.is_some_and(|i| i.family == family))
-        {
-            r.suggestion = Some(format!(
-                "{phrase}: {}",
-                crate::tuning::display_value(key, &vertex.to_string(), &session.facts),
-            ));
-            r.advice = format!(
-                "probe the estimated optimum: the campaign's measured response for \
-                 {phrase} bottoms out near {vertex} — validate with an A/B"
-            );
-            r.confidence = analysis::recommend::Confidence::Medium;
-            r.evidence.push(format!(
-                "measured landscape ({phrase}): {} (cumulative ideal delta vs \
-                 first tried value; lower = faster)",
-                landscape.join(", "),
-            ));
-        }
     }
 
     // History-only recs arrive unsorted; keep most-confident-first for display.
@@ -946,6 +1055,7 @@ pub fn advise(
         anchor,
         aba,
         in_progress,
+        landscapes,
         advice_for: last_entry.path.clone(),
         recommendations: recs,
         current_tune,

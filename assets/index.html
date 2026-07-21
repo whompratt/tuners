@@ -1101,6 +1101,15 @@ async function loadAdvice() {
       `A-B-A on ${a.aba.families}: drift-corrected cost ${sgn(a.aba.effectS)} ideal · ` +
       `drift ${sgn(a.aba.driftS)}/stint (outcome margins near that drift are noise)</div>`;
   }
+  if (a.landscapes && a.landscapes.length) {
+    const opts = a.landscapes.map((l, i) =>
+      `<option value="${i}">${l.phrase}${l.vertex != null ? ` (optimum ≈ ${l.vertex})` : ''} — ${l.measurements.length} measurement${l.measurements.length === 1 ? '' : 's'}</option>`
+    ).join('');
+    html += `<div style="margin-top:14px;font-size:13px;color:var(--muted)">setup history: ` +
+      `<select id="hist-sel">${opts}</select></div>` +
+      `<canvas id="hist-chart" style="width:100%;max-width:720px;height:170px;display:block;margin-top:6px"></canvas>` +
+      `<div id="hist-table" style="margin-top:4px"></div>`;
+  }
   html += `<div style="margin-top:12px;font-size:13px;color:var(--muted)">advice for ${a.adviceFor.split('/').pop()}:</div>`;
   html += a.recommendations.length ? a.recommendations.map(r =>
     `<div class="adv-rec"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +
@@ -1108,6 +1117,10 @@ async function loadAdvice() {
     `<div class="adv-ev">${r.evidence.map(e => `· ${e}`).join('<br>')}</div></div>`
   ).join('') : '<div class="adv-rec">no recommendations — nothing in this stint stood out</div>';
   body.innerHTML = html;
+  if ($('hist-sel')) {
+    $('hist-sel').onchange = () => drawHistory(a.landscapes);
+    drawHistory(a.landscapes);
+  }
   body.querySelectorAll('a[data-stint]').forEach(link => {
     link.onclick = ev => {
       ev.preventDefault();
@@ -1116,6 +1129,71 @@ async function loadAdvice() {
       if (el) show(file, el);
     };
   });
+}
+
+// The selected family's measured landscape: tried values vs cumulative
+// delta (valley shape: down = faster), fitted curve, estimated optimum,
+// and the raw measurements behind it.
+function drawHistory(landscapes) {
+  const sel = $('hist-sel');
+  const l = landscapes[+sel.value];
+  if (!l) return;
+  const sgn = v => `${v > 0 ? '+' : ''}${v.toFixed(2)}s`;
+  const dcol = v => v > 0.02 ? '#e66767' : v < -0.02 ? '#199e70' : 'var(--muted)';
+  $('hist-table').innerHTML = '<table class="adv-table"><tr><th>steps</th><th>change</th>' +
+    '<th>Δ ideal</th><th>entry</th><th>exit</th><th>straights</th><th></th></tr>' +
+    l.measurements.map(m =>
+      `<tr><td class="num">${m.fromStep}→${m.toStep}</td><td>${m.desc}</td>` +
+      `<td class="num" style="color:${dcol(m.deltaS)}">${sgn(m.deltaS)}</td>` +
+      (m.split ? m.split.map(v => `<td class="num" style="color:${dcol(v)}">${sgn(v)}</td>`).join('') : '<td></td><td></td><td></td>') +
+      `<td style="color:var(--muted)">${m.direct ? 'direct' : 'attributed'}${m.weak ? ' ⚠ single-lap' : ''}</td></tr>`
+    ).join('') + '</table>';
+
+  const cv = $('hist-chart'), ctx = cv.getContext('2d');
+  const W = cv.clientWidth, H = 170, dpr = window.devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+  ctx.font = '11px system-ui';
+  if (l.nodes.length < 2) {
+    ctx.fillStyle = '#8b8b90';
+    ctx.fillText('not enough mapped values to chart — drive more single-change stints', 10, 24);
+    return;
+  }
+  const xs = l.nodes.map(n => n[0]), ys = l.nodes.map(n => n[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys, 0), y1 = Math.max(...ys, 0);
+  const padX = (x1 - x0) * 0.08 || 1, padY = (y1 - y0) * 0.18 || 0.05;
+  const X = v => 40 + (v - (x0 - padX)) / ((x1 + padX) - (x0 - padX)) * (W - 55);
+  const Y = v => 12 + ((y1 + padY) - v) / ((y1 + padY) - (y0 - padY)) * (H - 44);
+  ctx.strokeStyle = 'rgba(139,139,144,.35)';
+  ctx.beginPath(); ctx.moveTo(40, Y(0)); ctx.lineTo(W - 8, Y(0)); ctx.stroke();
+  ctx.fillStyle = '#8b8b90'; ctx.fillText('0', 28, Y(0) + 3);
+  if (l.fit) {
+    const [fa, fb, fc] = l.fit;
+    ctx.strokeStyle = 'rgba(57,135,229,.55)';
+    ctx.beginPath();
+    for (let i = 0; i <= 60; i++) {
+      const x = (x0 - padX) + i / 60 * ((x1 + padX) - (x0 - padX));
+      const y = fa * x * x + fb * x + fc;
+      i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y));
+    }
+    ctx.stroke();
+  }
+  if (l.vertex != null) {
+    ctx.strokeStyle = 'rgba(25,158,112,.7)';
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(X(l.vertex), 12); ctx.lineTo(X(l.vertex), H - 30); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#199e70';
+    ctx.fillText(`optimum ≈ ${l.vertex}`, Math.min(X(l.vertex) + 5, W - 90), 22);
+  }
+  for (const [v, cum] of l.nodes) {
+    ctx.fillStyle = '#3987e5';
+    ctx.beginPath(); ctx.arc(X(v), Y(cum), 3.5, 0, 7); ctx.fill();
+    ctx.fillStyle = '#c9c9ce'; ctx.fillText(`${v}`, X(v) - 8, H - 14);
+    ctx.fillStyle = '#8b8b90'; ctx.fillText(sgn(cum), Math.min(X(v) + 6, W - 45), Y(cum) - 6);
+  }
 }
 
 // --- live view: SSE from the session `tuners capture` is recording now ---

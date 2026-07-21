@@ -285,6 +285,22 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             .collect();
         println!("\ncurrent tune (tune-session.txt): {}", vals.join(", "));
     }
+    let mapped: Vec<_> = view.landscapes.iter().filter(|l| l.nodes.len() >= 2).collect();
+    if !mapped.is_empty() {
+        println!("\nmeasured landscapes (cumulative ideal delta vs first tried; lower = faster):");
+        for l in mapped {
+            let nodes: Vec<String> = l
+                .nodes
+                .iter()
+                .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
+                .collect();
+            let vertex = l
+                .vertex
+                .map(|v| format!("  | est. optimum ≈ {v}"))
+                .unwrap_or_default();
+            println!("  {}: {}{vertex}", l.phrase, nodes.join(", "));
+        }
+    }
     if let Some(p) = &view.in_progress {
         println!(
             "\nnote: {p} is journaled but has no completed laps yet (still \

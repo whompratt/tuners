@@ -479,6 +479,46 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
             a.split.2,
         )
     });
+    let landscapes: Vec<String> = v
+        .landscapes
+        .iter()
+        .map(|l| {
+            let nodes: Vec<String> = l
+                .nodes
+                .iter()
+                .map(|(v, cum, n)| format!("[{v},{cum:.3},{n}]"))
+                .collect();
+            let ms: Vec<String> = l
+                .measurements
+                .iter()
+                .map(|m| {
+                    let split = m.split.map_or("null".into(), |(e, x, st)| {
+                        format!("[{e:.3},{x:.3},{st:.3}]")
+                    });
+                    format!(
+                        "{{\"fromStep\":{},\"toStep\":{},\"desc\":{},\"deltaS\":{:.3},\"split\":{split},\"weak\":{},\"direct\":{}}}",
+                        m.from_step,
+                        m.to_step,
+                        json_str(&m.desc),
+                        m.delta_s,
+                        m.weak,
+                        m.direct,
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"area\":{},\"phrase\":{},\"key\":{},\"nodes\":[{}],\"fit\":{},\"vertex\":{},\"measurements\":[{}]}}",
+                json_str(l.area),
+                json_str(&l.phrase),
+                l.key.as_deref().map_or("null".into(), json_str),
+                nodes.join(","),
+                l.fit
+                    .map_or("null".into(), |(a, b, c)| format!("[{a},{b},{c}]")),
+                l.vertex.map_or("null".into(), |v| format!("{v}")),
+                ms.join(","),
+            )
+        })
+        .collect();
     let aba = v.aba.as_ref().map_or("null".into(), |a| {
         format!(
             "{{\"families\":{},\"effectS\":{:.3},\"driftS\":{:.3}}}",
@@ -488,10 +528,11 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         )
     });
     format!(
-        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"inProgress\":{},\"recommendations\":[{}],\"currentTune\":[{}]}}",
+        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"landscapes\":[{}],\"inProgress\":{},\"recommendations\":[{}],\"currentTune\":[{}]}}",
         v.journal.as_deref().map_or("null".into(), json_str),
         json_str(&v.advice_for),
         steps.join(","),
+        landscapes.join(","),
         v.in_progress.as_deref().map_or("null".into(), json_str),
         recs.join(","),
         tune.join(","),
