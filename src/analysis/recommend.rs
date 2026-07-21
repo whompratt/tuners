@@ -133,13 +133,11 @@ fn balance_rule(
     };
     let understeer = idx > 0.0;
     let advice = if understeer {
-        "reduce front roll stiffness: soften the front anti-roll bar first (springs \
-         second); if the front is already at minimum, stiffen the rear instead. More \
-         front aero also helps where the route allows."
+        "reduce front roll stiffness: soften the front anti-roll bar first \
+         (springs second)"
     } else {
-        "reduce rear roll stiffness: soften the rear anti-roll bar first (springs \
-         second); if the rear is already at minimum, stiffen the front instead. \
-         Less rear-biased aero can also help."
+        "reduce rear roll stiffness: soften the rear anti-roll bar first \
+         (springs second)"
     };
 
     let mut evidence = vec![format!(
@@ -267,31 +265,29 @@ fn power_balance_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     let front_drive = overall.drivetrain_type != 1; // FWD or AWD
     let awd = overall.drivetrain_type == 2;
 
-    let (advice, index_evt) = if shift <= -POWER_SHIFT && on <= -index_gate && rear_drive {
+    let (advice, index_evt, alt) = if shift <= -POWER_SHIFT && on <= -index_gate && rear_drive {
         (
-            format!(
-                "reduce rear differential acceleration lock: the rear breaks away \
-                 specifically under power{}",
-                if awd { " (AWD: shifting center torque forward also helps)" } else { "" },
-            ),
+            "reduce rear differential acceleration lock: the rear breaks away \
+             specifically under power",
             "oversteer",
+            awd.then_some("alternative (AWD): shift center torque forward"),
         )
     } else if shift >= POWER_SHIFT && on >= index_gate && front_drive {
         (
-            format!(
-                "reduce front differential acceleration lock: the front washes out \
-                 specifically under power{}",
-                if awd { " (AWD: shifting center torque rearward also helps)" } else { "" },
-            ),
+            "reduce front differential acceleration lock: the front washes out \
+             specifically under power",
             "understeer",
+            awd.then_some("alternative (AWD): shift center torque rearward"),
         )
     } else {
         return;
     };
-    let mut evidence = vec![format!(
+    let advice = advice.to_string();
+    let mut evidence: Vec<String> = alt.map(String::from).into_iter().collect();
+    evidence.push(format!(
         "{index_evt} appears with throttle: index {on:+.2} on power vs {off:+.2} \
          off power while cornering"
-    )];
+    ));
     if let Some(rear) = overall.balance_on_throttle.rear_slip {
         evidence.push(format!(
             "rear tires at {:.0}% of grip limit while cornering on power",
@@ -362,10 +358,11 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     recs.push(Recommendation {
         area: "traction",
         advice: format!(
-            "improve {drive_axle}-axle traction: reduce differential acceleration lock \
-             first; softer {drive_axle} springs/dampers also help put power down"
+            "improve {drive_axle}-axle traction: reduce differential acceleration lock"
         ),
         evidence: vec![format!(
+            "alternative: softer {drive_axle} springs/dampers also help put power down"
+        ), format!(
             "wheelspin during {:.0}% of on-throttle time ({} drivetrain)",
             spin * 100.0,
             crate::packet::drivetrain_name(overall.drivetrain_type),
@@ -416,10 +413,10 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             area: "gearing",
             advice: "shorten the final drive: the top of the rev range goes unused, so \
                      every gear is longer than the route needs — shorter gearing gives \
-                     more acceleration at no top-speed cost. (Ignore if this route just \
-                     lacks a flat-out section.)"
+                     more acceleration at no top-speed cost"
                 .into(),
-            evidence: vec![format!(
+            evidence: vec![
+                format!(
                 "highest rpm in top gear ({}) was {:.0} — {:.0}% of the {:.0} redline, \
                  with {:.1}% of the stint spent there and no limiter time",
                 g.top_gear,
@@ -427,7 +424,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 100.0 * g.top_gear_max_rpm / overall.redline,
                 overall.redline,
                 top_time * 100.0,
-            )],
+            ), "ignore if this route just lacks a flat-out section".into()],
             confidence: Confidence::Medium,
             suggestion: None,
             implied: Some(Change { family: Family::Gearing, softer: false, magnitude: None }),
@@ -761,7 +758,11 @@ mod tests {
         let recs = recommend(&overall, &[]);
         let diff = recs.iter().find(|r| r.area == "differential").unwrap();
         assert!(diff.advice.contains("front differential"), "{}", diff.advice);
-        assert!(diff.advice.contains("center torque rearward"), "{}", diff.advice);
+        assert!(
+            diff.evidence.iter().any(|e| e.contains("center torque rearward")),
+            "{:?}",
+            diff.evidence
+        );
     }
 
     /// The real dirt pattern (Fiesta/Audi): big on-off shift but on-throttle
