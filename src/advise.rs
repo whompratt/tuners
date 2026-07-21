@@ -242,6 +242,20 @@ fn enrich_with_tune(
         }
         // Exhausted = every slider of the family has a known limit and sits
         // at the advised bound. Unknown limits never claim exhaustion.
+        // With every slider's range known, the blind-mode "if already at
+        // minimum, do X instead" hedges are covered by machinery: either the
+        // condition is false (hedge is noise) or the exhausted flip below
+        // rewrites the advice concretely.
+        if with_limit > 0 && with_limit == known.len() {
+            for hedge in [
+                "; if the front is already at minimum, stiffen the rear instead",
+                "; if the rear is already at minimum, stiffen the front instead",
+            ] {
+                if let Some(pos) = r.advice.find(hedge) {
+                    r.advice.replace_range(pos..pos + hedge.len(), "");
+                }
+            }
+        }
         if with_limit > 0 && with_limit == known.len() && pinned == with_limit {
             if let Some((pf, ps, text)) = exhausted_flip(implied.family, implied.softer) {
                 r.evidence.push(format!("advised direction exhausted (was: {})", r.advice));
@@ -1361,6 +1375,45 @@ mod tests {
             assert!(!(10.0..=14.0).contains(&v) || a <= 0.0, "no interior vertex: a={a} v={v}");
         }
         assert!(quad_fit(&[(10.0, 0.0), (12.0, -1.0)]).is_none(), "2 points fit nothing");
+    }
+
+    /// With every front-roll slider's range on file, the blind-mode hedge
+    /// ("if the front is already at minimum...") disappears — the machinery
+    /// checks the condition instead of narrating it.
+    #[test]
+    fn known_limits_strip_the_conditional_hedge() {
+        let session = session_with(
+            &[("arb_f", "30"), ("springs_f", "300")],
+            &[("limit_springs_f", "100..800")], // arb has a universal range
+        );
+        let mut recs = vec![Recommendation {
+            area: "balance",
+            suggestion: None,
+            advice: "reduce front roll stiffness: soften the front anti-roll bar \
+                     first (springs second); if the front is already at minimum, \
+                     stiffen the rear instead. More front aero also helps where \
+                     the route allows."
+                .into(),
+            evidence: vec![],
+            confidence: Confidence::High,
+            implied: Some(journal::Change {
+                family: journal::Family::FrontRoll,
+                softer: true,
+                magnitude: None,
+            }),
+        }];
+        enrich_with_tune(&mut recs, &session);
+        assert!(!recs[0].advice.contains("already at minimum"), "{}", recs[0].advice);
+        assert!(recs[0].advice.contains("More front aero"), "rest of the advice intact");
+
+        // Springs range unknown: the hedge still carries information.
+        let session = session_with(&[("arb_f", "30"), ("springs_f", "300")], &[]);
+        let mut recs = vec![balance_rec()];
+        recs[0].advice = "soften the front anti-roll bar first (springs second); if \
+                          the front is already at minimum, stiffen the rear instead."
+            .into();
+        enrich_with_tune(&mut recs, &session);
+        assert!(recs[0].advice.contains("already at minimum"), "{}", recs[0].advice);
     }
 
     /// Probes extend the landscape past the good edge; interior optima and
