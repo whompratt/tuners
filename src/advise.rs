@@ -1027,6 +1027,14 @@ pub fn advise(
                 let vertex = (vertex * 10.0).round() / 10.0;
                 vertex_out = Some(vertex);
                 let phrase = crate::tuning::field_phrase(key);
+                // Already there? Then the ask is NOTHING — repeats tighten
+                // the estimate, but no change is being requested.
+                let at_optimum = setups
+                    .last()
+                    .copied()
+                    .flatten()
+                    .and_then(|b| b.values.get(key)?.parse::<f32>().ok())
+                    .is_some_and(|cur| (cur - vertex).abs() < 0.05);
                 let landscape: Vec<String> = nodes
                     .iter()
                     .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
@@ -1035,19 +1043,27 @@ pub fn advise(
                     .iter_mut()
                     .filter(|r| r.implied.is_some_and(|i| i.family == family))
                 {
-                    r.suggestion = Some(format!(
-                        "{phrase}: {}",
-                        crate::tuning::display_value(
-                            key,
-                            &vertex.to_string(),
-                            &session.facts
-                        ),
-                    ));
-                    r.advice = format!(
-                        "probe the estimated optimum: the campaign's measured \
-                         response for {phrase} bottoms out near {vertex} — \
-                         validate with an A/B"
+                    let disp = crate::tuning::display_value(
+                        key,
+                        &vertex.to_string(),
+                        &session.facts,
                     );
+                    if at_optimum {
+                        r.suggestion = Some(format!("{phrase}: hold {disp}"));
+                        r.advice = format!(
+                            "no change asked: the current {phrase} IS the \
+                             estimated optimum of the mapped response — any \
+                             stint driven here tightens the estimate for free"
+                        );
+                        r.implied = None;
+                    } else {
+                        r.suggestion = Some(format!("{phrase}: {disp}"));
+                        r.advice = format!(
+                            "set {phrase} to {vertex} and drive one stint, \
+                             everything else unchanged: the campaign's \
+                             measured response bottoms out there"
+                        );
+                    }
                     r.confidence = analysis::recommend::Confidence::Medium;
                     r.evidence.push(format!(
                         "measured landscape ({phrase}): {} (cumulative ideal \
@@ -1081,9 +1097,11 @@ pub fn advise(
                     crate::tuning::display_value(key, &v.to_string(), &session.facts),
                 )),
                 advice: format!(
-                    "data probe: the mapped response for {phrase} still improves \
-                     at its edge — one stint at this value brackets the optimum \
-                     from the good side"
+                    "data probe: set {phrase} to {v} and drive one stint with \
+                     everything else unchanged — the mapped response still \
+                     improves at its edge, and this brackets the optimum from \
+                     the good side. Probes are one at a time: two unexplored \
+                     changes in one stint cannot be separated"
                 ),
                 evidence: vec![format!(
                     "mapped so far: {} (cumulative ideal delta; lower = faster)",

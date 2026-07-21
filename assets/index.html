@@ -1116,7 +1116,10 @@ async function loadAdvice() {
       `<canvas id="hist-chart" style="width:100%;max-width:720px;height:170px;display:block;margin-top:6px"></canvas>` +
       `<div id="hist-table" style="margin-top:4px"></div>`;
   }
-  html += `<div style="margin-top:12px;font-size:13px;color:var(--muted)">advice for ${a.adviceFor.split('/').pop()}:</div>`;
+  const asks = a.recommendations.filter(r => r.suggestion && !r.suggestion.includes('hold')).length;
+  html += `<div style="margin-top:12px;font-size:13px;color:var(--muted)">advice for ${a.adviceFor.split('/').pop()}:` +
+    (asks > 1 ? ` <span title="applying several suggested values at once cannot be separated afterwards — especially probes">suggestions are alternatives — apply ONE per stint, drive, re-advise</span>` : '') +
+    `</div>`;
   html += a.recommendations.length ? a.recommendations.map(r =>
     `<div class="adv-rec"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +
     (r.suggestion ? `<b>${r.suggestion}</b> — ${r.advice}` : `<b>${r.area}</b>: ${r.advice}`) +

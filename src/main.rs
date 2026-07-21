@@ -314,7 +314,19 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
              recording?) — its step joins the trajectory once a lap completes"
         );
     }
-    println!("\nadvice for {}:\n", view.advice_for);
+    let asks = view
+        .recommendations
+        .iter()
+        .filter(|r| r.suggestion.as_ref().is_some_and(|s| !s.contains("hold")))
+        .count();
+    println!("\nadvice for {}:", view.advice_for);
+    if asks > 1 {
+        println!(
+            "(suggestions are ALTERNATIVES — apply one per stint, drive it, \
+             then re-advise)"
+        );
+    }
+    println!();
     print!("{}", analysis::report::render_recommendations(&view.recommendations));
     Ok(())
 }
