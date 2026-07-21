@@ -132,6 +132,16 @@ pub struct AdviseView {
     pub current_tune: Vec<(String, String, Option<&'static str>)>,
 }
 
+/// A composite ideal dramatically faster than the stint's own best flying
+/// lap is an UNCORROBORATED splice — rewinds, drafting in a race, or route
+/// anomalies stitched segments that never co-occurred in one lap. Such a
+/// stint's comparisons cannot be trusted.
+fn splice_trusted(p: &analysis::profile::StintProfile) -> bool {
+    !p.standing_start_only
+        && p.best_lap_time_s.is_finite()
+        && p.composite.time_s >= 0.95 * p.best_lap_time_s
+}
+
 fn stint_balance(stint: &analysis::Stint) -> Option<(f32, f32, f32)> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments.iter().max_by_key(|s| s.len())?;
@@ -343,7 +353,9 @@ fn probe_value(nodes: &[(f32, f32, usize)], lim: Option<(f32, f32)>) -> Option<f
         v = v.clamp(mn, mx);
     }
     let v = (v * 10.0).round() / 10.0;
-    ((v - best.0).abs() > 1e-3).then_some(v)
+    // Compare at display granularity: clamping to a slider bound must not
+    // fabricate a "new" point that rounds to the best tried value.
+    ((v - (best.0 * 10.0).round() / 10.0).abs() > 0.05).then_some(v)
 }
 
 /// The tune field a note clause is about, matched by field phrase (auto-
@@ -519,8 +531,9 @@ pub fn advise(
                     split = Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s));
                     *deltas.last_mut().unwrap() = Some(cmp.ideal_delta_s);
                     *attrs.last_mut().unwrap() = Some(attr);
-                    *weaks.last_mut().unwrap() =
-                        prev.laps.len().min(profile.laps.len()) < 2;
+                    *weaks.last_mut().unwrap() = prev.laps.len().min(profile.laps.len()) < 2
+                        || !splice_trusted(prev)
+                        || !splice_trusted(profile);
                     let word = match journal::judge(cmp.ideal_delta_s) {
                         journal::Outcome::Improved(_) => "improved",
                         journal::Outcome::Worsened(_) => "WORSE",
@@ -589,7 +602,10 @@ pub fn advise(
             if !crate::tuning::diff_keys(si, sj).is_empty() {
                 continue;
             }
-            if loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2 {
+            if loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
+                || !splice_trusted(&loaded[i].2)
+                || !splice_trusted(&loaded[j].2)
+            {
                 continue;
             }
             if let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) {
@@ -632,7 +648,9 @@ pub fn advise(
                 journal::Outcome::Worsened(_) => "WORSE",
                 _ => "inconclusive",
             },
-            weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2,
+            weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
+                || !splice_trusted(&loaded[i].2)
+                || !splice_trusted(&loaded[j].2),
         });
     }
 
@@ -665,7 +683,9 @@ pub fn advise(
             let changes = crate::tuning::diff_note(setups[i].unwrap(), last_setup);
             let weak = loaded[i].2.laps.len().min(loaded[n - 1].2.laps.len()) < 2
                 || suspect[i]
-                || suspect[n - 1];
+                || suspect[n - 1]
+                || !splice_trusted(&loaded[i].2)
+                || !splice_trusted(&loaded[n - 1].2);
             let outcome = journal::judge(cmp.ideal_delta_s);
             let single_family =
                 (areas.len() == 1).then(|| journal::family_for_area(areas[0])).flatten();
@@ -796,7 +816,9 @@ pub fn advise(
                 attributed: None,
                 weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
                     || suspect[i]
-                    || suspect[j],
+                    || suspect[j]
+                    || !splice_trusted(&loaded[i].2)
+                    || !splice_trusted(&loaded[j].2),
                 i,
                 j,
                 direct: true,
@@ -1077,15 +1099,34 @@ pub fn advise(
                     .iter()
                     .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
                     .collect();
+                let disp =
+                    crate::tuning::display_value(key, &vertex.to_string(), &session.facts);
+                // A fitted optimum away from the current setting deserves a
+                // recommendation even when no behavioural rule speaks for the
+                // family (the pressure rule is blind on cars whose temps
+                // never leave the band; the landscape is not).
+                if !at_optimum
+                    && !recs
+                        .iter()
+                        .any(|r| r.implied.is_some_and(|i| i.family == family))
+                {
+                    recs.push(analysis::recommend::Recommendation {
+                        area: journal::family_area(family),
+                        suggestion: None,
+                        advice: String::new(),
+                        evidence: Vec::new(),
+                        confidence: analysis::recommend::Confidence::Medium,
+                        implied: Some(journal::Change {
+                            family,
+                            softer: false,
+                            magnitude: None,
+                        }),
+                    });
+                }
                 for r in recs
                     .iter_mut()
                     .filter(|r| r.implied.is_some_and(|i| i.family == family))
                 {
-                    let disp = crate::tuning::display_value(
-                        key,
-                        &vertex.to_string(),
-                        &session.facts,
-                    );
                     if at_optimum {
                         r.suggestion = Some(format!("{phrase}: hold {disp}"));
                         r.advice = "no change asked: the current setting is the \
@@ -1100,6 +1141,19 @@ pub fn advise(
                              optimum of the mapped response. Everything else \
                              unchanged; set {phrase} to {vertex}"
                         );
+                        r.implied = Some(journal::Change {
+                            family,
+                            softer: vertex
+                                < setups
+                                    .last()
+                                    .copied()
+                                    .flatten()
+                                    .and_then(|b| {
+                                        b.values.get(key)?.parse::<f32>().ok()
+                                    })
+                                    .unwrap_or(vertex),
+                            magnitude: None,
+                        });
                     }
                     r.confidence = analysis::recommend::Confidence::Medium;
                     r.evidence.push(format!(
