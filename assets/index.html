@@ -1121,9 +1121,9 @@ async function loadAdvice() {
     (asks > 1 ? ` <span title="applying several suggested values at once cannot be separated afterwards — especially probes">suggestions are alternatives — apply ONE per stint, drive, re-advise</span>` : '') +
     `</div>`;
   html += a.recommendations.length ? a.recommendations.map(r =>
-    `<div class="adv-rec"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +
+    `<details class="adv-rec"><summary style="cursor:pointer"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +
     (r.suggestion ? `<b>${r.suggestion}</b> — ${r.advice}` : `<b>${r.area}</b>: ${r.advice}`) +
-    `<div class="adv-ev">${r.evidence.map(e => `· ${e}`).join('<br>')}</div></div>`
+    `</summary><div class="adv-ev">${r.evidence.map(e => `· ${e}`).join('<br>')}</div></details>`
   ).join('') : '<div class="adv-rec">no recommendations — nothing in this stint stood out</div>';
   body.innerHTML = html;
   if ($('hist-sel')) {

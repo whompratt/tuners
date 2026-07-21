@@ -325,9 +325,9 @@ pub fn reconcile(
         match (same_direction, outcome) {
             (true, Outcome::Worsened(d)) => {
                 r.advice = format!(
-                    "revert about half of the last change (\"{note}\"): the behaviour \
-                     still points the same way, but that step cost lap time — the \
-                     optimum is between the last two setups"
+                    "step back halfway: the optimum is between the last two \
+                     setups. The last change (\"{note}\") cost lap time while \
+                     the behaviour still points the same way"
                 );
                 if let Some(m) = change.magnitude {
                     r.advice
@@ -365,9 +365,9 @@ pub fn reconcile(
             // forever — the residual behaviour is likely the fast setup.
             (false, Outcome::Improved(d)) => {
                 r.advice = format!(
-                    "hold this setting: the last change (\"{note}\") moved against \
-                     this advice and still gained {:.2}s — the optimum is likely \
-                     bracketed, and the remaining behaviour may simply be what the \
+                    "hold: the optimum is likely bracketed. The last change \
+                     (\"{note}\") moved against this advice and still gained \
+                     {:.2}s — the remaining behaviour may simply be what the \
                      fast setup feels like",
                     -d,
                 );
@@ -473,9 +473,9 @@ pub fn history_revert(
         return Some(Recommendation {
             area: family_area(change.family),
             advice: format!(
-                "re-run this setup for more laps before reacting: the last change \
-                 (\"{note}\") measured worse, but a single-flying-lap comparison \
-                 is not trustworthy"
+                "corroborate: re-run this setup for more laps before reacting. \
+                 The last change (\"{note}\") measured worse, but a \
+                 single-flying-lap comparison is not trustworthy"
             ),
             evidence,
             confidence: Confidence::Low,
@@ -494,7 +494,7 @@ pub fn history_revert(
     }
     Some(Recommendation {
         area: family_area(change.family),
-        advice: format!("revert the last change (\"{note}\"): it measurably cost lap time"),
+        advice: format!("revert: the last change (\"{note}\") measurably cost lap time"),
         evidence,
         confidence,
         suggestion: None,
@@ -680,7 +680,7 @@ mod tests {
             None,
             false,
         );
-        assert!(recs[0].advice.contains("revert about half"), "{}", recs[0].advice);
+        assert!(recs[0].advice.contains("step back halfway"), "{}", recs[0].advice);
         assert_eq!(recs[0].confidence, Confidence::High);
     }
 
@@ -712,7 +712,7 @@ mod tests {
             None,
             false,
         );
-        assert!(recs[0].advice.contains("hold this setting"), "{}", recs[0].advice);
+        assert!(recs[0].advice.contains("hold:"), "{}", recs[0].advice);
         assert_eq!(recs[0].confidence, Confidence::Medium);
     }
 
@@ -744,7 +744,7 @@ mod tests {
         assert!(!reconcile(&mut recs, change, outcome, "front diff accel +71", Some("attr"), false));
         let rec = history_revert(change, outcome, "front diff accel +71", Some("attr"), false).unwrap();
         assert_eq!(rec.area, "differential");
-        assert!(rec.advice.contains("revert the last change"), "{}", rec.advice);
+        assert!(rec.advice.contains("revert:"), "{}", rec.advice);
         assert_eq!(rec.confidence, Confidence::Medium, "attributed caps at Medium");
         let implied = rec.implied.unwrap();
         assert!(implied.softer, "revert of a stiffer step points softer");

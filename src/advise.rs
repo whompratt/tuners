@@ -1050,18 +1050,17 @@ pub fn advise(
                     );
                     if at_optimum {
                         r.suggestion = Some(format!("{phrase}: hold {disp}"));
-                        r.advice = format!(
-                            "no change asked: the current {phrase} IS the \
-                             estimated optimum of the mapped response — any \
-                             stint driven here tightens the estimate for free"
-                        );
+                        r.advice = "no change asked: the current setting is the \
+                             estimated optimum. Any stint driven here tightens \
+                             the estimate for free"
+                            .to_string();
                         r.implied = None;
                     } else {
                         r.suggestion = Some(format!("{phrase}: {disp}"));
                         r.advice = format!(
-                            "set {phrase} to {vertex} and drive one stint, \
-                             everything else unchanged: the campaign's \
-                             measured response bottoms out there"
+                            "set and drive one stint: this is the estimated \
+                             optimum of the mapped response. Everything else \
+                             unchanged; set {phrase} to {vertex}"
                         );
                     }
                     r.confidence = analysis::recommend::Confidence::Medium;
@@ -1097,10 +1096,9 @@ pub fn advise(
                     crate::tuning::display_value(key, &v.to_string(), &session.facts),
                 )),
                 advice: format!(
-                    "data probe: set {phrase} to {v} and drive one stint with \
-                     everything else unchanged — the mapped response still \
-                     improves at its edge, and this brackets the optimum from \
-                     the good side. Probes are one at a time: two unexplored \
+                    "probe: one stint here extends the map where it still \
+                     improves. Set {phrase} to {v} with everything else \
+                     unchanged — probes are one at a time, two unexplored \
                      changes in one stint cannot be separated"
                 ),
                 evidence: vec![format!(
