@@ -165,6 +165,9 @@ fn family_keys(family: journal::Family) -> &'static [&'static str] {
         journal::Family::DiffDecel => &["diff_decel_f", "diff_decel_r"],
         journal::Family::Brakes => &["brake_balance", "brake_pressure"],
         journal::Family::Damping => &["rebound_f", "rebound_r", "bump_f", "bump_r"],
+        journal::Family::TirePressure => &["tire_pressure_f", "tire_pressure_r"],
+        journal::Family::Alignment => &["camber_f", "camber_r", "toe_f", "toe_r", "caster"],
+        journal::Family::RideHeight => &["ride_height_f", "ride_height_r"],
     }
 }
 
@@ -708,7 +711,7 @@ pub fn advise(
                 i,
                 j,
                 direct: true,
-                key: (vals.len() == 1).then(|| keys[0].clone()),
+                key: Some(keys[0].clone()),
                 split: Some((mattr.entry_delta_s, mattr.exit_delta_s, mattr.straight_delta_s)),
                 clean: true,
             });

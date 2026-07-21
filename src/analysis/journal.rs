@@ -26,6 +26,12 @@ pub enum Family {
     Brakes,
     /// Rebound / bump, either end. `softer` = less damping.
     Damping,
+    /// Tire pressures, either axle. `softer` = lower pressure.
+    TirePressure,
+    /// Camber / toe / caster. `softer` = the value decreased.
+    Alignment,
+    /// Ride height, either end. `softer` = lower.
+    RideHeight,
 }
 
 /// The Family a setup-state area (tuning::field_area) reconciles under.
@@ -40,6 +46,9 @@ pub fn family_for_area(area: &str) -> Option<Family> {
         "diff decel" => Family::DiffDecel,
         "brakes" => Family::Brakes,
         "damping" => Family::Damping,
+        "tire pressure" => Family::TirePressure,
+        "alignment" => Family::Alignment,
+        "ride height" => Family::RideHeight,
         _ => return None,
     })
 }
@@ -151,6 +160,21 @@ fn parse_clause(note: &str) -> Option<Change> {
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
         return Some(Change { family: Family::Damping, softer, magnitude });
+    }
+    if t.contains("ride height") {
+        let softer = less_more(&t)?;
+        let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change { family: Family::RideHeight, softer, magnitude });
+    }
+    if t.contains("pressure") {
+        let softer = less_more(&t)?;
+        let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change { family: Family::TirePressure, softer, magnitude });
+    }
+    if ["camber", "toe", "caster"].iter().any(|k| t.contains(k)) {
+        let softer = less_more(&t)?;
+        let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change { family: Family::Alignment, softer, magnitude });
     }
     let front = t.contains("front");
     let rear = t.contains("rear");
@@ -420,6 +444,9 @@ pub fn family_area(f: Family) -> &'static str {
         Family::DiffAccel | Family::DiffDecel => "differential",
         Family::Brakes => "brakes",
         Family::Damping => "damping",
+        Family::TirePressure => "tires",
+        Family::Alignment => "alignment",
+        Family::RideHeight => "ride height",
     }
 }
 
@@ -543,6 +570,21 @@ mod tests {
         // Aero/diff clauses don't move the roll-position tracker.
         let pos = track_positions(&[parse_clauses("front aero +20; rear diff accel -15")]);
         assert_eq!(pos[0], (Some(0.0), Some(0.0)));
+    }
+
+    #[test]
+    fn pressure_alignment_ride_height_notes_parse() {
+        let c = parse_change("front tire pressure -17.7 psi").unwrap();
+        assert_eq!((c.family, c.softer), (Family::TirePressure, true));
+        let c = parse_change("front camber +1.5").unwrap();
+        assert_eq!((c.family, c.softer), (Family::Alignment, false));
+        let c = parse_change("caster -1").unwrap();
+        assert_eq!(c.family, Family::Alignment);
+        let c = parse_change("rear ride height -0.5 in").unwrap();
+        assert_eq!((c.family, c.softer), (Family::RideHeight, true));
+        // brake pressure stays with the brakes family, not tire pressure.
+        let c = parse_change("brake pressure +20").unwrap();
+        assert_eq!(c.family, Family::Brakes);
     }
 
     #[test]
