@@ -489,7 +489,7 @@ pub fn history_revert(
         let mut evidence =
             vec![format!("provisional: {d:.2}s slower ideal, measured against a single flying lap")];
         evidence.extend(attributed.map(String::from));
-        return Some(Recommendation {
+        return Some(Recommendation { apply: Vec::new(),
             area: family_area(change.family),
             advice: format!(
                 "corroborate: re-run this setup for more laps before reacting. \
@@ -511,7 +511,7 @@ pub fn history_revert(
         evidence.push(ev.to_string());
         confidence = Confidence::Medium;
     }
-    Some(Recommendation {
+    Some(Recommendation { apply: Vec::new(),
         area: family_area(change.family),
         advice: format!("revert: the last change (\"{note}\") measurably cost lap time"),
         evidence,
@@ -678,7 +678,7 @@ mod tests {
     }
 
     fn balance_rec() -> Recommendation {
-        Recommendation {
+        Recommendation { apply: Vec::new(),
             area: "balance",
             advice: "reduce front roll stiffness".into(),
             evidence: vec!["understeer +0.3".into()],

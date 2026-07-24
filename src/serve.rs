@@ -362,6 +362,21 @@ fn tune_post(
     if rev.values.is_empty() {
         return ("400 Bad Request", "text/plain; charset=utf-8", "empty tune".into());
     }
+    // partial=1 (accepting a suggestion): the posted keys are merged onto the
+    // LATEST revision — the rest of the setup carries over, and consecutive
+    // accepts before the next stint chain onto each other.
+    if params.iter().any(|(k, v)| k == "partial" && v == "1") {
+        let Some(latest) = s.latest() else {
+            return (
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                "no tune on file to merge a partial save onto".into(),
+            );
+        };
+        let mut merged = latest.values.clone();
+        merged.append(&mut rev.values);
+        rev.values = merged;
+    }
     // Consecutive saves with no stint between them net into ONE journal note:
     // diff against the last DRIVEN revision (the pending chain's base), not
     // merely the previous save. Saving arb, then remembering final drive and
@@ -462,11 +477,17 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         .iter()
         .map(|r| {
             let evidence: Vec<String> = r.evidence.iter().map(|e| json_str(e)).collect();
+            let apply: Vec<String> = r
+                .apply
+                .iter()
+                .map(|(k, v)| format!("[{},{}]", json_str(k), json_str(v)))
+                .collect();
             format!(
-                "{{\"confidence\":\"{}\",\"area\":{},\"suggestion\":{},\"advice\":{},\"evidence\":[{}]}}",
+                "{{\"confidence\":\"{}\",\"area\":{},\"suggestion\":{},\"apply\":[{}],\"advice\":{},\"evidence\":[{}]}}",
                 r.confidence.label(),
                 json_str(r.area),
                 r.suggestion.as_deref().map_or("null".into(), json_str),
+                apply.join(","),
                 json_str(&r.advice),
                 evidence.join(","),
             )
@@ -844,6 +865,75 @@ mod tests {
     }
 
     use super::*;
+
+    /// Accepting suggestions saves PARTIAL tunes: posted keys merge onto the
+    /// latest revision, and multiple accepts before the next stint net into
+    /// ONE journal note diffed against the last driven revision.
+    #[test]
+    fn partial_saves_merge_and_net_into_one_note() {
+        let dir = std::env::temp_dir().join(format!("tuners-partial-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tune-session.txt");
+        let mut s = crate::tuning::TuningSession { car: Some(2793), ..Default::default() };
+        s.revisions.push(crate::tuning::Revision {
+            stamp: "20260724-000000".into(),
+            values: [
+                ("arb_f".to_string(), "18.3".to_string()),
+                ("final_drive".to_string(), "3.95".to_string()),
+                ("rebound_f".to_string(), "10.6".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        });
+        s.save(&path).unwrap();
+        let recorder = crate::record::new_shared();
+        let post = |pairs: &[(&str, &str)], recorder: &crate::record::SharedRecorder| {
+            let params: Vec<(String, String)> =
+                pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            tune_post(&params, &path, recorder)
+        };
+
+        // Accept #1: front arb only. Unposted keys carry over from the latest.
+        let (status, _, body) = post(&[("partial", "1"), ("arb_f", "16.8")], &recorder);
+        assert_eq!(status, "200 OK", "{body}");
+        assert!(body.contains("front arb -1.5"), "{body}");
+        let latest_vals = |p: &Path| {
+            crate::tuning::TuningSession::load(p).latest().unwrap().values.clone()
+        };
+        let vals = latest_vals(&path);
+        assert_eq!(vals.get("arb_f").unwrap(), "16.8");
+        assert_eq!(vals.get("final_drive").unwrap(), "3.95", "unposted keys carry over");
+        assert_eq!(vals.get("rebound_f").unwrap(), "10.6");
+
+        // Accept #2 before any stint: chains onto #1 and the pending note nets
+        // BOTH changes against the driven baseline.
+        let (status, _, body) = post(&[("partial", "1"), ("final_drive", "4.1")], &recorder);
+        assert_eq!(status, "200 OK", "{body}");
+        let note = recorder.lock().unwrap().pending_note.clone().unwrap();
+        assert!(
+            note.contains("front arb -1.5") && note.contains("final drive +0.15"),
+            "{note}"
+        );
+        let vals = latest_vals(&path);
+        assert_eq!(vals.get("arb_f").unwrap(), "16.8", "accept #2 chains onto #1");
+        assert_eq!(vals.get("final_drive").unwrap(), "4.1");
+
+        // Accepting the original arb back nets the chain to one remaining change.
+        post(&[("partial", "1"), ("arb_f", "18.3")], &recorder);
+        let note = recorder.lock().unwrap().pending_note.clone().unwrap();
+        assert!(note.contains("final drive") && !note.contains("front arb"), "{note}");
+
+        // A partial save with no tune on file is rejected.
+        let empty = dir.join("empty-session.txt");
+        let (status, _, _) = {
+            let params: Vec<(String, String)> =
+                [("partial", "1"), ("arb_f", "16.8")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            tune_post(&params, &empty, &recorder)
+        };
+        assert_eq!(status, "400 Bad Request");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn index_serves_html() {

@@ -92,6 +92,10 @@ pub struct Recommendation {
     /// "front arb: 17.5" (absolute, setup on file) or "front arb: +0.5"
     /// (delta, blind mode). Filled by the advise layer.
     pub suggestion: Option<String>,
+    /// Machine-applyable form of the suggestion: canonical (key, value)
+    /// pairs an accept would save. Empty when the suggestion is not a
+    /// concrete absolute (blind deltas, holds, prose-only advice).
+    pub apply: Vec<(String, String)>,
     pub advice: String,
     pub evidence: Vec<String>,
     pub confidence: Confidence,
@@ -197,7 +201,7 @@ fn balance_rule(
         ));
     }
 
-    recs.push(Recommendation {
+    recs.push(Recommendation { apply: Vec::new(),
         area: "balance",
         advice: advice.into(),
         evidence,
@@ -242,7 +246,7 @@ fn aero_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         "add rear aero: the car is only loose at high speed, where downforce \
          balance outweighs the bars"
     };
-    recs.push(Recommendation {
+    recs.push(Recommendation { apply: Vec::new(),
         area: "aero",
         advice: advice.into(),
         evidence: vec![format!(
@@ -303,7 +307,7 @@ fn power_balance_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             rear * 100.0
         ));
     }
-    recs.push(Recommendation {
+    recs.push(Recommendation { apply: Vec::new(),
         area: "differential",
         advice,
         evidence,
@@ -350,7 +354,7 @@ fn tire_pressure_rule(
                 "heat is partly scrub from the balance issue above — fix balance first".into(),
             );
         }
-        recs.push(Recommendation { area: "tires", suggestion: None, advice, evidence, confidence, implied: None });
+        recs.push(Recommendation { apply: Vec::new(), area: "tires", suggestion: None, advice, evidence, confidence, implied: None });
     }
 }
 
@@ -364,7 +368,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         1 => "rear",
         _ => "drive",
     };
-    recs.push(Recommendation {
+    recs.push(Recommendation { apply: Vec::new(),
         area: "traction",
         advice: format!(
             "improve {drive_axle}-axle traction: reduce differential acceleration lock"
@@ -394,7 +398,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             evidence.push(format!("average upshift at {rpm:.0} rpm"));
         }
         evidence.push(format!("top gear used: {}", g.top_gear));
-        recs.push(Recommendation {
+        recs.push(Recommendation { apply: Vec::new(),
             area: "gearing",
             advice: "lengthen the final drive (or the gears that hit the limiter) so the \
                      engine stays below redline at the route's top speeds"
@@ -418,7 +422,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             .last()
             .map(|(_, f)| *f)
             .unwrap_or(0.0);
-        recs.push(Recommendation {
+        recs.push(Recommendation { apply: Vec::new(),
             area: "gearing",
             advice: "shorten the final drive: the top of the rev range goes unused, so \
                      every gear is longer than the route needs — shorter gearing gives \
@@ -448,7 +452,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         ("rear", s.rl.bottomed_frac.max(s.rr.bottomed_frac), s.rl.topped_frac.max(s.rr.topped_frac)),
     ] {
         if bottomed >= BOTTOMING_FRAC {
-            recs.push(Recommendation {
+            recs.push(Recommendation { apply: Vec::new(),
                 area: "suspension",
                 advice: format!(
                     "{axle} suspension bottoms out: stiffen {axle} springs or raise \
@@ -464,7 +468,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             });
         }
         if topped >= TOPPING_FRAC {
-            recs.push(Recommendation {
+            recs.push(Recommendation { apply: Vec::new(),
                 area: "suspension",
                 advice: format!(
                     "{axle} suspension spends long at full extension — if the route is \
@@ -511,7 +515,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                      wheels (roughly doubles vs healthy damping on the same surface)"
                 ));
             }
-            recs.push(Recommendation {
+            recs.push(Recommendation { apply: Vec::new(),
                 area: "damping",
                 advice: format!(
                     "reduce {axle} damping (rebound first): the {axle} wheels are \
@@ -523,7 +527,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 implied: None,
             });
         } else if rev >= under_rev && topped >= under_topped {
-            recs.push(Recommendation {
+            recs.push(Recommendation { apply: Vec::new(),
                 area: "damping",
                 advice: format!(
                     "increase {axle} damping (rebound especially): the {axle} wheels \
@@ -542,7 +546,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 implied: None,
             });
         } else if !loose && rev > 0.0 && rev <= OVERDAMPED_BUMP_REV && topped >= OVERDAMPED_BUMP_TOPPED {
-            recs.push(Recommendation {
+            recs.push(Recommendation { apply: Vec::new(),
                 area: "damping",
                 suggestion: None,
                 advice: format!(
@@ -565,7 +569,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 implied: Some(Change { family: Family::Damping, softer: true, magnitude: None }),
             });
         } else if !loose && rev > 0.0 && rev <= OVERDAMPED_REV_TARMAC {
-            recs.push(Recommendation {
+            recs.push(Recommendation { apply: Vec::new(),
                 area: "damping",
                 advice: format!(
                     "consider softer {axle} damping: the {axle} suspension barely \

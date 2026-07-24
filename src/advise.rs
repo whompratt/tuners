@@ -299,6 +299,10 @@ fn enrich_with_tune(
                 r.advice = text.to_string();
                 r.implied =
                     Some(journal::Change { family: pf, softer: ps, magnitude: None });
+                // Any concrete value suggested for the exhausted end no
+                // longer applies to the rewritten advice.
+                r.suggestion = None;
+                r.apply.clear();
             } else {
                 r.evidence.push(
                     "every slider on this channel is already at the advised bound — \
@@ -929,19 +933,28 @@ pub fn advise(
             && let (Some(Some(anchor_setup)), Some(Some(last_setup))) =
                 (setups.get(a.vs_step - 1), setups.last())
         {
-            let parts: Vec<String> = crate::tuning::diff_keys(anchor_setup, last_setup)
-                .iter()
+            let restore: Vec<(String, String)> = crate::tuning::diff_keys(anchor_setup, last_setup)
+                .into_iter()
                 .filter_map(|k| {
-                    let v = anchor_setup.values.get(k)?;
-                    Some(format!(
-                        "{}: {}",
-                        crate::tuning::field_phrase(k),
-                        crate::tuning::display_value(k, v, &session.facts),
-                    ))
+                    let v = anchor_setup.values.get(&k)?.clone();
+                    Some((k, v))
                 })
                 .collect();
-            if !parts.is_empty() {
-                rec.suggestion = Some(parts.join(", "));
+            if !restore.is_empty() {
+                rec.suggestion = Some(
+                    restore
+                        .iter()
+                        .map(|(k, v)| {
+                            format!(
+                                "{}: {}",
+                                crate::tuning::field_phrase(k),
+                                crate::tuning::display_value(k, v, &session.facts),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                rec.apply = restore;
             }
         }
         recs.push(rec);
@@ -1082,7 +1095,7 @@ pub fn advise(
                         .iter()
                         .any(|r| r.implied.is_some_and(|i| i.family == family))
                 {
-                    recs.push(analysis::recommend::Recommendation {
+                    recs.push(analysis::recommend::Recommendation { apply: Vec::new(),
                         area: journal::family_area(family),
                         suggestion: None,
                         advice: String::new(),
@@ -1106,8 +1119,10 @@ pub fn advise(
                              the estimate for free"
                             .to_string();
                         r.implied = None;
+                        r.apply.clear();
                     } else {
                         r.suggestion = Some(format!("{phrase}: {disp}"));
+                        r.apply = vec![(key.to_string(), vertex.to_string())];
                         r.advice = format!(
                             "set and drive one stint: this is the estimated \
                              optimum of the mapped response. Everything else \
@@ -1163,6 +1178,7 @@ pub fn advise(
                     "{phrase}: {}",
                     crate::tuning::display_value(key, &best.0.to_string(), &session.facts),
                 ));
+                r.apply = vec![(key.to_string(), best.0.to_string())];
                 r.advice = format!(
                     "return to the best measured setting: {phrase} {} beat the \
                      current value by {gap:.2}s. An interior optimum may exist \
@@ -1198,6 +1214,7 @@ pub fn advise(
                 .map(|n| n.0)
                 .unwrap_or(v);
             recs.push(analysis::recommend::Recommendation {
+                apply: vec![(key.to_string(), v.to_string())],
                 area: "probe",
                 suggestion: Some(format!(
                     "{phrase}: {}",
@@ -1303,6 +1320,7 @@ pub fn advise(
                 if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
                     target = target.clamp(lim.0, lim.1);
                 }
+                r.apply = vec![(key.to_string(), round(target).to_string())];
                 Some(format!(
                     "{phrase}: {}",
                     crate::tuning::display_value(key, &round(target).to_string(), &session.facts),
@@ -1337,7 +1355,7 @@ mod tests {
     use crate::tuning::Revision;
 
     fn balance_rec() -> Recommendation {
-        Recommendation {
+        Recommendation { apply: Vec::new(),
             area: "balance",
             advice: "reduce front roll stiffness".into(),
             evidence: vec![],

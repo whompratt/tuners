@@ -1030,6 +1030,9 @@ async function loadAdvice() {
   const body = $('advise-body');
   $('advise-sub').textContent = '';
   body.innerHTML = '<span class="placeholder">analyzing all journaled stints…</span>';
+  // Fresh session state first: accepted-value detection below compares
+  // against the LATEST revision, which an accept just changed.
+  await loadSession();
   const resp = await fetch('/api/advise');
   if (!resp.ok) {
     body.innerHTML = `<span class="placeholder">${await resp.text()}</span>`;
@@ -1124,12 +1127,40 @@ async function loadAdvice() {
   html += `<div style="margin-top:12px;font-size:13px;color:var(--muted)">advice for ${a.adviceFor.split('/').pop()}:` +
     (asks > 1 ? ` <span title="applying several suggested values at once cannot be separated afterwards — especially probes">suggestions are alternatives — apply ONE per stint, drive, re-advise</span>` : '') +
     `</div>`;
-  html += a.recommendations.length ? a.recommendations.map(r =>
-    `<details class="adv-rec"><summary style="cursor:pointer"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +
-    (r.suggestion ? `<b>${r.suggestion}</b> — ${r.advice}` : `<b>${r.area}</b>: ${r.advice}`) +
-    `</summary><div class="adv-ev">${r.evidence.map(e => `· ${e}`).join('<br>')}</div></details>`
-  ).join('') : '<div class="adv-rec">no recommendations — nothing in this stint stood out</div>';
+  const latestRev = (sessionData && sessionData.latest) || null;
+  html += a.recommendations.length ? a.recommendations.map((r, i) => {
+    // A suggestion whose values already sit on the latest saved revision is
+    // accepted-but-undriven: show it as pending instead of re-acceptable
+    // (suggestions are judged against the last STINT's setup, so it still
+    // renders until that stint is driven).
+    const accepted = r.apply.length && latestRev &&
+      r.apply.every(([k, v]) => latestRev[k] != null && Math.abs(parseFloat(latestRev[k]) - parseFloat(v)) < 1e-3);
+    const act = !r.apply.length ? '' : accepted
+      ? ` <span style="color:var(--muted);font-size:12px" title="this value is saved on the tune and journals against the next stint">saved — drive a stint</span>`
+      : ` <button class="btn" data-accept="${i}" title="save this value onto the current tune — a partial save; accepts before the next stint net into one journal note">apply</button>`;
+    return `<details class="adv-rec"><summary style="cursor:pointer"><span class="adv-conf" style="color:${CONF_COLOR[r.confidence]}">[${r.confidence}]</span> ` +
+      (r.suggestion ? `<b>${r.suggestion}</b> — ${r.advice}` : `<b>${r.area}</b>: ${r.advice}`) + act +
+      `</summary><div class="adv-ev">${r.evidence.map(e => `· ${e}`).join('<br>')}</div></details>`;
+  }).join('') : '<div class="adv-rec">no recommendations — nothing in this stint stood out</div>';
   body.innerHTML = html;
+  body.querySelectorAll('button[data-accept]').forEach(btn => {
+    btn.onclick = async ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const r = a.recommendations[+btn.dataset.accept];
+      btn.disabled = true;
+      btn.textContent = 'saving…';
+      const post = new URLSearchParams({ partial: '1' });
+      for (const [k, v] of r.apply) post.set(k, v);
+      const resp = await fetch('/api/session/tune', { method: 'POST', body: post });
+      if (!resp.ok) { btn.textContent = 'failed'; btn.title = await resp.text(); return; }
+      const res = await resp.json();
+      // Recompute against the new revision: the accepted suggestion comes
+      // back marked "saved", and no stale absolute can be accepted twice.
+      await loadAdvice();
+      if (res.note) $('advise-sub').textContent += ` · journaled: ${res.note} — attaches to the next stint`;
+    };
+  });
   if ($('hist-sel')) {
     $('hist-sel').onchange = () => drawHistory(a.landscapes);
     drawHistory(a.landscapes);
