@@ -142,6 +142,47 @@ fn splice_trusted(p: &analysis::profile::StintProfile) -> bool {
         && p.composite.time_s >= 0.95 * p.best_lap_time_s
 }
 
+/// The car driven in a stint: first frame with a car ordinal set.
+fn car_of(stint: &analysis::Stint) -> Option<i32> {
+    stint.frames.iter().find(|t| t.frame.car_ordinal != 0).map(|t| t.frame.car_ordinal)
+}
+
+/// The prior stint whose SETUP differs least from `target` (ties -> most
+/// recent): the honest comparison partner for a step. Searches the given
+/// prefix of the per-step setups.
+fn min_diff_ancestor(
+    setups: &[Option<&crate::tuning::Revision>],
+    target: &crate::tuning::Revision,
+) -> Option<(usize, Vec<String>)> {
+    let mut best: Option<(usize, Vec<String>)> = None;
+    for (i, s) in setups.iter().enumerate() {
+        let Some(s) = s else { continue };
+        let keys = crate::tuning::diff_keys(s, target);
+        if best.as_ref().is_none_or(|(_, bk)| keys.len() <= bk.len()) {
+            best = Some((i, keys));
+        }
+    }
+    best
+}
+
+/// Distinct tuning areas the changed keys span, sorted for stable display.
+fn area_list(keys: &[String]) -> Vec<&'static str> {
+    let mut areas: Vec<&'static str> =
+        keys.iter().map(|k| crate::tuning::field_area(k)).collect();
+    areas.sort();
+    areas.dedup();
+    areas
+}
+
+/// "17 → -0.16s, 18 → -0.49s" listing of a landscape's tried values.
+fn nodes_summary(nodes: &[(f32, f32, usize)]) -> String {
+    nodes
+        .iter()
+        .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn stint_balance(stint: &analysis::Stint) -> Option<(f32, f32, f32)> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments.iter().max_by_key(|s| s.len())?;
@@ -463,11 +504,7 @@ pub fn advise(
     if let Some(first) = entries.first()
         && let Ok(stint) = analysis::Stint::load(first.path.as_ref())
     {
-        let journal_car = stint
-            .frames
-            .iter()
-            .find(|t| t.frame.car_ordinal != 0)
-            .map(|t| t.frame.car_ordinal);
+        let journal_car = car_of(&stint);
         if journal_car.is_some() && journal_car != session.car {
             let per_car = crate::tuning::journal_path_for(
                 journal_car,
@@ -508,19 +545,37 @@ pub fn advise(
         .collect();
     let positions = journal::track_positions(&changes);
 
+    // "suspect" in a journal note is the driver's own verdict on that stint
+    // (unfamiliar car, chaotic drive, traffic): every measurement touching it
+    // is treated as weak — kept visible, never trusted alone.
+    let suspect: Vec<bool> = loaded
+        .iter()
+        .map(|(e, _, _)| {
+            e.note
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase().contains("suspect"))
+        })
+        .collect();
+    // A stint-pair comparison is THIN when either side ran a single flying
+    // lap (no corroboration) or failed the splice-trust gate; WEAK adds the
+    // driver's own suspect verdict on either side.
+    let thin = |i: usize, j: usize| {
+        loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
+            || !splice_trusted(&loaded[i].2)
+            || !splice_trusted(&loaded[j].2)
+    };
+    let weak_pair = |i: usize, j: usize| thin(i, j) || suspect[i] || suspect[j];
+
     let mut steps = Vec::new();
     // Per-step comparison products vs the previous step, for the measurement
-    // harvest and A-B-A decomposition below. weak = either side ran a single
-    // flying lap (no corroboration).
+    // harvest and A-B-A decomposition below.
     let mut deltas: Vec<Option<f32>> = Vec::new();
     let mut attrs: Vec<Option<analysis::attribution::Attribution>> = Vec::new();
-    let mut weaks: Vec<bool> = Vec::new();
     for i in 0..loaded.len() {
         let (entry, stint, profile) = &loaded[i];
         let mut split = None;
         deltas.push(None);
         attrs.push(None);
-        weaks.push(false);
         let outcome = if i == 0 {
             None
         } else {
@@ -531,14 +586,7 @@ pub fn advise(
                     split = Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s));
                     *deltas.last_mut().unwrap() = Some(cmp.ideal_delta_s);
                     *attrs.last_mut().unwrap() = Some(attr);
-                    *weaks.last_mut().unwrap() = prev.laps.len().min(profile.laps.len()) < 2
-                        || !splice_trusted(prev)
-                        || !splice_trusted(profile);
-                    let word = match journal::judge(cmp.ideal_delta_s) {
-                        journal::Outcome::Improved(_) => "improved",
-                        journal::Outcome::Worsened(_) => "WORSE",
-                        _ => "inconclusive",
-                    };
+                    let word = journal::judge(cmp.ideal_delta_s).word();
                     Some(Ok((word, cmp.ideal_delta_s, prev.laps.len() != profile.laps.len())))
                 }
                 Err(e) => Some(Err(e)),
@@ -567,28 +615,12 @@ pub fn advise(
     let setups: Vec<Option<&crate::tuning::Revision>> = loaded
         .iter()
         .map(|(entry, stint, _)| {
-            let car = stint
-                .frames
-                .iter()
-                .find(|t| t.frame.car_ordinal != 0)
-                .map(|t| t.frame.car_ordinal);
+            let car = car_of(stint);
             if car.is_none() || car != session.car {
                 return None;
             }
             let stamp = stint_stamp(&entry.path)?;
             session.revisions.iter().rev().find(|r| r.stamp.as_str() < stamp)
-        })
-        .collect();
-
-    // "suspect" in a journal note is the driver's own verdict on that stint
-    // (unfamiliar car, chaotic drive, traffic): every measurement touching it
-    // is treated as weak — kept visible, never trusted alone.
-    let suspect: Vec<bool> = loaded
-        .iter()
-        .map(|(e, _, _)| {
-            e.note
-                .as_deref()
-                .is_some_and(|n| n.to_lowercase().contains("suspect"))
         })
         .collect();
 
@@ -602,10 +634,7 @@ pub fn advise(
             if !crate::tuning::diff_keys(si, sj).is_empty() {
                 continue;
             }
-            if loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
-                || !splice_trusted(&loaded[i].2)
-                || !splice_trusted(&loaded[j].2)
-            {
+            if thin(i, j) {
                 continue;
             }
             if let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) {
@@ -623,34 +652,17 @@ pub fn advise(
     let n = loaded.len();
     for j in 1..n.saturating_sub(1) {
         let Some(sj) = setups[j] else { continue };
-        let mut best: Option<(usize, Vec<String>)> = None;
-        for (i, si) in setups[..j].iter().enumerate() {
-            let Some(si) = si else { continue };
-            let keys = crate::tuning::diff_keys(si, sj);
-            if best.as_ref().is_none_or(|(_, bk)| keys.len() <= bk.len()) {
-                best = Some((i, keys));
-            }
-        }
-        let Some((i, keys)) = best else { continue };
+        let Some((i, keys)) = min_diff_ancestor(&setups[..j], sj) else { continue };
         if i == j - 1 {
             continue;
         }
         let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else { continue };
-        let mut areas: Vec<&str> = keys.iter().map(|k| crate::tuning::field_area(k)).collect();
-        areas.sort();
-        areas.dedup();
         steps[j].anchor = Some(RowAnchor {
             vs_step: i + 1,
-            areas: areas.join(", "),
+            areas: area_list(&keys).join(", "),
             delta_s: cmp.ideal_delta_s,
-            word: match journal::judge(cmp.ideal_delta_s) {
-                journal::Outcome::Improved(_) => "improved",
-                journal::Outcome::Worsened(_) => "WORSE",
-                _ => "inconclusive",
-            },
-            weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
-                || !splice_trusted(&loaded[i].2)
-                || !splice_trusted(&loaded[j].2),
+            word: journal::judge(cmp.ideal_delta_s).word(),
+            weak: thin(i, j),
         });
     }
 
@@ -664,28 +676,13 @@ pub fn advise(
     if let Some(Some(last_setup)) = setups.last()
         && n >= 2
     {
-        let mut best: Option<(usize, Vec<String>)> = None;
-        for (i, setup) in setups[..n - 1].iter().enumerate() {
-            let Some(setup) = setup else { continue };
-            let keys = crate::tuning::diff_keys(setup, last_setup);
-            if best.as_ref().is_none_or(|(_, bk)| keys.len() <= bk.len()) {
-                best = Some((i, keys));
-            }
-        }
-        if let Some((i, keys)) = best
+        if let Some((i, keys)) = min_diff_ancestor(&setups[..n - 1], last_setup)
             && let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[n - 1].2)
         {
             let attr = analysis::attribution::split_delta(&loaded[i].2, &cmp.bin_delta_s);
-            let mut areas: Vec<&str> =
-                keys.iter().map(|k| crate::tuning::field_area(k)).collect();
-            areas.sort();
-            areas.dedup();
+            let areas = area_list(&keys);
             let changes = crate::tuning::diff_note(setups[i].unwrap(), last_setup);
-            let weak = loaded[i].2.laps.len().min(loaded[n - 1].2.laps.len()) < 2
-                || suspect[i]
-                || suspect[n - 1]
-                || !splice_trusted(&loaded[i].2)
-                || !splice_trusted(&loaded[n - 1].2);
+            let weak = weak_pair(i, n - 1);
             let outcome = journal::judge(cmp.ideal_delta_s);
             let single_family =
                 (areas.len() == 1).then(|| journal::family_for_area(areas[0])).flatten();
@@ -710,11 +707,7 @@ pub fn advise(
                 areas: areas.join(", "),
                 changes,
                 delta_s: cmp.ideal_delta_s,
-                word: match outcome {
-                    journal::Outcome::Improved(_) => "improved",
-                    journal::Outcome::Worsened(_) => "WORSE",
-                    _ => "inconclusive",
-                },
+                word: outcome.word(),
                 weak,
                 reconciled: anchor_change.is_some(),
                 split: (attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s),
@@ -783,11 +776,7 @@ pub fn advise(
             if keys.is_empty() {
                 continue;
             }
-            let mut areas: Vec<&str> =
-                keys.iter().map(|k| crate::tuning::field_area(k)).collect();
-            areas.sort();
-            areas.dedup();
-            let [area] = areas[..] else { continue };
+            let [area] = area_list(&keys)[..] else { continue };
             let Some(family) = journal::family_for_area(area) else { continue };
             let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else {
                 continue;
@@ -814,11 +803,7 @@ pub fn advise(
                     j + 1
                 ),
                 attributed: None,
-                weak: loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
-                    || suspect[i]
-                    || suspect[j]
-                    || !splice_trusted(&loaded[i].2)
-                    || !splice_trusted(&loaded[j].2),
+                weak: weak_pair(i, j),
                 i,
                 j,
                 direct: true,
@@ -837,7 +822,7 @@ pub fn advise(
                 outcome: journal::judge(delta),
                 desc: note.clone(),
                 attributed: None,
-                weak: weaks[j] || suspect[j - 1] || suspect[j],
+                weak: weak_pair(j - 1, j),
                 i: j - 1,
                 j,
                 direct: false,
@@ -878,7 +863,7 @@ pub fn advise(
                     outcome: journal::judge(channel_delta),
                     desc: clause_text.to_string(),
                     attributed: Some(evidence.clone()),
-                    weak: weaks[j] || suspect[j - 1] || suspect[j],
+                    weak: weak_pair(j - 1, j),
                     i: j - 1,
                     j,
                     direct: false,
@@ -1001,12 +986,7 @@ pub fn advise(
                 from_step: m.i + 1,
                 to_step: m.j + 1,
                 desc: m.desc.clone(),
-                delta_s: match m.outcome {
-                    journal::Outcome::Improved(d)
-                    | journal::Outcome::Worsened(d)
-                    | journal::Outcome::Unclear(d) => d,
-                    journal::Outcome::NotComparable => 0.0,
-                },
+                delta_s: m.outcome.delta_s().unwrap_or(0.0),
                 split: m.split,
                 weak: m.weak,
                 direct: m.direct,
@@ -1035,12 +1015,7 @@ pub fn advise(
                 .iter()
                 .filter(|m| !m.weak && m.clean)
                 .filter_map(|m| {
-                    let d = match m.outcome {
-                        journal::Outcome::Improved(d)
-                        | journal::Outcome::Worsened(d)
-                        | journal::Outcome::Unclear(d) => d,
-                        journal::Outcome::NotComparable => return None,
-                    };
+                    let d = m.outcome.delta_s()?;
                     Some((m.j, value_of(m.i)?, value_of(m.j)?, d))
                 })
                 .collect();
@@ -1095,10 +1070,7 @@ pub fn advise(
                     .flatten()
                     .and_then(|b| b.values.get(key)?.parse::<f32>().ok())
                     .is_some_and(|cur| (cur - vertex).abs() < 0.05);
-                let landscape: Vec<String> = nodes
-                    .iter()
-                    .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
-                    .collect();
+                let landscape = nodes_summary(&nodes);
                 let disp =
                     crate::tuning::display_value(key, &vertex.to_string(), &session.facts);
                 // A fitted optimum away from the current setting deserves a
@@ -1157,9 +1129,8 @@ pub fn advise(
                     }
                     r.confidence = analysis::recommend::Confidence::Medium;
                     r.evidence.push(format!(
-                        "measured landscape ({phrase}): {} (cumulative ideal \
-                         delta vs first tried value; lower = faster)",
-                        landscape.join(", "),
+                        "measured landscape ({phrase}): {landscape} (cumulative \
+                         ideal delta vs first tried value; lower = faster)"
                     ));
                 }
             }
@@ -1208,11 +1179,7 @@ pub fn advise(
                 r.evidence.push(format!(
                     "measured landscape ({phrase}): {} (cumulative ideal delta; \
                      lower = faster)",
-                    nodes
-                        .iter()
-                        .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
-                        .collect::<Vec<_>>()
-                        .join(", "),
+                    nodes_summary(&nodes),
                 ));
             }
         }
@@ -1230,10 +1197,6 @@ pub fn advise(
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|n| n.0)
                 .unwrap_or(v);
-            let mapped: Vec<String> = nodes
-                .iter()
-                .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
-                .collect();
             recs.push(analysis::recommend::Recommendation {
                 area: "probe",
                 suggestion: Some(format!(
@@ -1248,7 +1211,7 @@ pub fn advise(
                 ),
                 evidence: vec![format!(
                     "mapped so far: {} (cumulative ideal delta; lower = faster)",
-                    mapped.join(", "),
+                    nodes_summary(&nodes),
                 )],
                 confidence: analysis::recommend::Confidence::Low,
                 implied: Some(journal::Change {
@@ -1282,12 +1245,7 @@ pub fn advise(
             let Some(m) = latest.iter().find(|m| m.change.family == implied.family) else {
                 continue;
             };
-            let margin = match m.outcome {
-                journal::Outcome::Improved(d)
-                | journal::Outcome::Worsened(d)
-                | journal::Outcome::Unclear(d) => d.abs(),
-                journal::Outcome::NotComparable => continue,
-            };
+            let Some(margin) = m.outcome.delta_s().map(f32::abs) else { continue };
             if margin < floor {
                 r.evidence.push(format!(
                     "provisional: the deciding margin ({margin:.2}s) is under the \
@@ -1307,12 +1265,7 @@ pub fn advise(
     // Cite tune absolutes only when the journal's stints are the session
     // car's — an explicitly passed foreign journal must not quote this car's
     // sliders as if they were its own.
-    let last_car = last_stint
-        .frames
-        .iter()
-        .find(|t| t.frame.car_ordinal != 0)
-        .map(|t| t.frame.car_ordinal);
-    let current_tune = if last_car == session.car {
+    let current_tune = if car_of(last_stint) == session.car {
         enrich_with_tune(&mut recs, &session)
     } else {
         Vec::new()

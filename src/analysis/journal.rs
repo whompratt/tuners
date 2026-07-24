@@ -288,6 +288,25 @@ pub fn judge(ideal_delta_s: f32) -> Outcome {
     }
 }
 
+impl Outcome {
+    /// The ideal-lap delta behind the verdict, when one was measured.
+    pub fn delta_s(self) -> Option<f32> {
+        match self {
+            Outcome::Improved(d) | Outcome::Worsened(d) | Outcome::Unclear(d) => Some(d),
+            Outcome::NotComparable => None,
+        }
+    }
+
+    /// Display word for trajectory rows and anchors.
+    pub fn word(self) -> &'static str {
+        match self {
+            Outcome::Improved(_) => "improved",
+            Outcome::Worsened(_) => "WORSE",
+            _ => "inconclusive",
+        }
+    }
+}
+
 /// Fold the last step's measured outcome into the blind recommendations. A
 /// recommendation pointing the same direction as a step that just LOST time gets
 /// replaced by "revert half" — the behavioural signal alone would push past the
