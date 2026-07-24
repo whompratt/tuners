@@ -8,6 +8,16 @@ use super::metrics::StintMetrics;
 /// Balance index magnitudes: mild tendency vs clear problem.
 const BALANCE_MILD: f32 = 0.05;
 const BALANCE_CLEAR: f32 = 0.10;
+/// Entry−exit index gap before an imbalance counts as phase-concentrated and
+/// the fix priorities change (forza.guide "Balance & Fix-It" cards). Corpus:
+/// converged tarmac tunes read |gap| 0.01-0.06; dirt entry push 0.10-0.28;
+/// the exit-pushy McLaren stints -0.10..-0.14.
+const PHASE_GAP: f32 = 0.10;
+/// Braking-band index confirming the front burns its grip budget under
+/// braking (entry-understeer card: brake bias is a lever). Healthy tarmac
+/// reads <= +0.25; tarmac-only — dirt trail-brake rotation is technique and
+/// reads +0.22..+0.67 even on reference tunes.
+const BRAKE_PUSH: f32 = 0.30;
 /// Working tire temperature band (°F) per compound; outside it pressures
 /// likely need adjusting. The slick band is the in-game-validated anchor
 /// (160-210°F reads right on real FH6 sessions); the rest are offset from it
@@ -180,13 +190,104 @@ fn balance_rule(
         (false, _) => Confidence::Low,
     };
     let understeer = idx > 0.0;
-    let advice = if understeer {
-        "reduce front roll stiffness: soften the front anti-roll bar first \
-         (springs second)"
-    } else {
-        "reduce rear roll stiffness: soften the rear anti-roll bar first \
-         (springs second)"
+
+    // Where in the corner the imbalance lives decides WHICH end/system to
+    // touch (forza.guide fix-it cards): entry and mid-corner imbalance are
+    // roll-stiffness problems, but exit imbalance under power is a driveline/
+    // load-transfer problem — softening the loaded end would dull turn-in
+    // without fixing it. Uniform imbalance keeps the classic bar advice.
+    let phase_split = overall.corners.as_ref().and_then(|c| {
+        match supported_pair(&c.entry, &c.exit) {
+            (Some(e), Some(x)) => Some((e, x)),
+            _ => None,
+        }
+    });
+    let lean = phase_split
+        .map(|(e, x)| {
+            let gap = (e - x) * idx.signum(); // + = entry-concentrated for this sign
+            if gap >= PHASE_GAP && e.abs() >= BALANCE_MILD {
+                PhaseLean::Entry
+            } else if gap <= -PHASE_GAP && x.abs() >= BALANCE_MILD {
+                PhaseLean::Exit
+            } else {
+                PhaseLean::Uniform
+            }
+        })
+        .unwrap_or(PhaseLean::Uniform);
+    let on_power = overall
+        .balance_on_throttle
+        .index
+        .filter(|_| overall.balance_on_throttle.samples >= BAND_MIN_SAMPLES)
+        .is_some_and(|on| on * idx.signum() >= BALANCE_MILD);
+
+    let front_driven = overall.drivetrain_type != 1; // FWD or AWD
+    let (advice, family, softer): (String, _, _) = match (understeer, lean) {
+        (true, PhaseLean::Entry) => (
+            "reduce front roll stiffness: soften the front anti-roll bar first \
+             (springs second). The push concentrates at corner entry — if a \
+             softer front end doesn't clear it, shift brake balance rearward \
+             or reduce rear diff decel next"
+                .into(),
+            Family::FrontRoll,
+            true,
+        ),
+        (true, PhaseLean::Exit) if on_power && front_driven => (
+            "reduce front diff accel lock: the front washes out under power on \
+             corner exit — softening the front end would dull turn-in without \
+             fixing the power-on push. Stiffening the rear (springs/arb) is \
+             the second lever"
+                .into(),
+            Family::DiffAccel,
+            true,
+        ),
+        (true, PhaseLean::Exit) if on_power => (
+            "stiffen the rear (anti-roll bar or springs) to shift grip \
+             forward: the push appears under power on corner exit, not at \
+             turn-in — softening the front would dull entry without fixing it"
+                .into(),
+            Family::RearRoll,
+            false,
+        ),
+        (false, PhaseLean::Entry) => (
+            "increase rear diff decel lock: the rear steps out into corners \
+             (braking / lift-off) — decel lock stabilises entry. Softening \
+             the rear arb or springs is the second lever, brake balance \
+             forward the third"
+                .into(),
+            Family::DiffDecel,
+            false,
+        ),
+        (false, PhaseLean::Exit) if on_power => (
+            "reduce rear roll stiffness: soften the rear anti-roll bar first \
+             (springs second). The slide concentrates on corner exit under \
+             throttle — if softer rear roll doesn't clear it, reduce rear \
+             diff accel next"
+                .into(),
+            Family::RearRoll,
+            true,
+        ),
+        (true, _) => (
+            "reduce front roll stiffness: soften the front anti-roll bar first \
+             (springs second)"
+                .into(),
+            Family::FrontRoll,
+            true,
+        ),
+        (false, _) => (
+            "reduce rear roll stiffness: soften the rear anti-roll bar first \
+             (springs second)"
+                .into(),
+            Family::RearRoll,
+            true,
+        ),
     };
+    // Phase-redirected driveline primaries rest on the newer corner-phase
+    // signal and on families whose behavioural evidence is historically weak
+    // (plan 007/008 A/Bs) — never High on the split alone.
+    let mut confidence = confidence;
+    if matches!(family, Family::DiffAccel | Family::DiffDecel) {
+        confidence = confidence.min(Confidence::Medium);
+    }
 
     let mut evidence = vec![format!(
         "{} tendency: front−rear slip angle delta {idx:+.2} while cornering",
@@ -229,26 +330,71 @@ fn balance_rule(
     if let Some(c) = &overall.corners
         && let (Some(entry), Some(exit)) = supported_pair(&c.entry, &c.exit)
     {
+        let mark = match lean {
+            PhaseLean::Entry => " — concentrated at entry",
+            PhaseLean::Exit => " — concentrated at exit",
+            PhaseLean::Uniform => "",
+        };
         evidence.push(format!(
             "by corner phase: {entry:+.2} into corners, {exit:+.2} out \
-             ({} corners)",
+             ({} corners){mark}",
             c.corners,
+        ));
+    }
+    if matches!(lean, PhaseLean::Exit) && on_power {
+        evidence.push(format!(
+            "on-throttle index {:+.2} — the imbalance rides the power",
+            overall.balance_on_throttle.index.unwrap_or(0.0),
         ));
     }
 
     recs.push(Recommendation { apply: Vec::new(),
         area: "balance",
-        advice: advice.into(),
+        advice,
         evidence,
         confidence,
         suggestion: None,
-        implied: Some(Change {
-            family: if understeer { Family::FrontRoll } else { Family::RearRoll },
-            softer: true,
-            magnitude: None,
-        }),
+        implied: Some(Change { family, softer, magnitude: None }),
     });
+
+    // Entry-understeer corroborated by the braking band (tarmac only — dirt
+    // trail-brake rotation is technique): brake balance is its own lever on
+    // the entry card, worth a separate journalable recommendation. Single-car
+    // calibration so far (plan 008 brake A/B), hence Low.
+    if understeer
+        && matches!(lean, PhaseLean::Entry)
+        && !overall.surface_loose
+        && let Some(brake) = overall
+            .balance_on_brake
+            .index
+            .filter(|_| overall.balance_on_brake.samples >= BAND_MIN_SAMPLES)
+        && brake >= BRAKE_PUSH
+    {
+        recs.push(Recommendation { apply: Vec::new(),
+            area: "brakes",
+            advice: "shift brake balance rearward a step: the front spends its \
+                     grip on braking while still turning in"
+                .into(),
+            evidence: vec![format!(
+                "braking-band balance {brake:+.2} vs {BRAKE_PUSH:+.2} threshold \
+                 (healthy tarmac reads under +0.25)"
+            )],
+            confidence: Confidence::Low,
+            suggestion: None,
+            implied: Some(Change { family: Family::Brakes, softer: true, magnitude: None }),
+        });
+    }
     Some(idx.signum())
+}
+
+/// Which corner phase an imbalance concentrates in, per the sign of the
+/// overall index (entry-heavy understeer and entry-heavy oversteer both read
+/// Entry).
+#[derive(Clone, Copy, PartialEq)]
+enum PhaseLean {
+    Entry,
+    Exit,
+    Uniform,
 }
 
 /// Both bands' indices, when each has enough cornering samples to trust.
@@ -749,6 +895,85 @@ mod tests {
         assert_eq!(tire_recs.len(), 2, "both axles cold");
         assert!(tire_recs.iter().all(|r| r.advice.contains("lower")));
         assert!(tire_recs.iter().all(|r| r.confidence == Confidence::Medium));
+    }
+
+    fn corners(entry: f32, exit: f32) -> Option<crate::analysis::corners::CornerSummary> {
+        Some(crate::analysis::corners::CornerSummary {
+            corners: 20,
+            entry: band(5000, entry),
+            exit: band(5000, exit),
+            avg_apex_speed: 40.0,
+        })
+    }
+
+    /// Entry-concentrated understeer keeps the front-arb primary (entry card
+    /// leads with it) but names the entry levers, and a hot braking band adds
+    /// the brake-balance secondary — on tarmac only, dirt trail-braking is
+    /// technique.
+    #[test]
+    fn entry_understeer_names_entry_levers_and_brakes() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.24);
+        overall.corners = corners(0.30, 0.10);
+        overall.balance_on_brake = band(1000, 0.40);
+        let recs = recommend(&overall, &[], None);
+        let bal = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert!(bal.advice.contains("corner entry"), "{}", bal.advice);
+        assert_eq!(bal.implied.unwrap().family, Family::FrontRoll);
+        let brakes = recs.iter().find(|r| r.area == "brakes").expect("brake secondary");
+        assert!(brakes.advice.contains("rearward"), "{}", brakes.advice);
+        assert_eq!(brakes.implied.unwrap().family, Family::Brakes);
+
+        overall.surface_loose = true;
+        let recs = recommend(&overall, &[], None);
+        assert!(recs.iter().all(|r| r.area != "brakes"), "dirt trail-braking is technique");
+    }
+
+    /// Exit-concentrated understeer under power is NOT a front-bar problem:
+    /// front-driven cars get the diff-accel redirect, RWD gets rear stiffening.
+    #[test]
+    fn exit_understeer_redirects_by_drivetrain() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.30);
+        overall.corners = corners(0.12, 0.35);
+        overall.balance_on_throttle = band(5000, 0.30);
+        overall.drivetrain_type = 2; // AWD
+        let recs = recommend(&overall, &[], None);
+        let bal = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert!(bal.advice.contains("front diff accel"), "{}", bal.advice);
+        let implied = bal.implied.unwrap();
+        assert_eq!(implied.family, Family::DiffAccel);
+        assert!(implied.softer);
+        assert!(bal.confidence <= Confidence::Medium, "diff redirect never High");
+
+        overall.drivetrain_type = 1; // RWD: no front diff to open
+        let recs = recommend(&overall, &[], None);
+        let bal = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert!(bal.advice.contains("stiffen the rear"), "{}", bal.advice);
+        let implied = bal.implied.unwrap();
+        assert_eq!(implied.family, Family::RearRoll);
+        assert!(!implied.softer);
+    }
+
+    /// Entry-concentrated oversteer leads with rear diff decel (entry card);
+    /// uniform oversteer keeps the classic rear-bar advice.
+    #[test]
+    fn entry_oversteer_leads_with_decel_lock() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(-0.15);
+        overall.corners = corners(-0.28, -0.06);
+        let recs = recommend(&overall, &[], None);
+        let bal = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert!(bal.advice.contains("rear diff decel"), "{}", bal.advice);
+        let implied = bal.implied.unwrap();
+        assert_eq!(implied.family, Family::DiffDecel);
+        assert!(!implied.softer, "more decel lock = stiffer");
+
+        overall.corners = corners(-0.15, -0.14);
+        let recs = recommend(&overall, &[], None);
+        let bal = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert!(bal.advice.contains("rear anti-roll bar"), "{}", bal.advice);
+        assert_eq!(bal.implied.unwrap().family, Family::RearRoll);
     }
 
     /// Bands are compound-relative: 155°F is cold for slicks, in-band for
