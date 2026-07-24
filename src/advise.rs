@@ -193,6 +193,7 @@ fn stint_balance(stint: &analysis::Stint) -> Option<(f32, f32, f32)> {
 fn blind_recommendations(
     stint: &analysis::Stint,
     path: &str,
+    compound: Option<&str>,
 ) -> Result<Vec<analysis::recommend::Recommendation>, String> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments
@@ -205,7 +206,7 @@ fn blind_recommendations(
         .filter(|l| l.time_s.is_some() && !l.standing_start)
         .map(|l| analysis::metrics::stint_metrics(l.frames))
         .collect();
-    Ok(analysis::recommend::recommend(&overall, &per_lap))
+    Ok(analysis::recommend::recommend(&overall, &per_lap, compound))
 }
 
 fn family_keys(family: journal::Family) -> &'static [&'static str] {
@@ -527,7 +528,11 @@ pub fn advise(
             .ok_or("no stints recorded yet — drive first")?;
         let stint =
             analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
-        let mut recs = blind_recommendations(&stint, &path)?;
+        let mut recs = blind_recommendations(
+            &stint,
+            &path,
+            session.facts.get("tire_compound").map(String::as_str),
+        )?;
         let current_tune = enrich_with_tune(&mut recs, &session);
         return Ok(AdviseView {
             journal: None,
@@ -948,7 +953,11 @@ pub fn advise(
     }
 
     let (last_entry, last_stint, _) = loaded.last().unwrap();
-    let mut recs = blind_recommendations(last_stint, &last_entry.path)?;
+    let mut recs = blind_recommendations(
+        last_stint,
+        &last_entry.path,
+        session.facts.get("tire_compound").map(String::as_str),
+    )?;
     let mut matched_families: Vec<journal::Family> = Vec::new();
     for m in &latest {
         if journal::reconcile(

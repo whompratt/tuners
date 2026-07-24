@@ -8,9 +8,30 @@ use super::metrics::StintMetrics;
 /// Balance index magnitudes: mild tendency vs clear problem.
 const BALANCE_MILD: f32 = 0.05;
 const BALANCE_CLEAR: f32 = 0.10;
-/// Working tire temperature band (°F); outside it pressures likely need adjusting.
-const TEMP_BAND_LOW_F: f32 = 160.0;
-const TEMP_BAND_HIGH_F: f32 = 210.0;
+/// Working tire temperature band (°F) per compound; outside it pressures
+/// likely need adjusting. The slick band is the in-game-validated anchor
+/// (160-210°F reads right on real FH6 sessions); the rest are offset from it
+/// using real-world relative operating windows — street compounds run their
+/// best grip cooler than race rubber, loose-surface compounds far cooler,
+/// snow coldest. Heuristic: the game publishes no per-compound numbers, so
+/// these are extrapolations, not measurements.
+fn temp_band(compound: Option<&str>) -> (f32, f32, &'static str) {
+    match compound.unwrap_or("") {
+        "slick" => (160.0, 210.0, "slick"),
+        "semi-slick" => (150.0, 200.0, "semi-slick"),
+        "drag" => (150.0, 200.0, "drag"),
+        "drift" => (140.0, 210.0, "drift"),
+        "sport" => (140.0, 190.0, "sport"),
+        "street" => (130.0, 180.0, "street"),
+        "stock" => (120.0, 175.0, "stock"),
+        "vintage" => (120.0, 175.0, "vintage"),
+        "rally" => (110.0, 160.0, "rally"),
+        "offroad" => (100.0, 150.0, "offroad"),
+        "snow" => (60.0, 110.0, "snow"),
+        // No compound on file (blind mode): the legacy band, flagged as such.
+        _ => (160.0, 210.0, ""),
+    }
+}
 /// °F beyond the band edge before the pressure rule speaks with medium confidence.
 const TEMP_CLEAR_MARGIN_F: f32 = 20.0;
 /// Wheelspin as a fraction of on-throttle time.
@@ -116,13 +137,17 @@ pub struct Recommendation {
 
 /// `overall` covers the whole stint; `per_lap` holds metrics for each completed
 /// flying lap (used to judge consistency). Sorted most-confident first.
-pub fn recommend(overall: &StintMetrics, per_lap: &[StintMetrics]) -> Vec<Recommendation> {
+pub fn recommend(
+    overall: &StintMetrics,
+    per_lap: &[StintMetrics],
+    compound: Option<&str>,
+) -> Vec<Recommendation> {
     let mut recs = Vec::new();
 
     let balance_sign = balance_rule(overall, per_lap, &mut recs);
     aero_rule(overall, &mut recs);
     power_balance_rule(overall, &mut recs);
-    tire_pressure_rule(overall, balance_sign, &mut recs);
+    tire_pressure_rule(overall, balance_sign, compound, &mut recs);
     traction_rule(overall, &mut recs);
     gearing_rule(overall, &mut recs);
     suspension_rule(overall, &mut recs);
@@ -330,35 +355,41 @@ fn power_balance_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
 fn tire_pressure_rule(
     overall: &StintMetrics,
     balance_sign: Option<f32>,
+    compound: Option<&str>,
     recs: &mut Vec<Recommendation>,
 ) {
+    let (low, high, band_name) = temp_band(compound);
+    let band_label = if band_name.is_empty() {
+        "working band (no tire compound on file — assuming slick)".to_string()
+    } else {
+        format!("{band_name} working band")
+    };
     let (front, rear) = axle_temps(overall);
     for (axle, avg, scrub_heated) in [
         ("front", front, balance_sign == Some(1.0)),
         ("rear", rear, balance_sign == Some(-1.0)),
     ] {
-        let (advice, margin) = if avg > TEMP_BAND_HIGH_F {
+        let (advice, margin) = if avg > high {
             (
                 format!("raise {axle} tire pressures a step — {axle} tires run hot"),
-                avg - TEMP_BAND_HIGH_F,
+                avg - high,
             )
-        } else if avg < TEMP_BAND_LOW_F {
+        } else if avg < low {
             (
                 format!("lower {axle} tire pressures a step to build temperature"),
-                TEMP_BAND_LOW_F - avg,
+                low - avg,
             )
         } else {
             continue;
         };
-        let mut evidence = vec![format!(
-            "{axle} avg temp {avg:.0}°F vs {TEMP_BAND_LOW_F:.0}-{TEMP_BAND_HIGH_F:.0}°F working band"
-        )];
+        let mut evidence =
+            vec![format!("{axle} avg temp {avg:.0}°F vs {low:.0}-{high:.0}°F {band_label}")];
         let mut confidence = if margin >= TEMP_CLEAR_MARGIN_F {
             Confidence::Medium
         } else {
             Confidence::Low
         };
-        if scrub_heated && avg > TEMP_BAND_HIGH_F {
+        if scrub_heated && avg > high {
             confidence = Confidence::Low;
             evidence.push(
                 "heat is partly scrub from the balance issue above — fix balance first".into(),
@@ -666,7 +697,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.understeer_index = Some(0.24);
         let laps = [lap_with_index(0.23), lap_with_index(0.26), lap_with_index(0.24)];
-        let recs = recommend(&overall, &laps);
+        let recs = recommend(&overall, &laps, None);
         let balance = recs.iter().find(|r| r.area == "balance").unwrap();
         assert_eq!(balance.confidence, Confidence::High);
         assert!(balance.advice.contains("front anti-roll bar"), "{}", balance.advice);
@@ -678,7 +709,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.understeer_index = Some(-0.15);
         let laps = [lap_with_index(-0.20), lap_with_index(0.02)];
-        let recs = recommend(&overall, &laps);
+        let recs = recommend(&overall, &laps, None);
         let balance = recs.iter().find(|r| r.area == "balance").unwrap();
         assert_eq!(balance.confidence, Confidence::Medium);
         assert!(balance.advice.contains("rear anti-roll bar"), "{}", balance.advice);
@@ -686,7 +717,7 @@ mod tests {
 
     #[test]
     fn neutral_car_gets_no_balance_advice() {
-        let recs = recommend(&base_metrics(), &[]);
+        let recs = recommend(&base_metrics(), &[], None);
         assert!(recs.iter().all(|r| r.area != "balance"));
     }
 
@@ -696,7 +727,7 @@ mod tests {
         overall.understeer_index = Some(0.24);
         overall.tire_temp.fl.avg = 245.0;
         overall.tire_temp.fr.avg = 245.0;
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let tires = recs.iter().find(|r| r.area == "tires").unwrap();
         assert_eq!(tires.confidence, Confidence::Low, "scrub heat defers to balance");
         assert!(tires.evidence.iter().any(|e| e.contains("fix balance first")));
@@ -713,11 +744,54 @@ mod tests {
         ] {
             t.avg = 120.0;
         }
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let tire_recs: Vec<_> = recs.iter().filter(|r| r.area == "tires").collect();
         assert_eq!(tire_recs.len(), 2, "both axles cold");
         assert!(tire_recs.iter().all(|r| r.advice.contains("lower")));
         assert!(tire_recs.iter().all(|r| r.confidence == Confidence::Medium));
+    }
+
+    /// Bands are compound-relative: 155°F is cold for slicks, in-band for
+    /// semi-slicks (the real Ferrari campaign temps), and HOT for rally rubber.
+    #[test]
+    fn temp_band_follows_the_compound() {
+        let mut overall = base_metrics();
+        for t in [
+            &mut overall.tire_temp.fl,
+            &mut overall.tire_temp.fr,
+            &mut overall.tire_temp.rl,
+            &mut overall.tire_temp.rr,
+        ] {
+            t.avg = 155.0;
+        }
+        let recs = recommend(&overall, &[], Some("slick"));
+        assert!(recs.iter().any(|r| r.area == "tires" && r.advice.contains("lower")));
+        let recs = recommend(&overall, &[], Some("semi-slick"));
+        assert!(recs.iter().all(|r| r.area != "tires"), "155°F is in the semi-slick band");
+        for t in [
+            &mut overall.tire_temp.fl,
+            &mut overall.tire_temp.fr,
+            &mut overall.tire_temp.rl,
+            &mut overall.tire_temp.rr,
+        ] {
+            t.avg = 170.0;
+        }
+        let recs = recommend(&overall, &[], Some("rally"));
+        let tires = recs.iter().find(|r| r.area == "tires").unwrap();
+        assert!(tires.advice.contains("raise"), "170°F overheats rally rubber: {}", tires.advice);
+        assert!(tires.evidence[0].contains("rally working band"), "{}", tires.evidence[0]);
+        for t in [
+            &mut overall.tire_temp.fl,
+            &mut overall.tire_temp.fr,
+            &mut overall.tire_temp.rl,
+            &mut overall.tire_temp.rr,
+        ] {
+            t.avg = 155.0;
+        }
+        // No compound on file: legacy band, flagged as an assumption.
+        let recs = recommend(&overall, &[], None);
+        let tires = recs.iter().find(|r| r.area == "tires").unwrap();
+        assert!(tires.evidence[0].contains("no tire compound on file"), "{}", tires.evidence[0]);
     }
 
     fn band(samples: usize, index: f32) -> crate::analysis::metrics::BandBalance {
@@ -737,7 +811,7 @@ mod tests {
         overall.understeer_index = Some(0.04);
         overall.balance_low_speed = band(2000, 0.02);
         overall.balance_high_speed = band(2000, 0.14);
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let aero = recs.iter().find(|r| r.area == "aero").unwrap();
         assert!(aero.advice.contains("add front aero"), "{}", aero.advice);
         assert_eq!(aero.confidence, Confidence::Medium);
@@ -750,7 +824,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.balance_low_speed = band(2000, -0.01);
         overall.balance_high_speed = band(2000, -0.13);
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let aero = recs.iter().find(|r| r.area == "aero").unwrap();
         assert!(aero.advice.contains("add rear aero"), "{}", aero.advice);
         assert_eq!(aero.implied.unwrap().family, Family::RearAero);
@@ -765,7 +839,7 @@ mod tests {
         overall.understeer_index = Some(0.24);
         overall.balance_low_speed = band(9000, 0.37);
         overall.balance_high_speed = band(30000, 0.20);
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "aero"));
         let balance = recs.iter().find(|r| r.area == "balance").unwrap();
         assert!(
@@ -780,7 +854,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.balance_low_speed = band(2000, 0.0);
         overall.balance_high_speed = band(100, 0.30); // too few samples to trust
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "aero"));
     }
 
@@ -790,7 +864,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.balance_on_throttle = band(2000, -0.12);
         overall.balance_off_throttle = band(2000, 0.02);
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let diff = recs.iter().find(|r| r.area == "differential").unwrap();
         assert!(diff.advice.contains("rear differential acceleration lock"), "{}", diff.advice);
         assert_eq!(diff.implied.unwrap().family, Family::DiffAccel);
@@ -804,7 +878,7 @@ mod tests {
         overall.drivetrain_type = 2;
         overall.balance_on_throttle = band(2000, 0.15);
         overall.balance_off_throttle = band(2000, 0.02);
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let diff = recs.iter().find(|r| r.area == "differential").unwrap();
         assert!(diff.advice.contains("front differential"), "{}", diff.advice);
         assert!(
@@ -822,7 +896,7 @@ mod tests {
         overall.surface_loose = true;
         overall.balance_on_throttle = band(9000, -0.06);
         overall.balance_off_throttle = band(5000, 0.57);
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "differential"), "{recs:?}");
     }
 
@@ -835,7 +909,7 @@ mod tests {
         overall.understeer_index = Some(0.27);
         overall.balance_on_throttle = band(27000, 0.26);
         overall.balance_off_throttle = band(16000, 0.30);
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "differential"));
     }
 
@@ -843,7 +917,7 @@ mod tests {
     fn rwd_wheelspin_names_the_rear() {
         let mut overall = base_metrics();
         overall.wheelspin_frac = Some(0.2);
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let traction = recs.iter().find(|r| r.area == "traction").unwrap();
         assert_eq!(traction.confidence, Confidence::High);
         assert!(traction.advice.contains("rear-axle"), "{}", traction.advice);
@@ -855,7 +929,7 @@ mod tests {
         overall.gears.limiter_frac = 0.05;
         overall.gears.top_gear = 6;
         overall.gears.top_gear_max_rpm = 7900.0;
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let gearing = recs.iter().find(|r| r.area == "gearing").unwrap();
         assert!(gearing.advice.contains("lengthen the final drive"), "{}", gearing.advice);
     }
@@ -870,7 +944,7 @@ mod tests {
         overall.gears.top_gear_max_rpm = 8928.0; // one downhill burst near redline...
         overall.gears.top_gear_high_rev_frac = 0.001; // ...but no sustained use
         overall.gears.time_frac = vec![(6, 0.15), (7, 0.52), (8, 0.20)];
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let gearing = recs.iter().find(|r| r.area == "gearing").unwrap();
         assert!(gearing.advice.contains("shorten the final drive"), "{}", gearing.advice);
         assert!(gearing.evidence[0].contains("20.0% of the stint"), "{}", gearing.evidence[0]);
@@ -886,7 +960,7 @@ mod tests {
         overall.gears.top_gear_max_rpm = 5500.0; // 69% of the 8000 redline
         overall.gears.top_gear_high_rev_frac = 0.0;
         overall.gears.time_frac = vec![(4, 0.5), (5, 0.4), (6, 0.04)];
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "gearing"));
     }
 
@@ -900,7 +974,7 @@ mod tests {
         overall.gears.top_gear_max_rpm = 8211.0;
         overall.gears.top_gear_high_rev_frac = 0.087;
         overall.gears.time_frac = vec![(4, 0.36), (5, 0.34), (6, 0.18)];
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "gearing"));
     }
 
@@ -908,7 +982,7 @@ mod tests {
     fn bottoming_names_the_axle() {
         let mut overall = base_metrics();
         overall.suspension.rl.bottomed_frac = 0.06;
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let susp = recs.iter().find(|r| r.area == "suspension").unwrap();
         assert!(susp.advice.contains("rear springs"), "{}", susp.advice);
     }
@@ -926,7 +1000,7 @@ mod tests {
     fn underdamped_axle_gets_more_damping_advice() {
         let mut overall = base_metrics();
         overall.suspension = Corners { fl: susp(7.5, 0.18), fr: susp(7.4, 0.19), rl: susp(5.6, 0.03), rr: susp(5.5, 0.03) };
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 1, "only the front fires");
         assert!(damping[0].advice.contains("increase front damping"), "{}", damping[0].advice);
@@ -937,7 +1011,7 @@ mod tests {
     fn overdamped_axle_gets_low_confidence_softening_advice() {
         let mut overall = base_metrics();
         overall.suspension = Corners { fl: susp(2.1, 0.05), fr: susp(2.3, 0.06), rl: susp(2.0, 0.02), rr: susp(2.2, 0.02) };
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 2);
         assert!(damping.iter().all(|r| r.confidence == Confidence::Low));
@@ -956,7 +1030,7 @@ mod tests {
             rl: susp(19.2, 0.21),
             rr: susp(19.5, 0.20),
         };
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 2, "{damping:?}");
         assert!(damping.iter().all(|r| r.advice.contains("increase")));
@@ -976,7 +1050,7 @@ mod tests {
             rl: susp(11.8, 0.10),
             rr: susp(12.0, 0.09),
         };
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "damping"), "{recs:?}");
     }
 
@@ -993,7 +1067,7 @@ mod tests {
             rl: susp(2.9, 0.77),
             rr: susp(3.1, 0.66),
         };
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 2);
         assert!(damping.iter().all(|r| r.confidence == Confidence::High));
@@ -1013,7 +1087,7 @@ mod tests {
             rl: susp(4.4, 0.066),
             rr: susp(4.8, 0.062),
         };
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 1, "front only: {damping:?}");
         assert!(damping[0].advice.contains("reduce front bump damping"), "{}", damping[0].advice);
@@ -1031,7 +1105,7 @@ mod tests {
             rl: susp(3.5, 0.020),
             rr: susp(4.4, 0.009),
         };
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "damping"), "{recs:?}");
     }
 
@@ -1039,13 +1113,13 @@ mod tests {
     fn healthy_damping_stays_quiet() {
         let mut overall = base_metrics();
         overall.suspension = Corners { fl: susp(5.8, 0.03), fr: susp(5.6, 0.03), rl: susp(5.9, 0.01), rr: susp(5.5, 0.01) };
-        let recs = recommend(&overall, &[]);
+        let recs = recommend(&overall, &[], None);
         assert!(recs.iter().all(|r| r.area != "damping"));
     }
 
     #[test]
     fn quiet_session_produces_no_advice() {
-        let recs = recommend(&base_metrics(), &[]);
+        let recs = recommend(&base_metrics(), &[], None);
         assert!(recs.is_empty(), "nothing wrong -> nothing to say: {recs:?}");
     }
 }
