@@ -46,7 +46,10 @@ const TOPPING_FRAC: f32 = 0.10;
 /// are SURFACE-driven: healthy reads ~5.5-6 reversals/s on tarmac but 12-16 on
 /// dirt, so thresholds are per-surface.
 const UNDERDAMPED_REV_TARMAC: f32 = 7.0;
-const UNDERDAMPED_TOPPED_TARMAC: f32 = 0.05;
+/// Raised from 0.05 after the McLaren F1 measured HEALTHY at 8.2 rev/s with
+/// 4.1% topped — healthy reversal rates span 4.1-8.4/s across cars/tracks,
+/// so the topped conjunct carries the discrimination.
+const UNDERDAMPED_TOPPED_TARMAC: f32 = 0.08;
 /// Loose-surface underdamping calibrated from a dirt min-damping capture:
 /// healthy axle averages read 11.8-16.2 rev/s, min damping 17.6-19.5 — tight
 /// separation (one car), hence Medium confidence when it fires.
@@ -58,6 +61,12 @@ const UNDERDAMPED_TOPPED_LOOSE: f32 = 0.15;
 const OVERDAMPED_TOPPED_FRAC: f32 = 0.40;
 /// Overdamping, mild tarmac form: suspension barely articulates.
 const OVERDAMPED_REV_TARMAC: f32 = 3.0;
+/// Bump-heavy overdamping (measured on the bump-only-max A/B): articulation
+/// suppressed AND the wheel parked at full extension a large share of the
+/// time. Both conjuncts required — healthy low-rev cars (Acura 3.5-4.5/s,
+/// topped <3%) must stay silent.
+const OVERDAMPED_BUMP_REV: f32 = 5.5;
+const OVERDAMPED_BUMP_TOPPED: f32 = 0.10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
@@ -532,6 +541,29 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 suggestion: None,
                 implied: None,
             });
+        } else if !loose && rev > 0.0 && rev <= OVERDAMPED_BUMP_REV && topped >= OVERDAMPED_BUMP_TOPPED {
+            recs.push(Recommendation {
+                area: "damping",
+                suggestion: None,
+                advice: format!(
+                    "reduce {axle} bump damping: articulation is suppressed and \
+                     the {axle} wheels spend long stretches at full extension — \
+                     the compression stroke is fighting the surface"
+                ),
+                evidence: vec![
+                    format!(
+                        "{axle} suspension reverses direction only {rev:.1}x/s \
+                         (healthy baseline {baseline}) while at full extension \
+                         {:.1}% of the stint",
+                        topped * 100.0,
+                    ),
+                    "signature measured on the bump-only-max A/B: reversals \
+                     halved, full-extension time tripled, +0.62s"
+                        .into(),
+                ],
+                confidence: Confidence::Medium,
+                implied: Some(Change { family: Family::Damping, softer: true, magnitude: None }),
+            });
         } else if !loose && rev > 0.0 && rev <= OVERDAMPED_REV_TARMAC {
             recs.push(Recommendation {
                 area: "damping",
@@ -931,6 +963,40 @@ mod tests {
         assert!(damping.iter().all(|r| r.confidence == Confidence::High));
         assert!(damping.iter().all(|r| r.advice.contains("reduce")));
         assert!(damping[0].evidence.iter().any(|e| e.contains("rpm flutter")));
+    }
+
+    /// The bump-only-max signature (McLaren F1 real A/B): suppressed
+    /// articulation plus heavy full-extension time fires at Medium even
+    /// though the reversal rate alone looks merely low.
+    #[test]
+    fn bump_overdamping_fires_on_the_compound_signature() {
+        let mut overall = base_metrics();
+        overall.suspension = Corners {
+            fl: susp(4.7, 0.157),
+            fr: susp(5.0, 0.143),
+            rl: susp(4.4, 0.066),
+            rr: susp(4.8, 0.062),
+        };
+        let recs = recommend(&overall, &[]);
+        let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
+        assert_eq!(damping.len(), 1, "front only: {damping:?}");
+        assert!(damping[0].advice.contains("reduce front bump damping"), "{}", damping[0].advice);
+        assert_eq!(damping[0].confidence, Confidence::Medium);
+    }
+
+    /// A healthy softly-damped car (real Acura: 3.5-4.5 rev/s, topped <3%)
+    /// must not trip the bump-overdamping tier.
+    #[test]
+    fn healthy_low_rev_car_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.suspension = Corners {
+            fl: susp(4.1, 0.026),
+            fr: susp(4.5, 0.022),
+            rl: susp(3.5, 0.020),
+            rr: susp(4.4, 0.009),
+        };
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "damping"), "{recs:?}");
     }
 
     #[test]
