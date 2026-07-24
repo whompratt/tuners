@@ -206,6 +206,20 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         )
         .unwrap();
     }
+    let os = &m.transient_oversteer;
+    if m.understeer_index.is_some() && os.episodes > 0 {
+        writeln!(
+            out,
+            "    oversteer flashes: {} of cornering ({} episodes) | on power {} | \
+             >=85 mph {} | rear-first at limit {}",
+            pct(os.clear_frac),
+            os.episodes,
+            pct(os.on_power_frac),
+            pct(os.high_speed_frac),
+            pct(os.rear_first_frac),
+        )
+        .unwrap();
+    }
     if let Some(c) = &m.corners {
         writeln!(
             out,

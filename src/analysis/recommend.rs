@@ -18,6 +18,12 @@ const PHASE_GAP: f32 = 0.10;
 /// reads <= +0.25; tarmac-only — dirt trail-brake rotation is technique and
 /// reads +0.22..+0.67 even on reference tunes.
 const BRAKE_PUSH: f32 = 0.30;
+/// Transient-oversteer counter-signal gates (tarmac only; dirt reads 12-23%
+/// on-power everywhere because rotation is technique). Corpus: healthy AWD
+/// tarmac tunes read on-power <= 3.9% and rear-first <= 2.2%; the RWD cars
+/// that FEEL snappy read 4.3-8.2% on-power / 1.8-4.2% rear-first.
+const OS_ON_POWER_FRAC: f32 = 0.04;
+const OS_REAR_FIRST_FRAC: f32 = 0.03;
 /// Working tire temperature band (°F) per compound; outside it pressures
 /// likely need adjusting. The slick band is the in-game-validated anchor
 /// (160-210°F reads right on real FH6 sessions); the rest are offset from it
@@ -145,19 +151,30 @@ pub struct Recommendation {
     pub implied: Option<Change>,
 }
 
+/// What the car's setup tells us beyond telemetry: rules must not suggest
+/// sliders the build doesn't have. None = unknown (blind mode) — rules keep
+/// their default phrasing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Context<'a> {
+    pub compound: Option<&'a str>,
+    /// Whether aero is tunable on this build (absent aero fields in the tune
+    /// = the upgrade isn't fitted).
+    pub aero_tunable: Option<bool>,
+}
+
 /// `overall` covers the whole stint; `per_lap` holds metrics for each completed
 /// flying lap (used to judge consistency). Sorted most-confident first.
 pub fn recommend(
     overall: &StintMetrics,
     per_lap: &[StintMetrics],
-    compound: Option<&str>,
+    ctx: &Context,
 ) -> Vec<Recommendation> {
     let mut recs = Vec::new();
 
-    let balance_sign = balance_rule(overall, per_lap, &mut recs);
-    aero_rule(overall, &mut recs);
+    let balance_sign = balance_rule(overall, per_lap, ctx, &mut recs);
+    aero_rule(overall, ctx, &mut recs);
     power_balance_rule(overall, &mut recs);
-    tire_pressure_rule(overall, balance_sign, compound, &mut recs);
+    tire_pressure_rule(overall, balance_sign, ctx.compound, &mut recs);
     traction_rule(overall, &mut recs);
     gearing_rule(overall, &mut recs);
     suspension_rule(overall, &mut recs);
@@ -172,6 +189,7 @@ pub fn recommend(
 fn balance_rule(
     overall: &StintMetrics,
     per_lap: &[StintMetrics],
+    ctx: &Context,
     recs: &mut Vec<Recommendation>,
 ) -> Option<f32> {
     let idx = overall.understeer_index?;
@@ -288,6 +306,17 @@ fn balance_rule(
     if matches!(family, Family::DiffAccel | Family::DiffDecel) {
         confidence = confidence.min(Confidence::Medium);
     }
+    // Transient counter-signal: a net-understeer car that flashes real
+    // oversteer in bursts (power-on, at speed) is compromise-limited — the
+    // average says soften the front, but that sharpens the snaps. Cap the
+    // averaged advice and note why.
+    let os = &overall.transient_oversteer;
+    let snappy = !overall.surface_loose
+        && understeer
+        && (os.on_power_frac >= OS_ON_POWER_FRAC || os.rear_first_frac >= OS_REAR_FIRST_FRAC);
+    if snappy {
+        confidence = confidence.min(Confidence::Medium);
+    }
 
     let mut evidence = vec![format!(
         "{} tendency: front−rear slip angle delta {idx:+.2} while cornering",
@@ -348,6 +377,18 @@ fn balance_rule(
         ));
     }
 
+    if snappy {
+        evidence.push(format!(
+            "counter-signal: {:.1}% of cornering time flashes clear oversteer \
+             ({} episodes; {:.1}% on power, {:.1}% at speed, rear-first at \
+             limit {:.1}%) — softening the front sharpens these moments",
+            os.clear_frac * 100.0,
+            os.episodes,
+            os.on_power_frac * 100.0,
+            os.high_speed_frac * 100.0,
+            os.rear_first_frac * 100.0,
+        ));
+    }
     recs.push(Recommendation { apply: Vec::new(),
         area: "balance",
         advice,
@@ -356,6 +397,54 @@ fn balance_rule(
         suggestion: None,
         implied: Some(Change { family, softer, magnitude: None }),
     });
+
+    // The transients get their own rear-grip lever: aero when they live at
+    // speed, drive-line when they ride the throttle. Low — the stat is new
+    // and single-library calibrated.
+    if snappy {
+        let at_speed = os.high_speed_frac >= os.on_power_frac;
+        let aero = at_speed && ctx.aero_tunable != Some(false);
+        recs.push(Recommendation { apply: Vec::new(),
+            area: "stability",
+            advice: if aero {
+                "add rear aero: the oversteer flashes concentrate at high speed \
+                 — the rear runs out of downforce before the front runs out of \
+                 grip"
+                    .into()
+            } else if at_speed {
+                "soften the rear a step (arb or springs) or lower rear ride \
+                 height: the oversteer flashes concentrate at high speed and \
+                 no aero is fitted, so mechanical rear grip is the lever"
+                    .into()
+            } else {
+                "reduce rear diff accel lock (or soften the rear a step): the \
+                 oversteer flashes ride the throttle — the rear breaks away \
+                 under power"
+                    .into()
+            },
+            evidence: vec![format!(
+                "momentary oversteer on a net-understeer car: {:.1}% of \
+                 cornering ({:.1}% on power, {:.1}% at >=85 mph) vs <=3.9% \
+                 on-power across healthy AWD tarmac stints",
+                os.clear_frac * 100.0,
+                os.on_power_frac * 100.0,
+                os.high_speed_frac * 100.0,
+            )],
+            confidence: Confidence::Low,
+            suggestion: None,
+            implied: Some(Change {
+                family: if aero {
+                    Family::RearAero
+                } else if at_speed {
+                    Family::RearRoll
+                } else {
+                    Family::DiffAccel
+                },
+                softer: !aero,
+                magnitude: None,
+            }),
+        });
+    }
 
     // Entry-understeer corroborated by the braking band (tarmac only — dirt
     // trail-brake rotation is technique): brake balance is its own lever on
@@ -411,7 +500,7 @@ fn supported_pair(
 /// Imbalance that lives ONLY in the high-speed band is an aero problem, not a
 /// bars problem — mechanical imbalance shows at every speed (and on the real
 /// library, mechanical understeer reads STRONGER at low speed).
-fn aero_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
+fn aero_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendation>) {
     let (Some(lo), Some(hi)) = supported_pair(&overall.balance_low_speed, &overall.balance_high_speed)
     else {
         return;
@@ -420,12 +509,28 @@ fn aero_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         return;
     }
     let understeer = hi > 0.0;
-    let advice = if understeer {
-        "add front aero (or reduce rear aero): the car only pushes at high speed, \
-         where downforce balance outweighs the bars"
-    } else {
-        "add rear aero: the car is only loose at high speed, where downforce \
-         balance outweighs the bars"
+    // No aero fitted: the speed-only imbalance is real but downforce isn't a
+    // lever — ride height (rake) is the closest one this build has.
+    let no_aero = ctx.aero_tunable == Some(false);
+    let advice = match (understeer, no_aero) {
+        (true, false) => {
+            "add front aero (or reduce rear aero): the car only pushes at high \
+             speed, where downforce balance outweighs the bars"
+        }
+        (false, false) => {
+            "add rear aero: the car is only loose at high speed, where downforce \
+             balance outweighs the bars"
+        }
+        (true, true) => {
+            "lower front ride height (or raise rear) to tip the rake forward: \
+             the car only pushes at high speed and no aero is fitted, so ride \
+             height is the closest lever"
+        }
+        (false, true) => {
+            "lower rear ride height (or raise front): the car is only loose at \
+             high speed and no aero is fitted, so ride height is the closest \
+             lever"
+        }
     };
     recs.push(Recommendation { apply: Vec::new(),
         area: "aero",
@@ -436,11 +541,21 @@ fn aero_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
              currently fine",
             if understeer { "understeer" } else { "oversteer" },
         )],
-        confidence: if overall.surface_loose { Confidence::Low } else { Confidence::Medium },
+        confidence: if overall.surface_loose || no_aero {
+            Confidence::Low
+        } else {
+            Confidence::Medium
+        },
         suggestion: None,
         implied: Some(Change {
-            family: if understeer { Family::FrontAero } else { Family::RearAero },
-            softer: false,
+            family: if no_aero {
+                Family::RideHeight
+            } else if understeer {
+                Family::FrontAero
+            } else {
+                Family::RearAero
+            },
+            softer: no_aero, // lowering ride height; aero variants add downforce
             magnitude: None,
         }),
     });
@@ -815,6 +930,7 @@ mod tests {
             cornering_front_slip: Some(0.5),
             cornering_rear_slip: Some(0.5),
             cornering_frac: 0.3,
+            transient_oversteer: Default::default(),
             balance_low_speed: Default::default(),
             balance_high_speed: Default::default(),
             balance_on_throttle: Default::default(),
@@ -843,7 +959,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.understeer_index = Some(0.24);
         let laps = [lap_with_index(0.23), lap_with_index(0.26), lap_with_index(0.24)];
-        let recs = recommend(&overall, &laps, None);
+        let recs = recommend(&overall, &laps, &Default::default());
         let balance = recs.iter().find(|r| r.area == "balance").unwrap();
         assert_eq!(balance.confidence, Confidence::High);
         assert!(balance.advice.contains("front anti-roll bar"), "{}", balance.advice);
@@ -855,7 +971,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.understeer_index = Some(-0.15);
         let laps = [lap_with_index(-0.20), lap_with_index(0.02)];
-        let recs = recommend(&overall, &laps, None);
+        let recs = recommend(&overall, &laps, &Default::default());
         let balance = recs.iter().find(|r| r.area == "balance").unwrap();
         assert_eq!(balance.confidence, Confidence::Medium);
         assert!(balance.advice.contains("rear anti-roll bar"), "{}", balance.advice);
@@ -863,7 +979,7 @@ mod tests {
 
     #[test]
     fn neutral_car_gets_no_balance_advice() {
-        let recs = recommend(&base_metrics(), &[], None);
+        let recs = recommend(&base_metrics(), &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "balance"));
     }
 
@@ -873,7 +989,7 @@ mod tests {
         overall.understeer_index = Some(0.24);
         overall.tire_temp.fl.avg = 245.0;
         overall.tire_temp.fr.avg = 245.0;
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let tires = recs.iter().find(|r| r.area == "tires").unwrap();
         assert_eq!(tires.confidence, Confidence::Low, "scrub heat defers to balance");
         assert!(tires.evidence.iter().any(|e| e.contains("fix balance first")));
@@ -890,7 +1006,7 @@ mod tests {
         ] {
             t.avg = 120.0;
         }
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let tire_recs: Vec<_> = recs.iter().filter(|r| r.area == "tires").collect();
         assert_eq!(tire_recs.len(), 2, "both axles cold");
         assert!(tire_recs.iter().all(|r| r.advice.contains("lower")));
@@ -916,7 +1032,7 @@ mod tests {
         overall.understeer_index = Some(0.24);
         overall.corners = corners(0.30, 0.10);
         overall.balance_on_brake = band(1000, 0.40);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let bal = recs.iter().find(|r| r.area == "balance").unwrap();
         assert!(bal.advice.contains("corner entry"), "{}", bal.advice);
         assert_eq!(bal.implied.unwrap().family, Family::FrontRoll);
@@ -925,7 +1041,7 @@ mod tests {
         assert_eq!(brakes.implied.unwrap().family, Family::Brakes);
 
         overall.surface_loose = true;
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "brakes"), "dirt trail-braking is technique");
     }
 
@@ -938,7 +1054,7 @@ mod tests {
         overall.corners = corners(0.12, 0.35);
         overall.balance_on_throttle = band(5000, 0.30);
         overall.drivetrain_type = 2; // AWD
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let bal = recs.iter().find(|r| r.area == "balance").unwrap();
         assert!(bal.advice.contains("front diff accel"), "{}", bal.advice);
         let implied = bal.implied.unwrap();
@@ -947,7 +1063,7 @@ mod tests {
         assert!(bal.confidence <= Confidence::Medium, "diff redirect never High");
 
         overall.drivetrain_type = 1; // RWD: no front diff to open
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let bal = recs.iter().find(|r| r.area == "balance").unwrap();
         assert!(bal.advice.contains("stiffen the rear"), "{}", bal.advice);
         let implied = bal.implied.unwrap();
@@ -962,7 +1078,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.understeer_index = Some(-0.15);
         overall.corners = corners(-0.28, -0.06);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let bal = recs.iter().find(|r| r.area == "balance").unwrap();
         assert!(bal.advice.contains("rear diff decel"), "{}", bal.advice);
         let implied = bal.implied.unwrap();
@@ -970,10 +1086,80 @@ mod tests {
         assert!(!implied.softer, "more decel lock = stiffer");
 
         overall.corners = corners(-0.15, -0.14);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let bal = recs.iter().find(|r| r.area == "balance").unwrap();
         assert!(bal.advice.contains("rear anti-roll bar"), "{}", bal.advice);
         assert_eq!(bal.implied.unwrap().family, Family::RearRoll);
+    }
+
+    /// A net-understeer car that flashes momentary oversteer (the RWD Ferrari
+    /// signature) gets the averaged front-soften advice CAPPED with a
+    /// counter-signal, plus a rear-grip rec: aero when the flashes live at
+    /// speed, diff accel when they ride the throttle. Tarmac only.
+    #[test]
+    fn transient_oversteer_counters_the_average() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.16);
+        overall.transient_oversteer = crate::analysis::metrics::TransientOversteer {
+            clear_frac: 0.06,
+            on_power_frac: 0.045,
+            high_speed_frac: 0.053,
+            rear_first_frac: 0.02,
+            episodes: 150,
+        };
+        let laps: Vec<StintMetrics> = (0..3)
+            .map(|_| {
+                let mut m = base_metrics();
+                m.understeer_index = Some(0.16);
+                m
+            })
+            .collect();
+        let recs = recommend(&overall, &laps, &Default::default());
+        let bal = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert_eq!(bal.confidence, Confidence::Medium, "capped from High by the counter-signal");
+        assert!(bal.evidence.iter().any(|e| e.contains("counter-signal")), "{:?}", bal.evidence);
+        let stab = recs.iter().find(|r| r.area == "stability").expect("rear-grip rec");
+        assert!(stab.advice.contains("rear aero"), "at-speed flashes -> aero: {}", stab.advice);
+        assert_eq!(stab.implied.unwrap().family, Family::RearAero);
+
+        // Same at-speed shape on a build with NO aero fitted: downforce is
+        // not a lever — mechanical rear grip takes its place.
+        let no_aero = Context { aero_tunable: Some(false), ..Default::default() };
+        let recs = recommend(&overall, &laps, &no_aero);
+        let stab = recs.iter().find(|r| r.area == "stability").unwrap();
+        assert!(stab.advice.contains("no aero is fitted"), "{}", stab.advice);
+        assert_eq!(stab.implied.unwrap().family, Family::RearRoll);
+
+        // Throttle-riding flashes (the 570S shape) point at the diff instead.
+        overall.transient_oversteer.on_power_frac = 0.08;
+        overall.transient_oversteer.high_speed_frac = 0.05;
+        let recs = recommend(&overall, &laps, &Default::default());
+        let stab = recs.iter().find(|r| r.area == "stability").unwrap();
+        assert!(stab.advice.contains("rear diff accel"), "{}", stab.advice);
+        let implied = stab.implied.unwrap();
+        assert_eq!(implied.family, Family::DiffAccel);
+        assert!(implied.softer);
+
+        // Dirt: rotation is technique — no counter-signal, no rec.
+        overall.surface_loose = true;
+        let recs = recommend(&overall, &laps, &Default::default());
+        assert!(recs.iter().all(|r| r.area != "stability"));
+        assert_eq!(
+            recs.iter().find(|r| r.area == "balance").unwrap().confidence,
+            Confidence::High
+        );
+
+        // Healthy AWD-tarmac levels stay silent.
+        overall.surface_loose = false;
+        overall.transient_oversteer = crate::analysis::metrics::TransientOversteer {
+            clear_frac: 0.05,
+            on_power_frac: 0.033,
+            high_speed_frac: 0.03,
+            rear_first_frac: 0.022,
+            episodes: 200,
+        };
+        let recs = recommend(&overall, &laps, &Default::default());
+        assert!(recs.iter().all(|r| r.area != "stability"));
     }
 
     /// Bands are compound-relative: 155°F is cold for slicks, in-band for
@@ -989,9 +1175,9 @@ mod tests {
         ] {
             t.avg = 155.0;
         }
-        let recs = recommend(&overall, &[], Some("slick"));
+        let recs = recommend(&overall, &[], &Context { compound: Some("slick"), ..Default::default() });
         assert!(recs.iter().any(|r| r.area == "tires" && r.advice.contains("lower")));
-        let recs = recommend(&overall, &[], Some("semi-slick"));
+        let recs = recommend(&overall, &[], &Context { compound: Some("semi-slick"), ..Default::default() });
         assert!(recs.iter().all(|r| r.area != "tires"), "155°F is in the semi-slick band");
         for t in [
             &mut overall.tire_temp.fl,
@@ -1001,7 +1187,7 @@ mod tests {
         ] {
             t.avg = 170.0;
         }
-        let recs = recommend(&overall, &[], Some("rally"));
+        let recs = recommend(&overall, &[], &Context { compound: Some("rally"), ..Default::default() });
         let tires = recs.iter().find(|r| r.area == "tires").unwrap();
         assert!(tires.advice.contains("raise"), "170°F overheats rally rubber: {}", tires.advice);
         assert!(tires.evidence[0].contains("rally working band"), "{}", tires.evidence[0]);
@@ -1014,7 +1200,7 @@ mod tests {
             t.avg = 155.0;
         }
         // No compound on file: legacy band, flagged as an assumption.
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let tires = recs.iter().find(|r| r.area == "tires").unwrap();
         assert!(tires.evidence[0].contains("no tire compound on file"), "{}", tires.evidence[0]);
     }
@@ -1036,7 +1222,7 @@ mod tests {
         overall.understeer_index = Some(0.04);
         overall.balance_low_speed = band(2000, 0.02);
         overall.balance_high_speed = band(2000, 0.14);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let aero = recs.iter().find(|r| r.area == "aero").unwrap();
         assert!(aero.advice.contains("add front aero"), "{}", aero.advice);
         assert_eq!(aero.confidence, Confidence::Medium);
@@ -1049,10 +1235,19 @@ mod tests {
         let mut overall = base_metrics();
         overall.balance_low_speed = band(2000, -0.01);
         overall.balance_high_speed = band(2000, -0.13);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let aero = recs.iter().find(|r| r.area == "aero").unwrap();
         assert!(aero.advice.contains("add rear aero"), "{}", aero.advice);
         assert_eq!(aero.implied.unwrap().family, Family::RearAero);
+
+        // No aero fitted: same signal, but the advice must not name a slider
+        // the build doesn't have — ride height (rake) takes its place, Low.
+        let no_aero = Context { aero_tunable: Some(false), ..Default::default() };
+        let recs = recommend(&overall, &[], &no_aero);
+        let aero = recs.iter().find(|r| r.area == "aero").unwrap();
+        assert!(aero.advice.contains("ride height"), "{}", aero.advice);
+        assert_eq!(aero.confidence, Confidence::Low);
+        assert_eq!(aero.implied.unwrap().family, Family::RideHeight);
     }
 
     /// The real tarmac signature (Ford GT / McLaren): understeer at EVERY speed,
@@ -1064,7 +1259,7 @@ mod tests {
         overall.understeer_index = Some(0.24);
         overall.balance_low_speed = band(9000, 0.37);
         overall.balance_high_speed = band(30000, 0.20);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "aero"));
         let balance = recs.iter().find(|r| r.area == "balance").unwrap();
         assert!(
@@ -1079,7 +1274,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.balance_low_speed = band(2000, 0.0);
         overall.balance_high_speed = band(100, 0.30); // too few samples to trust
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "aero"));
     }
 
@@ -1089,7 +1284,7 @@ mod tests {
         let mut overall = base_metrics();
         overall.balance_on_throttle = band(2000, -0.12);
         overall.balance_off_throttle = band(2000, 0.02);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let diff = recs.iter().find(|r| r.area == "differential").unwrap();
         assert!(diff.advice.contains("rear differential acceleration lock"), "{}", diff.advice);
         assert_eq!(diff.implied.unwrap().family, Family::DiffAccel);
@@ -1103,7 +1298,7 @@ mod tests {
         overall.drivetrain_type = 2;
         overall.balance_on_throttle = band(2000, 0.15);
         overall.balance_off_throttle = band(2000, 0.02);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let diff = recs.iter().find(|r| r.area == "differential").unwrap();
         assert!(diff.advice.contains("front differential"), "{}", diff.advice);
         assert!(
@@ -1121,7 +1316,7 @@ mod tests {
         overall.surface_loose = true;
         overall.balance_on_throttle = band(9000, -0.06);
         overall.balance_off_throttle = band(5000, 0.57);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "differential"), "{recs:?}");
     }
 
@@ -1134,7 +1329,7 @@ mod tests {
         overall.understeer_index = Some(0.27);
         overall.balance_on_throttle = band(27000, 0.26);
         overall.balance_off_throttle = band(16000, 0.30);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "differential"));
     }
 
@@ -1142,7 +1337,7 @@ mod tests {
     fn rwd_wheelspin_names_the_rear() {
         let mut overall = base_metrics();
         overall.wheelspin_frac = Some(0.2);
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let traction = recs.iter().find(|r| r.area == "traction").unwrap();
         assert_eq!(traction.confidence, Confidence::High);
         assert!(traction.advice.contains("rear-axle"), "{}", traction.advice);
@@ -1154,7 +1349,7 @@ mod tests {
         overall.gears.limiter_frac = 0.05;
         overall.gears.top_gear = 6;
         overall.gears.top_gear_max_rpm = 7900.0;
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let gearing = recs.iter().find(|r| r.area == "gearing").unwrap();
         assert!(gearing.advice.contains("lengthen the final drive"), "{}", gearing.advice);
     }
@@ -1169,7 +1364,7 @@ mod tests {
         overall.gears.top_gear_max_rpm = 8928.0; // one downhill burst near redline...
         overall.gears.top_gear_high_rev_frac = 0.001; // ...but no sustained use
         overall.gears.time_frac = vec![(6, 0.15), (7, 0.52), (8, 0.20)];
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let gearing = recs.iter().find(|r| r.area == "gearing").unwrap();
         assert!(gearing.advice.contains("shorten the final drive"), "{}", gearing.advice);
         assert!(gearing.evidence[0].contains("20.0% of the stint"), "{}", gearing.evidence[0]);
@@ -1185,7 +1380,7 @@ mod tests {
         overall.gears.top_gear_max_rpm = 5500.0; // 69% of the 8000 redline
         overall.gears.top_gear_high_rev_frac = 0.0;
         overall.gears.time_frac = vec![(4, 0.5), (5, 0.4), (6, 0.04)];
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "gearing"));
     }
 
@@ -1199,7 +1394,7 @@ mod tests {
         overall.gears.top_gear_max_rpm = 8211.0;
         overall.gears.top_gear_high_rev_frac = 0.087;
         overall.gears.time_frac = vec![(4, 0.36), (5, 0.34), (6, 0.18)];
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "gearing"));
     }
 
@@ -1207,7 +1402,7 @@ mod tests {
     fn bottoming_names_the_axle() {
         let mut overall = base_metrics();
         overall.suspension.rl.bottomed_frac = 0.06;
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let susp = recs.iter().find(|r| r.area == "suspension").unwrap();
         assert!(susp.advice.contains("rear springs"), "{}", susp.advice);
     }
@@ -1225,7 +1420,7 @@ mod tests {
     fn underdamped_axle_gets_more_damping_advice() {
         let mut overall = base_metrics();
         overall.suspension = Corners { fl: susp(7.5, 0.18), fr: susp(7.4, 0.19), rl: susp(5.6, 0.03), rr: susp(5.5, 0.03) };
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 1, "only the front fires");
         assert!(damping[0].advice.contains("increase front damping"), "{}", damping[0].advice);
@@ -1236,7 +1431,7 @@ mod tests {
     fn overdamped_axle_gets_low_confidence_softening_advice() {
         let mut overall = base_metrics();
         overall.suspension = Corners { fl: susp(2.1, 0.05), fr: susp(2.3, 0.06), rl: susp(2.0, 0.02), rr: susp(2.2, 0.02) };
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 2);
         assert!(damping.iter().all(|r| r.confidence == Confidence::Low));
@@ -1255,7 +1450,7 @@ mod tests {
             rl: susp(19.2, 0.21),
             rr: susp(19.5, 0.20),
         };
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 2, "{damping:?}");
         assert!(damping.iter().all(|r| r.advice.contains("increase")));
@@ -1275,7 +1470,7 @@ mod tests {
             rl: susp(11.8, 0.10),
             rr: susp(12.0, 0.09),
         };
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "damping"), "{recs:?}");
     }
 
@@ -1292,7 +1487,7 @@ mod tests {
             rl: susp(2.9, 0.77),
             rr: susp(3.1, 0.66),
         };
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 2);
         assert!(damping.iter().all(|r| r.confidence == Confidence::High));
@@ -1312,7 +1507,7 @@ mod tests {
             rl: susp(4.4, 0.066),
             rr: susp(4.8, 0.062),
         };
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
         assert_eq!(damping.len(), 1, "front only: {damping:?}");
         assert!(damping[0].advice.contains("reduce front bump damping"), "{}", damping[0].advice);
@@ -1330,7 +1525,7 @@ mod tests {
             rl: susp(3.5, 0.020),
             rr: susp(4.4, 0.009),
         };
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "damping"), "{recs:?}");
     }
 
@@ -1338,13 +1533,13 @@ mod tests {
     fn healthy_damping_stays_quiet() {
         let mut overall = base_metrics();
         overall.suspension = Corners { fl: susp(5.8, 0.03), fr: susp(5.6, 0.03), rl: susp(5.9, 0.01), rr: susp(5.5, 0.01) };
-        let recs = recommend(&overall, &[], None);
+        let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "damping"));
     }
 
     #[test]
     fn quiet_session_produces_no_advice() {
-        let recs = recommend(&base_metrics(), &[], None);
+        let recs = recommend(&base_metrics(), &[], &Default::default());
         assert!(recs.is_empty(), "nothing wrong -> nothing to say: {recs:?}");
     }
 }

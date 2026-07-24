@@ -132,7 +132,9 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
     print!(
         "{}",
         analysis::report::render_recommendations(&analysis::recommend::recommend(
-            &overall, &per_lap, None,
+            &overall,
+            &per_lap,
+            &Default::default(),
         ))
     );
     Ok(())

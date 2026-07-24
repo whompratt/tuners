@@ -8,6 +8,13 @@ use crate::packet::Corners;
 pub const SLIP_LIMIT: f32 = 1.0;
 /// Lateral acceleration (m/s²) above which a sample counts as cornering.
 const CORNERING_LAT_ACCEL: f32 = 4.0;
+/// Instantaneous front−rear slip delta at or below this = a clear oversteer
+/// moment (the rear is the sliding end right now, whatever the stint average
+/// says).
+const OS_CLEAR_DELTA: f32 = -0.15;
+/// Slip-angle fraction of the grip limit treated as "at the limit" for the
+/// rear-first stat.
+const REAR_AT_LIMIT: f32 = 0.9;
 /// Pedal inputs are 0–255; above this counts as "on".
 const PEDAL_ON: u8 = 128;
 /// Normalized suspension travel bounds treated as bottomed / topped out.
@@ -91,6 +98,22 @@ pub struct GearStats {
     pub limiter_frac: f32,
 }
 
+/// Shares of cornering time spent in momentary oversteer — the transients a
+/// stint-length balance average hides. All fractions are of cornering samples.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TransientOversteer {
+    /// Instantaneous delta <= OS_CLEAR_DELTA.
+    pub clear_frac: f32,
+    /// Clear moments with the throttle down (power oversteer signature).
+    pub on_power_frac: f32,
+    /// Clear moments at or above 85 mph (rear grip/aero at speed).
+    pub high_speed_frac: f32,
+    /// Rear at >=90% of its grip limit while the front is not.
+    pub rear_first_frac: f32,
+    /// Distinct clear-oversteer episodes (consecutive frames count once).
+    pub episodes: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct StintMetrics {
     pub samples: usize,
@@ -117,6 +140,7 @@ pub struct StintMetrics {
     pub cornering_front_slip: Option<f32>,
     pub cornering_rear_slip: Option<f32>,
     pub cornering_frac: f32,
+    pub transient_oversteer: TransientOversteer,
     /// Balance split by speed band (boundary HIGH_SPEED_MPS): imbalance that
     /// lives only in the high band points at aero, not bars.
     pub balance_low_speed: BandBalance,
@@ -190,6 +214,12 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut wheel_flutter_sum = 0.0f32;
     let mut flutter_samples = 0usize;
     let mut cornering = 0usize;
+    let mut os_clear = 0usize;
+    let mut os_on_power = 0usize;
+    let mut os_high_speed = 0usize;
+    let mut os_rear_first = 0usize;
+    let mut os_episodes = 0usize;
+    let mut os_in_run = false;
     let mut front_slip_sum = 0.0f32;
     let mut rear_slip_sum = 0.0f32;
     // [low speed, high speed, on throttle, off throttle, on brake] cornering
@@ -294,6 +324,23 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 bands[4].1 += front;
                 bands[4].2 += rear;
             }
+            // Transient oversteer: brief rear-first moments a stint-length
+            // average hides entirely (a net-understeer car can still snap).
+            let delta = front - rear;
+            if delta <= OS_CLEAR_DELTA {
+                os_clear += 1;
+                os_on_power += (f.accel >= PEDAL_ON) as usize;
+                os_high_speed += (f.speed >= HIGH_SPEED_MPS) as usize;
+                os_episodes += !os_in_run as usize;
+                os_in_run = true;
+            } else {
+                os_in_run = false;
+            }
+            if rear >= REAR_AT_LIMIT && front < REAR_AT_LIMIT {
+                os_rear_first += 1;
+            }
+        } else {
+            os_in_run = false;
         }
 
         if f.accel >= PEDAL_ON {
@@ -397,6 +444,16 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         cornering_front_slip: (cornering > 0).then(|| front_slip_sum / cornering as f32),
         cornering_rear_slip: (cornering > 0).then(|| rear_slip_sum / cornering as f32),
         cornering_frac: frac(cornering),
+        transient_oversteer: {
+            let cfrac = |n: usize| n as f32 / cornering.max(1) as f32;
+            TransientOversteer {
+                clear_frac: cfrac(os_clear),
+                on_power_frac: cfrac(os_on_power),
+                high_speed_frac: cfrac(os_high_speed),
+                rear_first_frac: cfrac(os_rear_first),
+                episodes: os_episodes,
+            }
+        },
         balance_low_speed: band_balance(bands[0]),
         balance_high_speed: band_balance(bands[1]),
         balance_on_throttle: band_balance(bands[2]),

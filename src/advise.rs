@@ -190,10 +190,22 @@ fn stint_balance(stint: &analysis::Stint) -> Option<(f32, f32, f32)> {
     Some((m.understeer_index?, m.cornering_front_slip?, m.cornering_rear_slip?))
 }
 
+/// Rule context from the session: tire compound fact + whether the build has
+/// aero fitted (absent aero fields in the latest revision = the upgrade isn't
+/// there; no revisions = unknown).
+fn rule_context(session: &TuningSession) -> analysis::recommend::Context<'_> {
+    analysis::recommend::Context {
+        compound: session.facts.get("tire_compound").map(String::as_str),
+        aero_tunable: session
+            .latest()
+            .map(|rev| rev.values.keys().any(|k| k.starts_with("aero_"))),
+    }
+}
+
 fn blind_recommendations(
     stint: &analysis::Stint,
     path: &str,
-    compound: Option<&str>,
+    ctx: &analysis::recommend::Context,
 ) -> Result<Vec<analysis::recommend::Recommendation>, String> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments
@@ -206,7 +218,7 @@ fn blind_recommendations(
         .filter(|l| l.time_s.is_some() && !l.standing_start)
         .map(|l| analysis::metrics::stint_metrics(l.frames))
         .collect();
-    Ok(analysis::recommend::recommend(&overall, &per_lap, compound))
+    Ok(analysis::recommend::recommend(&overall, &per_lap, ctx))
 }
 
 fn family_keys(family: journal::Family) -> &'static [&'static str] {
@@ -528,11 +540,7 @@ pub fn advise(
             .ok_or("no stints recorded yet — drive first")?;
         let stint =
             analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
-        let mut recs = blind_recommendations(
-            &stint,
-            &path,
-            session.facts.get("tire_compound").map(String::as_str),
-        )?;
+        let mut recs = blind_recommendations(&stint, &path, &rule_context(&session))?;
         let current_tune = enrich_with_tune(&mut recs, &session);
         return Ok(AdviseView {
             journal: None,
@@ -953,11 +961,7 @@ pub fn advise(
     }
 
     let (last_entry, last_stint, _) = loaded.last().unwrap();
-    let mut recs = blind_recommendations(
-        last_stint,
-        &last_entry.path,
-        session.facts.get("tire_compound").map(String::as_str),
-    )?;
+    let mut recs = blind_recommendations(last_stint, &last_entry.path, &rule_context(&session))?;
     let mut matched_families: Vec<journal::Family> = Vec::new();
     for m in &latest {
         if journal::reconcile(
