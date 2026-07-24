@@ -394,6 +394,13 @@ fn probe_value(nodes: &[(f32, f32, usize)], lim: Option<(f32, f32)>) -> Option<f
         return None; // interior best: the fit's vertex is the suggestion
     };
     let mut v = best.0 + dir * (last.0 - first.0) * 0.25;
+    // A small mapped span must still ask for a NEW point: after a single
+    // small improving step, a quarter-span probe rounds back onto the best
+    // tried value and the guard below would cancel the ask — step one
+    // display unit outward instead.
+    if ((v * 10.0).round() - (best.0 * 10.0).round()).abs() < 0.5 {
+        v = best.0 + dir * 0.1;
+    }
     if let Some((mn, mx)) = lim {
         v = v.clamp(mn, mx);
     }
@@ -1474,6 +1481,10 @@ mod tests {
         // Interior best: the fit's vertex owns it.
         let nodes = [(17.0, -0.16, 1), (18.0, -0.49, 1), (20.7, 0.0, 1)];
         assert_eq!(probe_value(&nodes, None), None);
+        // One small improving step (the Ferrari final-drive case): a quarter
+        // span rounds onto the best value — probe one display step out instead.
+        let nodes = [(3.95, 0.0, 1), (4.1, -0.27, 1)];
+        assert_eq!(probe_value(&nodes, None), Some(4.2));
         // Flat landscape: nothing worth a stint.
         let nodes = [(3.35, -0.04, 1), (3.63, 0.03, 1)];
         assert_eq!(probe_value(&nodes, None), None);

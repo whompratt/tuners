@@ -15,6 +15,9 @@ const BOTTOMED: f32 = 0.97;
 const TOPPED: f32 = 0.03;
 /// Fraction of redline treated as "on the limiter".
 const LIMITER: f32 = 0.98;
+/// Fraction of redline treated as "using the top of the rev range" — the
+/// numerator of GearStats::top_gear_high_rev_frac.
+const HIGH_REV: f32 = 0.90;
 /// Gear values outside real forward gears: 0 = reverse, 11 = mid-shift sentinel.
 const MAX_REAL_GEAR: u8 = 10;
 /// Suspension travel must move this far (meters) since the last extreme for a
@@ -78,6 +81,10 @@ pub struct GearStats {
     /// Highest rpm reached while grounded in the top gear used — low vs redline
     /// means the top of the rev range goes unused (final drive likely too long).
     pub top_gear_max_rpm: f32,
+    /// Share of grounded top-gear time spent at >= HIGH_REV of redline. The
+    /// robust form of the signal above: a single downhill burst can push the
+    /// max near redline, but it cannot fake sustained use of the rev range.
+    pub top_gear_high_rev_frac: f32,
     pub upshifts: u32,
     pub avg_upshift_rpm: Option<f32>,
     /// Fraction of grounded samples at >= LIMITER of redline.
@@ -194,6 +201,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut lockup = 0usize;
     let mut gear_counts = [0usize; MAX_REAL_GEAR as usize + 1]; // index = gear, [0] unused
     let mut gear_max_rpm = [0.0f32; MAX_REAL_GEAR as usize + 1];
+    let mut gear_high_rev = [0usize; MAX_REAL_GEAR as usize + 1];
     let mut limiter = 0usize;
     let mut upshift_rpm_sum = 0.0f32;
     let mut upshifts = 0u32;
@@ -319,6 +327,9 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 gear_counts[f.gear as usize] += 1;
                 gear_max_rpm[f.gear as usize] =
                     gear_max_rpm[f.gear as usize].max(f.current_engine_rpm);
+                if f.engine_max_rpm > 0.0 && f.current_engine_rpm >= HIGH_REV * f.engine_max_rpm {
+                    gear_high_rev[f.gear as usize] += 1;
+                }
                 if let Some((prev, prev_rpm)) = prev_real_gear
                     && f.gear > prev
                 {
@@ -409,6 +420,8 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             time_frac,
             top_gear,
             top_gear_max_rpm: gear_max_rpm[top_gear as usize],
+            top_gear_high_rev_frac: gear_high_rev[top_gear as usize] as f32
+                / gear_counts[top_gear as usize].max(1) as f32,
             upshifts,
             avg_upshift_rpm: (upshifts > 0).then(|| upshift_rpm_sum / upshifts as f32),
             limiter_frac: gfrac(limiter),

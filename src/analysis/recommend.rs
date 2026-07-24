@@ -37,8 +37,18 @@ const POWER_INDEX: f32 = 0.08;
 /// -0.13..-0.62 on well-tuned rally cars with on-throttle index ~0), so the
 /// on-throttle index gate is stricter before the diff rule speaks.
 const POWER_INDEX_LOOSE: f32 = 0.12;
-/// Top gear never reaching this fraction of redline = final drive too long.
-const UNUSED_REV_FRAC: f32 = 0.90;
+/// Gearing is judged as the drag-race tradeoff: too short = the engine climbs
+/// to redline quickly and camps there (limiter dwell); too long = the car lives
+/// in top gear without ever climbing into the top of the rev range. The optimum
+/// between them is route-dependent, so only the extremes are flagged.
+/// Top gear must carry at least this share of grounded time before the "too
+/// long" side speaks — a route that barely reaches top gear says nothing about
+/// the stack (converged Ford GT tune: 3-4.6%; the long-geared Ferrari: 17-50%).
+const TOP_GEAR_TIME_FRAC: f32 = 0.10;
+/// "Too long" fires when less than this share of top-gear time is spent above
+/// 90% of redline. Healthy tunes that rev out read 5-11% on the library
+/// (Fiesta GRC 8.7%, Audi 10.7%); long stacks read 0.0-0.3%.
+const HIGH_REV_SHARE_MIN: f32 = 0.02;
 /// Suspension travel fractions.
 const BOTTOMING_FRAC: f32 = 0.03;
 const TOPPING_FRAC: f32 = 0.10;
@@ -411,33 +421,36 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         return;
     }
 
-    // Telemetry-only signal in the other direction: the top of the rev range goes
-    // unused, so the whole gear stack is longer than the route needs.
+    // The "too long" extreme: the car lives in top gear but never climbs into
+    // the top of the rev range, so every gear is longer than the route needs.
+    // Judged on the time-share of top-gear frames near redline — a single
+    // downhill burst can push the max near redline, but it cannot fake
+    // sustained use of the rev range.
     if g.top_gear == 0 || overall.redline <= 0.0 {
         return;
     }
-    if g.top_gear_max_rpm < UNUSED_REV_FRAC * overall.redline {
-        let top_time = g
-            .time_frac
-            .last()
-            .map(|(_, f)| *f)
-            .unwrap_or(0.0);
+    let top_time = g.time_frac.last().map(|(_, f)| *f).unwrap_or(0.0);
+    if top_time >= TOP_GEAR_TIME_FRAC && g.top_gear_high_rev_frac < HIGH_REV_SHARE_MIN {
         recs.push(Recommendation { apply: Vec::new(),
             area: "gearing",
-            advice: "shorten the final drive: the top of the rev range goes unused, so \
-                     every gear is longer than the route needs — shorter gearing gives \
-                     more acceleration at no top-speed cost"
+            advice: "shorten the final drive: the car lives in top gear but the top of \
+                     the rev range goes unused — shorter gearing gives more acceleration \
+                     everywhere at no real top-speed cost"
                 .into(),
             evidence: vec![
                 format!(
-                "highest rpm in top gear ({}) was {:.0} — {:.0}% of the {:.0} redline, \
-                 with {:.1}% of the stint spent there and no limiter time",
-                g.top_gear,
-                g.top_gear_max_rpm,
-                100.0 * g.top_gear_max_rpm / overall.redline,
-                overall.redline,
-                top_time * 100.0,
-            ), "ignore if this route just lacks a flat-out section".into()],
+                    "{:.1}% of the stint in top gear ({}) but only {:.1}% of that time \
+                     above 90% of the {:.0} redline (highest seen {:.0} rpm)",
+                    top_time * 100.0,
+                    g.top_gear,
+                    g.top_gear_high_rev_frac * 100.0,
+                    overall.redline,
+                    g.top_gear_max_rpm,
+                ),
+                "check the shorter gearing doesn't put the longest straight on the \
+                 limiter — that is the opposite extreme of the same tradeoff"
+                    .into(),
+            ],
             confidence: Confidence::Medium,
             suggestion: None,
             implied: Some(Change { family: Family::Gearing, softer: false, magnitude: None }),
@@ -847,27 +860,46 @@ mod tests {
         assert!(gearing.advice.contains("lengthen the final drive"), "{}", gearing.advice);
     }
 
-    /// The inverse gap caught on real data: no limiter time and the top gear never
-    /// gets near redline -> the whole stack is too long, shorten the final drive.
+    /// The "too long" extreme caught on real data (Ferrari 330): the car lives
+    /// in top gear but the rev-range top goes unused -> shorten the final drive.
     #[test]
     fn unused_rev_range_suggests_shorter_final_drive() {
         let mut overall = base_metrics();
         overall.gears.limiter_frac = 0.0;
-        overall.gears.top_gear = 6;
-        overall.gears.top_gear_max_rpm = 6400.0; // 80% of the 8000 redline
-        overall.gears.time_frac = vec![(4, 0.5), (5, 0.4), (6, 0.03)];
+        overall.gears.top_gear = 8;
+        overall.gears.top_gear_max_rpm = 8928.0; // one downhill burst near redline...
+        overall.gears.top_gear_high_rev_frac = 0.001; // ...but no sustained use
+        overall.gears.time_frac = vec![(6, 0.15), (7, 0.52), (8, 0.20)];
         let recs = recommend(&overall, &[]);
         let gearing = recs.iter().find(|r| r.area == "gearing").unwrap();
         assert!(gearing.advice.contains("shorten the final drive"), "{}", gearing.advice);
-        assert!(gearing.evidence[0].contains("80%"), "{}", gearing.evidence[0]);
+        assert!(gearing.evidence[0].contains("20.0% of the stint"), "{}", gearing.evidence[0]);
     }
 
+    /// A route that barely reaches top gear says nothing about the stack: the
+    /// converged Ford GT tune reads 3-4.6% top-gear time at mid revs — silent.
+    #[test]
+    fn marginal_top_gear_time_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.gears.limiter_frac = 0.0;
+        overall.gears.top_gear = 6;
+        overall.gears.top_gear_max_rpm = 5500.0; // 69% of the 8000 redline
+        overall.gears.top_gear_high_rev_frac = 0.0;
+        overall.gears.time_frac = vec![(4, 0.5), (5, 0.4), (6, 0.04)];
+        let recs = recommend(&overall, &[]);
+        assert!(recs.iter().all(|r| r.area != "gearing"));
+    }
+
+    /// Healthy tunes rev out in top gear (Fiesta GRC: 17.7% of time in top,
+    /// 8.7% of it above 90% redline) — silent even with heavy top-gear use.
     #[test]
     fn healthy_rev_usage_stays_quiet() {
         let mut overall = base_metrics();
         overall.gears.limiter_frac = 0.0;
         overall.gears.top_gear = 6;
-        overall.gears.top_gear_max_rpm = 7600.0; // 95% of redline, no clipping
+        overall.gears.top_gear_max_rpm = 8211.0;
+        overall.gears.top_gear_high_rev_frac = 0.087;
+        overall.gears.time_frac = vec![(4, 0.36), (5, 0.34), (6, 0.18)];
         let recs = recommend(&overall, &[]);
         assert!(recs.iter().all(|r| r.area != "gearing"));
     }
