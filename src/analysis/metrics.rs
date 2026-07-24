@@ -141,6 +141,11 @@ pub struct StintMetrics {
     pub cornering_rear_slip: Option<f32>,
     pub cornering_frac: f32,
     pub transient_oversteer: TransientOversteer,
+    /// Extra normalized front suspension travel while braking vs on throttle
+    /// (nose dive). Measurement only — no rule threshold is calibrated yet;
+    /// front aero confounds it at braking speeds. None without enough braking
+    /// and throttle samples.
+    pub brake_dive_front: Option<f32>,
     /// Balance split by speed band (boundary HIGH_SPEED_MPS): imbalance that
     /// lives only in the high band points at aero, not bars.
     pub balance_low_speed: BandBalance,
@@ -214,6 +219,10 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut wheel_flutter_sum = 0.0f32;
     let mut flutter_samples = 0usize;
     let mut cornering = 0usize;
+    let mut brake_frames = 0usize;
+    let mut brake_front_travel = 0.0f32;
+    let mut throttle_frames = 0usize;
+    let mut throttle_front_travel = 0.0f32;
     let mut os_clear = 0usize;
     let mut os_on_power = 0usize;
     let mut os_high_speed = 0usize;
@@ -353,6 +362,20 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             };
             wheelspin += spinning as usize;
         }
+        // Brake dive: how much extra front compression braking adds vs the
+        // on-throttle attitude. Measurement only for now — confounded by
+        // front aero at braking speeds, and the library has no known
+        // dive-problem stint to calibrate a rule threshold against.
+        {
+            let front = (f.norm_suspension_travel.fl + f.norm_suspension_travel.fr) / 2.0;
+            if f.brake >= PEDAL_ON {
+                brake_frames += 1;
+                brake_front_travel += front;
+            } else if f.accel >= PEDAL_ON {
+                throttle_frames += 1;
+                throttle_front_travel += front;
+            }
+        }
         if f.brake >= PEDAL_ON {
             brake_samples += 1;
             lockup += f
@@ -444,6 +467,10 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         cornering_front_slip: (cornering > 0).then(|| front_slip_sum / cornering as f32),
         cornering_rear_slip: (cornering > 0).then(|| rear_slip_sum / cornering as f32),
         cornering_frac: frac(cornering),
+        brake_dive_front: (brake_frames >= 200 && throttle_frames >= 200).then(|| {
+            brake_front_travel / brake_frames as f32
+                - throttle_front_travel / throttle_frames as f32
+        }),
         transient_oversteer: {
             let cfrac = |n: usize| n as f32 / cornering.max(1) as f32;
             TransientOversteer {

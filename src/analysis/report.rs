@@ -254,6 +254,14 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         .unwrap();
     }
 
+    if let Some(dive) = m.brake_dive_front {
+        writeln!(
+            out,
+            "    brake dive: front travel {dive:+.2} vs on-throttle (uncalibrated \
+             measurement — front aero also compresses at braking speeds)",
+        )
+        .unwrap();
+    }
     if m.jumps > 0 {
         writeln!(
             out,

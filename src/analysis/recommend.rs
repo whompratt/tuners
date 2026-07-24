@@ -931,6 +931,7 @@ mod tests {
             cornering_rear_slip: Some(0.5),
             cornering_frac: 0.3,
             transient_oversteer: Default::default(),
+            brake_dive_front: None,
             balance_low_speed: Default::default(),
             balance_high_speed: Default::default(),
             balance_on_throttle: Default::default(),
