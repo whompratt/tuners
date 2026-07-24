@@ -69,14 +69,18 @@ pub struct BandBalance {
 
 #[derive(Debug, Clone, Default)]
 pub struct GearStats {
-    /// (gear, fraction of stint samples), real forward gears only, ascending.
+    /// (gear, fraction of grounded samples), real forward gears only, ascending.
+    /// Airborne frames (all four wheels at full droop) are excluded from every
+    /// stat here: unloaded wheels free-rev the engine to the limiter, which is
+    /// jump evidence, not gearing evidence.
     pub time_frac: Vec<(u8, f32)>,
     pub top_gear: u8,
-    /// Highest rpm reached while in the top gear used — low vs redline means the
-    /// top of the rev range goes unused (final drive likely too long).
+    /// Highest rpm reached while grounded in the top gear used — low vs redline
+    /// means the top of the rev range goes unused (final drive likely too long).
     pub top_gear_max_rpm: f32,
     pub upshifts: u32,
     pub avg_upshift_rpm: Option<f32>,
+    /// Fraction of grounded samples at >= LIMITER of redline.
     pub limiter_frac: f32,
 }
 
@@ -194,6 +198,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut upshift_rpm_sum = 0.0f32;
     let mut upshifts = 0u32;
     let mut prev_real_gear: Option<(u8, f32)> = None; // (gear, rpm while in it)
+    let mut grounded = 0usize; // frames not airborne — denominator for gear stats
     // DistanceTraveled is always 0 outside races (see telemetry.md), so distance is
     // integrated from speed over the race clock (monotonic in a kept timeline,
     // frozen across pauses).
@@ -223,8 +228,9 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         let travel_m = f.suspension_travel_meters.to_array();
 
         // Airborne / landing detection must precede bottoming attribution.
+        let airborne = travel.iter().all(|v| *v <= AIRBORNE_TRAVEL);
         let t = f.current_race_time;
-        if travel.iter().all(|v| *v <= AIRBORNE_TRAVEL) {
+        if airborne {
             air_start.get_or_insert(t);
         } else if let Some(start) = air_start.take()
             && t - start >= JUMP_MIN_AIR_S
@@ -301,20 +307,29 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 .any(|r| *r < -SLIP_LIMIT) as usize;
         }
 
-        if (1..=MAX_REAL_GEAR).contains(&f.gear) {
-            gear_counts[f.gear as usize] += 1;
-            gear_max_rpm[f.gear as usize] =
-                gear_max_rpm[f.gear as usize].max(f.current_engine_rpm);
-            if let Some((prev, prev_rpm)) = prev_real_gear
-                && f.gear > prev
-            {
-                upshift_rpm_sum += prev_rpm;
-                upshifts += 1;
+        // Airborne revs are free-revving against unloaded wheels (usually pinned
+        // on the limiter) — jump evidence, not gearing evidence. Gear/limiter
+        // stats sample grounded frames only, and an upshift must not span an
+        // airborne gap (auto shifts at the mid-air limiter).
+        if airborne {
+            prev_real_gear = None;
+        } else {
+            grounded += 1;
+            if (1..=MAX_REAL_GEAR).contains(&f.gear) {
+                gear_counts[f.gear as usize] += 1;
+                gear_max_rpm[f.gear as usize] =
+                    gear_max_rpm[f.gear as usize].max(f.current_engine_rpm);
+                if let Some((prev, prev_rpm)) = prev_real_gear
+                    && f.gear > prev
+                {
+                    upshift_rpm_sum += prev_rpm;
+                    upshifts += 1;
+                }
+                prev_real_gear = Some((f.gear, f.current_engine_rpm));
             }
-            prev_real_gear = Some((f.gear, f.current_engine_rpm));
-        }
-        if f.engine_max_rpm > 0.0 && f.current_engine_rpm >= LIMITER * f.engine_max_rpm {
-            limiter += 1;
+            if f.engine_max_rpm > 0.0 && f.current_engine_rpm >= LIMITER * f.engine_max_rpm {
+                limiter += 1;
+            }
         }
 
         let wheel_avg = f.wheel_rotation_speed.to_array().iter().sum::<f32>() / 4.0;
@@ -336,11 +351,14 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     }
 
     let frac = |count: usize| count as f32 / n as f32;
+    // Gear stats count grounded frames only, so their fractions are over the
+    // grounded sample count — a jump-heavy stint must not dilute limiter time.
+    let gfrac = |count: usize| count as f32 / grounded.max(1) as f32;
     let corners_from = |vals: [f32; 4]| Corners { fl: vals[0], fr: vals[1], rl: vals[2], rr: vals[3] };
 
     let time_frac: Vec<(u8, f32)> = (1..=MAX_REAL_GEAR)
         .filter(|g| gear_counts[*g as usize] > 0)
-        .map(|g| (g, frac(gear_counts[g as usize])))
+        .map(|g| (g, gfrac(gear_counts[g as usize])))
         .collect();
     let top_gear = time_frac.last().map(|(g, _)| *g).unwrap_or(0);
 
@@ -393,7 +411,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             top_gear_max_rpm: gear_max_rpm[top_gear as usize],
             upshifts,
             avg_upshift_rpm: (upshifts > 0).then(|| upshift_rpm_sum / upshifts as f32),
-            limiter_frac: frac(limiter),
+            limiter_frac: gfrac(limiter),
         },
         surface_rumble_avg: rumble_sum / n as f32,
         surface_loose: rumble_sum / n as f32 > LOOSE_SURFACE_RUMBLE,
@@ -462,21 +480,69 @@ mod tests {
         assert!((m.cornering_rear_slip.unwrap() - 0.4).abs() < 1e-5);
     }
 
+    /// Default frames have zero suspension travel = airborne, which excludes
+    /// them from gear stats; grounded travel for tests that need revs counted.
+    const GROUNDED: Corners<f32> = Corners { fl: 0.5, fr: 0.5, rl: 0.5, rr: 0.5 };
+
     #[test]
     fn upshift_rpm_recorded_across_shift_sentinel() {
         // 2nd at 9000 rpm -> gear 11 (mid-shift) -> 3rd: one upshift at 9000.
-        let frames = vec![
-            TelemetryFrame { gear: 2, current_engine_rpm: 8000.0, ..Default::default() },
-            TelemetryFrame { gear: 2, current_engine_rpm: 9000.0, ..Default::default() },
-            TelemetryFrame { gear: 11, current_engine_rpm: 8200.0, ..Default::default() },
-            TelemetryFrame { gear: 3, current_engine_rpm: 6500.0, ..Default::default() },
-        ];
+        let frames: Vec<TelemetryFrame> = [(2, 8000.0), (2, 9000.0), (11, 8200.0), (3, 6500.0)]
+            .into_iter()
+            .map(|(gear, current_engine_rpm)| TelemetryFrame {
+                gear,
+                current_engine_rpm,
+                norm_suspension_travel: GROUNDED,
+                ..Default::default()
+            })
+            .collect();
         let m = stint_metrics(&timed(frames));
         assert_eq!(m.gears.upshifts, 1);
         assert_eq!(m.gears.avg_upshift_rpm, Some(9000.0));
         assert_eq!(m.gears.top_gear, 3);
         // gear 11 must not appear in time fractions
         assert!(m.gears.time_frac.iter().all(|(g, _)| *g <= 10));
+    }
+
+    /// Mid-air the unloaded wheels free-rev the engine to the limiter: those
+    /// frames must not count toward limiter time, per-gear max rpm, or upshifts,
+    /// and the grounded fractions must not be diluted by air time.
+    #[test]
+    fn airborne_revs_excluded_from_gear_stats() {
+        let mut frames = Vec::new();
+        let planted = |gear, rpm| TelemetryFrame {
+            gear,
+            current_engine_rpm: rpm,
+            engine_max_rpm: 8000.0,
+            norm_suspension_travel: GROUNDED,
+            ..Default::default()
+        };
+        let flying = |gear, rpm| TelemetryFrame {
+            norm_suspension_travel: Corners { fl: 0.03, fr: 0.03, rl: 0.03, rr: 0.03 },
+            ..planted(gear, rpm)
+        };
+        for _ in 0..20 {
+            frames.push(planted(3, 6000.0));
+        }
+        // Jump: pinned on the limiter, auto-shifting 3rd -> 4th mid-air.
+        for _ in 0..3 {
+            frames.push(flying(3, 7950.0));
+        }
+        for _ in 0..3 {
+            frames.push(flying(4, 7950.0));
+        }
+        for _ in 0..20 {
+            frames.push(planted(4, 5000.0));
+        }
+        let m = stint_metrics(&timed(frames));
+        assert_eq!(m.jumps, 1);
+        assert_eq!(m.gears.limiter_frac, 0.0, "airborne limiter time must not count");
+        assert_eq!(m.gears.top_gear, 4);
+        assert_eq!(m.gears.top_gear_max_rpm, 5000.0, "mid-air rpm must not count");
+        assert_eq!(m.gears.upshifts, 0, "mid-air upshift must not count");
+        assert_eq!(m.gears.avg_upshift_rpm, None);
+        // Fractions are over the 40 grounded samples, not all 46.
+        assert_eq!(m.gears.time_frac, vec![(3, 0.5), (4, 0.5)]);
     }
 
     #[test]
