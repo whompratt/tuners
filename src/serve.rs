@@ -104,6 +104,25 @@ fn handle(
         ("POST", "/api/session/tune") => {
             tune_post(&form_params(&request_body), session_path, recorder)
         }
+        ("POST", "/api/session/new") => {
+            let out = session_new(&form_params(&request_body), session_file, "tune-journal.txt");
+            if out.0 == "200 OK" {
+                split_and_drop_pending(recorder);
+            }
+            out
+        }
+        ("POST", "/api/session/resume") => {
+            let out = session_resume(&form_params(&request_body), session_file, "tune-journal.txt");
+            if out.0 == "200 OK" {
+                split_and_drop_pending(recorder);
+            }
+            out
+        }
+        ("GET", "/api/sessions") => (
+            "200 OK",
+            "application/json",
+            sessions_json(session_file, "tune-journal.txt"),
+        ),
         ("GET", "/api/session") => (
             "200 OK",
             "application/json",
@@ -332,6 +351,242 @@ fn session_post(
         Ok(()) => ("200 OK", "application/json", session_json(&s)),
         Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string()),
     }
+}
+
+/// A session switch is a hard recording boundary: cut the stint and drop any
+/// pending tune-note chain — the chain belonged to the outgoing session.
+fn split_and_drop_pending(recorder: &crate::record::SharedRecorder) {
+    let mut r = recorder.lock().unwrap();
+    r.split_requested = true;
+    r.pending_note = None;
+    r.pending_base_rev = None;
+}
+
+/// Archiving a blank session would save nothing worth resuming: no car, no
+/// revisions, and no facts beyond display prefs.
+fn session_is_blank(s: &crate::tuning::TuningSession) -> bool {
+    s.car.is_none() && s.revisions.is_empty() && s.facts.keys().all(|k| k.starts_with("unit_"))
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Park the active session pair under a stamped id: the session file is copied
+/// to its archive name and the car's live journal moves with it. Ids are
+/// "<ordinal>-<stamp>" — the legacy car-switch scheme's plain "<ordinal>" ids
+/// coexist and resume the same way.
+fn archive_active(
+    s: &crate::tuning::TuningSession,
+    session_file: &str,
+    journal_base: &str,
+) -> std::io::Result<String> {
+    let base_id = format!(
+        "{}-{}",
+        s.car.map_or_else(|| "none".into(), |c| c.to_string()),
+        crate::util::utc_stamp(now_secs()),
+    );
+    // Same car archived twice within a second (quick new+resume clicks) must
+    // not overwrite the first archive — bump a counter until the id is free.
+    let mut id = base_id.clone();
+    let mut n = 2;
+    while Path::new(&crate::tuning::suffixed_path(session_file, &id)).exists()
+        || Path::new(&crate::tuning::suffixed_path(journal_base, &id)).exists()
+    {
+        id = format!("{base_id}-{n}");
+        n += 1;
+    }
+    s.save(crate::tuning::suffixed_path(session_file, &id).as_ref())?;
+    let live = crate::tuning::journal_path_for(s.car, journal_base);
+    if Path::new(&live).exists() {
+        let parked = crate::tuning::suffixed_path(journal_base, &id);
+        std::fs::rename(&live, &parked)?;
+        // Boundary marker (a comment — the entry parser skips it): a parked
+        // campaign accrues no implicit trajectory steps while other campaigns
+        // drive the same car (advise::campaign_bound).
+        append_line(&parked, &format!("# parked {}", crate::util::utc_stamp(now_secs())))?;
+    }
+    Ok(id)
+}
+
+fn append_line(path: &str, line: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut f = std::fs::OpenOptions::new().append(true).open(path)?;
+    writeln!(f, "{line}")
+}
+
+/// Start a fresh session (e.g. after an upgrade rebuild): the active pair is
+/// archived and a blank session — carrying only the unit display prefs, plus
+/// any posted name/description/car — becomes active. The first tune save
+/// seeds the new journal's baseline against the next stint.
+fn session_new(
+    params: &[(String, String)],
+    session_file: &str,
+    journal_base: &str,
+) -> (&'static str, &'static str, String) {
+    let current = crate::tuning::TuningSession::load(session_file.as_ref());
+    if !session_is_blank(&current)
+        && let Err(e) = archive_active(&current, session_file, journal_base)
+    {
+        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+    }
+    let mut fresh = crate::tuning::TuningSession::default();
+    for (k, v) in &current.facts {
+        if k.starts_with("unit_") {
+            fresh.facts.insert(k.clone(), v.clone());
+        }
+    }
+    for (k, v) in params {
+        let v = v.trim();
+        match k.as_str() {
+            "car" => fresh.car = v.parse().ok(),
+            "name" | "description" if !v.is_empty() => {
+                fresh.facts.insert(k.clone(), v.to_string());
+            }
+            _ => {}
+        }
+    }
+    match fresh.save(session_file.as_ref()) {
+        Ok(()) => ("200 OK", "application/json", session_json(&fresh)),
+        Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string()),
+    }
+}
+
+/// Swap an archived session back in: the active pair is archived first, then
+/// the chosen pair becomes active (files move, nothing is copied — an archived
+/// session has exactly one home).
+fn session_resume(
+    params: &[(String, String)],
+    session_file: &str,
+    journal_base: &str,
+) -> (&'static str, &'static str, String) {
+    let Some(id) = params
+        .iter()
+        .find(|(k, _)| k == "id")
+        .map(|(_, v)| v.trim())
+        .filter(|v| !v.is_empty())
+    else {
+        return ("400 Bad Request", "text/plain; charset=utf-8", "missing id".into());
+    };
+    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return ("400 Bad Request", "text/plain; charset=utf-8", "bad id".into());
+    }
+    let archived_session = crate::tuning::suffixed_path(session_file, id);
+    if !Path::new(&archived_session).exists() {
+        return ("404 Not Found", "text/plain; charset=utf-8", "no such session".into());
+    }
+    let restored = crate::tuning::TuningSession::load(archived_session.as_ref());
+    let current = crate::tuning::TuningSession::load(session_file.as_ref());
+    // The restored journal must not clobber a live one. The archive step below
+    // frees the live journal only when the active session is the same car;
+    // otherwise a journal already at the target belongs to a THIRD campaign
+    // (parked by the legacy car-switch scheme) and moving over it would lose it.
+    let target = crate::tuning::journal_path_for(restored.car, journal_base);
+    let src = crate::tuning::suffixed_path(journal_base, id);
+    let frees_target = !session_is_blank(&current) && current.car == restored.car;
+    if src != target && Path::new(&target).exists() && !frees_target {
+        return (
+            "409 Conflict",
+            "text/plain; charset=utf-8",
+            format!("{target} already exists — another session for this car is parked; resume it first"),
+        );
+    }
+    if !session_is_blank(&current)
+        && let Err(e) = archive_active(&current, session_file, journal_base)
+    {
+        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+    }
+    if let Err(e) = std::fs::rename(&archived_session, session_file) {
+        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+    }
+    if src != target
+        && Path::new(&src).exists()
+        && let Err(e) = std::fs::rename(&src, &target)
+    {
+        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+    }
+    // The resume marker floors the implicit-step scan: stints other campaigns
+    // drove while this one was parked stay out of its trajectory.
+    if Path::new(&target).exists()
+        && let Err(e) =
+            append_line(&target, &format!("# resumed {}", crate::util::utc_stamp(now_secs())))
+    {
+        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+    }
+    ("200 OK", "application/json", session_json(&restored))
+}
+
+/// Count of stints a journal file references (non-comment lines).
+fn journal_stints(path: &str) -> usize {
+    std::fs::read_to_string(path)
+        .map(|t| {
+            t.lines()
+                .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+/// The session library: the active session plus every archived sibling
+/// (<stem>-<id>.<ext>), newest first.
+fn sessions_json(session_file: &str, journal_base: &str) -> String {
+    let row = |id: Option<&str>, s: &crate::tuning::TuningSession, stints: usize| {
+        format!(
+            "{{\"id\":{},\"car\":{},\"carName\":{},\"name\":{},\"description\":{},\"revisions\":{},\"stints\":{}}}",
+            id.map_or("null".into(), json_str),
+            s.car.map_or("null".into(), |c| c.to_string()),
+            s.car.and_then(crate::cars::car_name).map_or("null".into(), json_str),
+            s.facts.get("name").map_or("null".into(), |v| json_str(v)),
+            s.facts.get("description").map_or("null".into(), |v| json_str(v)),
+            s.revisions.len(),
+            stints,
+        )
+    };
+    let path = Path::new(session_file);
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let file_name = path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name.as_str(), ""));
+    let (prefix, suffix) = (format!("{stem}-"), format!(".{ext}"));
+    let mut archived: Vec<(std::time::SystemTime, String)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == file_name {
+                continue;
+            }
+            let Some(id) = name
+                .strip_prefix(prefix.as_str())
+                .and_then(|r| r.strip_suffix(suffix.as_str()))
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            let s = crate::tuning::TuningSession::load(&entry.path());
+            let stints = journal_stints(&crate::tuning::suffixed_path(journal_base, id));
+            let modified = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            archived.push((modified, row(Some(id), &s, stints)));
+        }
+    }
+    archived.sort_by(|a, b| b.0.cmp(&a.0));
+    let active = crate::tuning::TuningSession::load(path);
+    let active_stints = journal_stints(&crate::tuning::journal_path_for(active.car, journal_base));
+    format!(
+        "{{\"active\":{},\"archived\":[{}]}}",
+        row(None, &active, active_stints),
+        archived.into_iter().map(|(_, j)| j).collect::<Vec<_>>().join(","),
+    )
 }
 
 /// Save a new tune revision. The journal note is derived by diffing against the
@@ -865,6 +1120,85 @@ mod tests {
     }
 
     use super::*;
+
+    /// New-session archives the active pair whole; resume swaps it back, and
+    /// two campaigns for the SAME car keep separate journals throughout.
+    #[test]
+    fn session_new_and_resume_roundtrip_same_car() {
+        let dir = std::env::temp_dir().join(format!("tuners-sessions-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let session_file = dir.join("tune-session.txt");
+        let journal_base = dir.join("tune-journal.txt");
+        let (sf, jb) = (
+            session_file.to_string_lossy().into_owned(),
+            journal_base.to_string_lossy().into_owned(),
+        );
+        let p = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+
+        // Campaign A: car 2793 with a name, one revision, a journal with 2 stints.
+        let mut a = crate::tuning::TuningSession { car: Some(2793), ..Default::default() };
+        a.facts.insert("name".into(), "awd aero".into());
+        a.facts.insert("unit_pressure".into(), "psi".into());
+        a.revisions.push(crate::tuning::Revision { stamp: "1".into(), ..Default::default() });
+        a.save(&session_file).unwrap();
+        let journal_a = crate::tuning::journal_path_for(Some(2793), &jb);
+        std::fs::write(&journal_a, "# car\nsessions/a.ftel | baseline\nsessions/b.ftel | x\n")
+            .unwrap();
+
+        // New session: A is archived (session + journal move together), the
+        // fresh session keeps unit prefs and takes the posted name.
+        let (status, _, body) = session_new(&p(&[("name", "rwd build")]), &sf, &jb);
+        assert_eq!(status, "200 OK", "{body}");
+        assert!(!Path::new(&journal_a).exists(), "journal A moved to the archive");
+        let parked = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .find(|e| e.file_name().to_string_lossy().starts_with("tune-journal-2793-"))
+            .expect("archived journal");
+        assert!(
+            std::fs::read_to_string(parked.path()).unwrap().contains("# parked "),
+            "parked marker closes the campaign"
+        );
+        let fresh = crate::tuning::TuningSession::load(&session_file);
+        assert_eq!(fresh.car, None);
+        assert_eq!(fresh.facts.get("name").unwrap(), "rwd build");
+        assert_eq!(fresh.facts.get("unit_pressure").unwrap(), "psi", "unit prefs carry");
+        assert!(fresh.revisions.is_empty());
+
+        let list = sessions_json(&sf, &jb);
+        assert!(list.contains("\"awd aero\"") && list.contains("\"stints\":2"), "{list}");
+        let id = list
+            .split("\"id\":\"")
+            .nth(1)
+            .and_then(|r| r.split('"').next())
+            .expect("archived id in listing")
+            .to_string();
+
+        // Make the fresh session campaign B on the SAME car, with its own journal.
+        let mut b = crate::tuning::TuningSession::load(&session_file);
+        b.car = Some(2793);
+        b.save(&session_file).unwrap();
+        std::fs::write(&journal_a, "# car\nsessions/c.ftel | baseline\n").unwrap();
+
+        // Resume A: B is archived in turn, A's session AND journal come back.
+        let (status, _, body) = session_resume(&p(&[("id", &id)]), &sf, &jb);
+        assert_eq!(status, "200 OK", "{body}");
+        let restored = crate::tuning::TuningSession::load(&session_file);
+        assert_eq!(restored.facts.get("name").unwrap(), "awd aero");
+        assert_eq!(restored.revisions.len(), 1);
+        let journal = std::fs::read_to_string(&journal_a).unwrap();
+        assert!(journal.contains("sessions/b.ftel"), "campaign A journal restored: {journal}");
+        assert!(journal.contains("# resumed "), "resume marker floors the implicit-step scan");
+        let list = sessions_json(&sf, &jb);
+        assert!(list.contains("\"rwd build\"") && list.contains("\"stints\":1"), "{list}");
+
+        // Bad ids are rejected, unknown ids 404.
+        assert_eq!(session_resume(&p(&[("id", "../evil")]), &sf, &jb).0, "400 Bad Request");
+        assert_eq!(session_resume(&p(&[("id", "none-19700101-000000")]), &sf, &jb).0, "404 Not Found");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Accepting suggestions saves PARTIAL tunes: posted keys merge onto the
     /// latest revision, and multiple accepts before the next stint net into

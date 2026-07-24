@@ -181,11 +181,18 @@ pub fn diff_keys(a: &Revision, b: &Revision) -> Vec<String> {
 /// different cars' trajectories never mix. No car -> the base path (blind mode).
 pub fn journal_path_for(car: Option<i32>, base: &str) -> String {
     match car {
-        Some(car) => match base.rsplit_once('.') {
-            Some((stem, ext)) => format!("{stem}-{car}.{ext}"),
-            None => format!("{base}-{car}"),
-        },
+        Some(car) => suffixed_path(base, &car.to_string()),
         None => base.to_string(),
+    }
+}
+
+/// `base` with `-<id>` spliced in before the extension — the shared naming
+/// scheme for per-car journals ("tune-journal-2793.txt") and archived session
+/// pairs ("tune-session-2793-20260724-163848.txt").
+pub fn suffixed_path(base: &str, id: &str) -> String {
+    match base.rsplit_once('.') {
+        Some((stem, ext)) => format!("{stem}-{id}.{ext}"),
+        None => format!("{base}-{id}"),
     }
 }
 

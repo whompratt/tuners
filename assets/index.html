@@ -184,10 +184,20 @@
         <h2 id="session-title" style="margin:0">Tuning session</h2>
         <span id="session-sub" style="color:var(--muted);font-size:13px"></span>
         <span style="flex:1"></span>
+        <button id="sess-manage" class="btn">sessions…</button>
         <button id="session-edit" class="btn">set up session</button>
         <button id="tune-edit" class="btn" style="display:none">enter tune</button>
       </div>
       <div id="tune-summary" style="margin-top:8px;font-size:13px;color:var(--ink-2)"></div>
+      <div id="sess-body" style="display:none;margin-top:10px;font-size:13px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <input id="sess-new-name" type="text" placeholder="name the new session (optional)" style="width:240px">
+          <button id="sess-new-go" class="btn btn-go">new session</button>
+          <span style="color:var(--muted)">archives the current campaign (tune history + journal) whole — resume it below any
+            time. Start one whenever the car itself changes (upgrades/drivetrain), not just the tune.</span>
+        </div>
+        <div id="sess-list"></div>
+      </div>
       <form id="session-form" style="display:none;margin-top:12px" onsubmit="return false">
         <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
           Pick the car this session is about — stints from other cars are still
@@ -829,7 +839,8 @@ function renderSession() {
   const s = sessionData;
   const active = s && s.car != null;
   $('session-title').textContent = active
-    ? `Tuning session — ${s.carName || `car #${s.car}`}` : 'Tuning session';
+    ? `Tuning session — ${s.facts.name ? `${s.facts.name} · ` : ''}${s.carName || `car #${s.car}`}`
+    : 'Tuning session';
   $('session-sub').textContent = active
     ? (s.revisions ? `tune revision ${s.revisions}` : 'no tune entered yet')
     : 'none active — pick a car and enter what the telemetry can\'t see';
@@ -839,7 +850,8 @@ function renderSession() {
   // unit_* are display prefs and limit_* are slider ranges (canonical units,
   // shown in the tune form and advice evidence) — neither is a car fact.
   const facts = active
-    ? Object.entries(s.facts).filter(([k]) => !k.startsWith('unit_') && !k.startsWith('limit_'))
+    ? Object.entries(s.facts).filter(([k]) =>
+        !k.startsWith('unit_') && !k.startsWith('limit_') && k !== 'name' && k !== 'description')
     : [];
   const kv = (fields, k, v) =>
     `<span class="kv">${label(fields, k)} <b>${toDisp(k, v)}${unitLabel(k).replace(/[()]/g, '')}</b></span>`;
@@ -898,7 +910,10 @@ function openSessionForm() {
   const cars = new Map();
   for (const st of allSessions) cars.set(st.car, st.carName || `car #${st.car}`);
   const cur = sessionData && sessionData.car;
+  const esc = v => String(v || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   wrap.innerHTML =
+    `<div><label>session name</label><input id="ss-name" type="text" placeholder="e.g. rwd no-aero build" value="${esc(sessionData && sessionData.facts.name)}"></div>` +
+    `<div><label>description</label><input id="ss-description" type="text" placeholder="optional — notes to find this campaign later" value="${esc(sessionData && sessionData.facts.description)}"></div>` +
     `<div><label>car (from recorded stints)</label><select id="ss-car">` +
     [...cars].map(([o, n]) => `<option value="${o}" ${o === cur ? 'selected' : ''}>${n}</option>`).join('') +
     `</select></div>` +
@@ -964,6 +979,8 @@ $('session-cancel').onclick = () => { $('session-form').style.display = 'none'; 
 $('session-save').onclick = async () => {
   const body = new URLSearchParams();
   body.set('car', $('ss-car-manual').value || $('ss-car').value);
+  body.set('name', $('ss-name').value.trim());
+  body.set('description', $('ss-description').value.trim());
   // Units first, so toCanon below converts under the prefs being saved.
   for (const [dim] of UNIT_DIMS) {
     if ($(`up-${dim}`)) { unitPrefs[dim] = $(`up-${dim}`).value; body.set(`unit_${dim}`, unitPrefs[dim]); }
@@ -974,6 +991,54 @@ $('session-save').onclick = async () => {
   await fetch('/api/session', { method: 'POST', body });
   $('session-form').style.display = 'none';
   loadSession();
+};
+
+// --- session manager: list archived campaigns, resume, start new ---
+$('sess-manage').onclick = async () => {
+  const body = $('sess-body');
+  if (body.style.display !== 'none') { body.style.display = 'none'; return; }
+  await renderSessList();
+  body.style.display = '';
+};
+async function renderSessList() {
+  const d = await fetch('/api/sessions').then(r => r.json());
+  const escT = v => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const row = (s, tag) => {
+    const nm = s.name || s.carName || (s.car != null ? `car #${s.car}` : '(no car)');
+    const meta = [
+      s.name ? (s.carName || (s.car != null ? `car #${s.car}` : null)) : null,
+      `${s.revisions} revision${s.revisions === 1 ? '' : 's'}`,
+      `${s.stints} stint${s.stints === 1 ? '' : 's'}`,
+      s.id,
+    ].filter(Boolean).join(' · ');
+    return `<div style="display:flex;gap:10px;align-items:baseline;padding:5px 0;border-top:1px solid var(--border)">
+      <b>${escT(nm)}</b>
+      <span style="color:var(--muted)">${escT(meta)}</span>
+      ${s.description ? `<span style="color:var(--ink-2)">${escT(s.description)}</span>` : ''}
+      <span style="flex:1"></span>${tag}</div>`;
+  };
+  $('sess-list').innerHTML =
+    row(d.active, '<span style="color:var(--accent)">active</span>') +
+    d.archived.map(s => row(s, `<button class="btn sess-resume" data-id="${escT(s.id)}">resume</button>`)).join('');
+  for (const btn of document.querySelectorAll('.sess-resume')) {
+    btn.onclick = async () => {
+      const r = await fetch('/api/session/resume', { method: 'POST', body: new URLSearchParams({ id: btn.dataset.id }) });
+      if (!r.ok) { alert(await r.text()); return; }
+      await loadSession();
+      await renderSessList();
+    };
+  }
+}
+$('sess-new-go').onclick = async () => {
+  const body = new URLSearchParams();
+  const n = $('sess-new-name').value.trim();
+  if (n) body.set('name', n);
+  const r = await fetch('/api/session/new', { method: 'POST', body });
+  if (!r.ok) { alert(await r.text()); return; }
+  $('sess-new-name').value = '';
+  await loadSession();
+  await renderSessList();
+  openSessionForm(); // straight into picking the car + facts for the new campaign
 };
 
 function openTuneForm() {

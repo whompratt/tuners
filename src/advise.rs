@@ -432,6 +432,29 @@ fn stint_stamp(path: &str) -> Option<&str> {
     .then_some(stamp)
 }
 
+/// Where a journal's campaign stands, from its boundary markers (comment
+/// lines the session archive/resume flow appends; the entry parser skips
+/// them). Closed = parked in the archive, nothing joins the trajectory;
+/// Since = resumed at that stamp, only newer stints join as implicit steps.
+enum CampaignBound {
+    Open,
+    Closed,
+    Since(String),
+}
+
+fn campaign_bound(journal_text: &str) -> CampaignBound {
+    let mut bound = CampaignBound::Open;
+    for line in journal_text.lines() {
+        let line = line.trim();
+        if line.strip_prefix("# parked ").is_some() {
+            bound = CampaignBound::Closed;
+        } else if let Some(stamp) = line.strip_prefix("# resumed ") {
+            bound = CampaignBound::Since(stamp.trim().to_string());
+        }
+    }
+    bound
+}
+
 /// Newest stint recording in `dir` whose first driving frame matches `car`
 /// (any car when None).
 pub fn latest_stint_for_car(dir: &str, car: Option<i32>) -> Option<String> {
@@ -465,9 +488,20 @@ pub fn advise(
     // the trajectory as implicit no-change steps. Journal lines are written
     // on tune saves, so a stint driven without touching anything — the
     // same-setup repeat that measures pure drift — would otherwise be
-    // invisible to advice.
-    if let Some(last_stamp) = entries.last().and_then(|e| stint_stamp(&e.path)) {
-        let last_stamp = last_stamp.to_string();
+    // invisible to advice. Campaign boundaries bound the scan: a parked
+    // (archived) journal accrues nothing, and a resumed one only takes
+    // stints newer than the resume — stints driven in ANOTHER campaign of
+    // the same car while this one was parked must not leak in.
+    let bound = campaign_bound(&text);
+    if !matches!(bound, CampaignBound::Closed)
+        && let Some(last_stamp) = entries.last().and_then(|e| stint_stamp(&e.path))
+    {
+        let mut last_stamp = last_stamp.to_string();
+        if let CampaignBound::Since(s) = &bound
+            && s.as_str() > last_stamp.as_str()
+        {
+            last_stamp = s.clone();
+        }
         let mut extra: Vec<String> = std::fs::read_dir(stints_dir)
             .ok()
             .into_iter()
@@ -1491,6 +1525,26 @@ mod tests {
         // Best pinned at the slider bound: no new point exists.
         let nodes = [(0.0, -0.3, 1), (50.0, 0.2, 1)];
         assert_eq!(probe_value(&nodes, Some((0.0, 100.0))), None);
+    }
+
+    /// Boundary markers gate the implicit-step scan: parked journals accrue
+    /// nothing, resumed ones only take stints newer than the resume.
+    #[test]
+    fn campaign_bound_reads_the_last_marker() {
+        assert!(matches!(campaign_bound("# car\na.ftel | baseline\n"), CampaignBound::Open));
+        assert!(matches!(
+            campaign_bound("a.ftel | baseline\n# parked 20260724-190000\n"),
+            CampaignBound::Closed
+        ));
+        match campaign_bound("a.ftel | x\n# parked 20260724-190000\n# resumed 20260724-210000\n") {
+            CampaignBound::Since(s) => assert_eq!(s, "20260724-210000"),
+            _ => panic!("expected Since"),
+        }
+        // Park after a resume closes it again.
+        assert!(matches!(
+            campaign_bound("# resumed 20260724-210000\n# parked 20260724-220000\n"),
+            CampaignBound::Closed
+        ));
     }
 
     #[test]
