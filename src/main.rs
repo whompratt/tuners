@@ -34,6 +34,11 @@ USAGE:
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
                     send synthetic telemetry (stand-in for the game); timescale
                     compresses in-game time for headless lap testing
+  tuners receive  [--port 8090] [--bind 127.0.0.1] [--root inbox]
+                  [--tokens receive-tokens.txt] [--max-mb 64] [--daily-mb 512]
+                    telemetry-collection endpoint (plan 009): authenticated
+                    bundle PUTs stored per sender under --root; run behind a
+                    TLS reverse proxy. --issue <sender-id> mints a token
 ";
 
 fn main() -> ExitCode {
@@ -61,6 +66,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "advise" => cmd_advise(&args[1..]),
         "serve" => cmd_serve(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
+        "receive" => cmd_receive(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
             Ok(())
@@ -409,6 +415,42 @@ fn cmd_simulate(args: &[String]) -> Result<(), String> {
         }
     }
     simulate::run(&opts).map_err(|e| e.to_string())
+}
+
+fn cmd_receive(args: &[String]) -> Result<(), String> {
+    let mut port: u16 = 8090;
+    let mut bind = "127.0.0.1".to_string();
+    let mut root = "inbox".to_string();
+    let mut tokens = "receive-tokens.txt".to_string();
+    let mut max_mb: u64 = 64;
+    let mut daily_mb: u64 = 512;
+    let mut issue: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--port" => port = parse(flag, it.next())?,
+            "--bind" => bind = value(flag, it.next())?.clone(),
+            "--root" => root = value(flag, it.next())?.clone(),
+            "--tokens" => tokens = value(flag, it.next())?.clone(),
+            "--max-mb" => max_mb = parse(flag, it.next())?,
+            "--daily-mb" => daily_mb = parse(flag, it.next())?,
+            "--issue" => issue = Some(value(flag, it.next())?.clone()),
+            other => return Err(format!("unknown flag '{other}' for receive")),
+        }
+    }
+    if let Some(sender) = issue {
+        let token = tuners::receive::issue_token(tokens.as_ref(), &sender)?;
+        println!("token for {sender}: {token}");
+        println!("(appended to {tokens} — hand the token to the sender, keep the file private)");
+        return Ok(());
+    }
+    let cfg = tuners::receive::ReceiveConfig {
+        root: PathBuf::from(root),
+        tokens_path: PathBuf::from(tokens),
+        max_bundle_bytes: max_mb * 1024 * 1024,
+        daily_cap_bytes: daily_mb * 1024 * 1024,
+    };
+    tuners::receive::run(&bind, port, cfg).map_err(|e| e.to_string())
 }
 
 fn value<'a>(flag: &str, v: Option<&'a String>) -> Result<&'a String, String> {

@@ -4,6 +4,7 @@ pub mod capture;
 pub mod cars;
 pub mod live;
 pub mod packet;
+pub mod receive;
 pub mod record;
 pub mod replay;
 pub mod serve;
