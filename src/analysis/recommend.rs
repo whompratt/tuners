@@ -24,6 +24,11 @@ const BRAKE_PUSH: f32 = 0.30;
 /// that FEEL snappy read 4.3-8.2% on-power / 1.8-4.2% rear-first.
 const OS_ON_POWER_FRAC: f32 = 0.04;
 const OS_REAR_FIRST_FRAC: f32 = 0.03;
+/// Counter-steer share gate (tarmac): the driver's own corrections label
+/// slides, so this is the strongest of the three. Corpus: AWD understeer
+/// tunes 0.8-1.4%; the rear-limited RWD cars 4.7-5.3%; dirt 13%+ (technique,
+/// excluded by the loose-surface gate like the rest).
+const OS_COUNTERSTEER_FRAC: f32 = 0.03;
 /// Working tire temperature band (°F) per compound; outside it pressures
 /// likely need adjusting. The slick band is the in-game-validated anchor
 /// (160-210°F reads right on real FH6 sessions); the rest are offset from it
@@ -313,7 +318,9 @@ fn balance_rule(
     let os = &overall.transient_oversteer;
     let snappy = !overall.surface_loose
         && understeer
-        && (os.on_power_frac >= OS_ON_POWER_FRAC || os.rear_first_frac >= OS_REAR_FIRST_FRAC);
+        && (os.on_power_frac >= OS_ON_POWER_FRAC
+            || os.rear_first_frac >= OS_REAR_FIRST_FRAC
+            || os.countersteer_frac >= OS_COUNTERSTEER_FRAC);
     if snappy {
         confidence = confidence.min(Confidence::Medium);
     }
@@ -381,12 +388,15 @@ fn balance_rule(
         evidence.push(format!(
             "counter-signal: {:.1}% of cornering time flashes clear oversteer \
              ({} episodes; {:.1}% on power, {:.1}% at speed, rear-first at \
-             limit {:.1}%) — softening the front sharpens these moments",
+             limit {:.1}%) and the driver counter-steers {:.1}% of cornering \
+             ({} corrections) — softening the front sharpens these moments",
             os.clear_frac * 100.0,
             os.episodes,
             os.on_power_frac * 100.0,
             os.high_speed_frac * 100.0,
             os.rear_first_frac * 100.0,
+            os.countersteer_frac * 100.0,
+            os.countersteer_episodes,
         ));
     }
     recs.push(Recommendation { apply: Vec::new(),
@@ -1109,6 +1119,8 @@ mod tests {
             high_speed_frac: 0.053,
             rear_first_frac: 0.02,
             episodes: 150,
+            countersteer_frac: 0.02,
+            countersteer_episodes: 40,
         };
         let laps: Vec<StintMetrics> = (0..3)
             .map(|_| {
@@ -1160,9 +1172,19 @@ mod tests {
             high_speed_frac: 0.03,
             rear_first_frac: 0.022,
             episodes: 200,
+            countersteer_frac: 0.014,
+            countersteer_episodes: 23,
         };
         let recs = recommend(&overall, &laps, &Default::default());
         assert!(recs.iter().all(|r| r.area != "stability"));
+
+        // Counter-steer alone certifies the slides (driver corrections are
+        // the strongest label) even when the slip-based gates stay under.
+        overall.transient_oversteer.countersteer_frac = 0.05;
+        let recs = recommend(&overall, &laps, &Default::default());
+        let stab = recs.iter().find(|r| r.area == "stability").expect("countersteer gate");
+        assert!(stab.evidence[0].contains("counter-steers") || recs.iter().any(
+            |r| r.area == "balance" && r.evidence.iter().any(|e| e.contains("counter-steers"))));
     }
 
     /// Bands are compound-relative: 155°F is cold for slicks, in-band for

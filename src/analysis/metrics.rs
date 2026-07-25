@@ -15,6 +15,12 @@ const OS_CLEAR_DELTA: f32 = -0.15;
 /// Slip-angle fraction of the grip limit treated as "at the limit" for the
 /// rear-first stat.
 const REAR_AT_LIMIT: f32 = 0.9;
+/// |steer| (i8 units, full lock = 127) below this is straight-ahead jitter,
+/// not a counter-steer input.
+const STEER_DEADBAND: f32 = 15.0;
+/// Consecutive opposite-lock frames before a counter-steer episode counts —
+/// filters chicane transitions where lat flips before the hands do.
+const COUNTERSTEER_MIN_RUN: usize = 3;
 /// Pedal inputs are 0–255; above this counts as "on".
 const PEDAL_ON: u8 = 128;
 /// Normalized suspension travel bounds treated as bottomed / topped out.
@@ -112,6 +118,14 @@ pub struct TransientOversteer {
     pub rear_first_frac: f32,
     /// Distinct clear-oversteer episodes (consecutive frames count once).
     pub episodes: usize,
+    /// Share of cornering time steering AGAINST the corner (opposite lock).
+    /// The driver's own correction labels a slide: understeer never needs
+    /// counter-steer, every caught slide does — so this channel sees the
+    /// rear-limited moments that time-averaged balance structurally cannot
+    /// (oversteer is episodic and corrected; understeer is sustained).
+    pub countersteer_frac: f32,
+    /// Distinct counter-steer episodes (>= 3 consecutive frames).
+    pub countersteer_episodes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +243,9 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut os_rear_first = 0usize;
     let mut os_episodes = 0usize;
     let mut os_in_run = false;
+    let mut cs_frames = 0usize;
+    let mut cs_episodes = 0usize;
+    let mut cs_run = 0usize;
     let mut front_slip_sum = 0.0f32;
     let mut rear_slip_sum = 0.0f32;
     // [low speed, high speed, on throttle, off throttle, on brake] cornering
@@ -348,8 +365,22 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             if rear >= REAR_AT_LIMIT && front < REAR_AT_LIMIT {
                 os_rear_first += 1;
             }
+            // Opposite lock: steering against the corner's lateral G.
+            let steer = f.steer as f32;
+            if steer.abs() >= STEER_DEADBAND
+                && (steer > 0.0) != (f.acceleration[0] > 0.0)
+            {
+                cs_frames += 1;
+                cs_run += 1;
+                if cs_run == COUNTERSTEER_MIN_RUN {
+                    cs_episodes += 1;
+                }
+            } else {
+                cs_run = 0;
+            }
         } else {
             os_in_run = false;
+            cs_run = 0;
         }
 
         if f.accel >= PEDAL_ON {
@@ -479,6 +510,8 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 high_speed_frac: cfrac(os_high_speed),
                 rear_first_frac: cfrac(os_rear_first),
                 episodes: os_episodes,
+                countersteer_frac: cfrac(cs_frames),
+                countersteer_episodes: cs_episodes,
             }
         },
         balance_low_speed: band_balance(bands[0]),

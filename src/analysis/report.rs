@@ -228,6 +228,14 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
             pct(os.rear_first_frac),
         )
         .unwrap();
+        writeln!(
+            out,
+            "    counter-steer: {} of cornering ({} episodes) — the driver's own \
+             slide corrections",
+            pct(os.countersteer_frac),
+            os.countersteer_episodes,
+        )
+        .unwrap();
     }
     if let Some(c) = &m.corners {
         writeln!(
