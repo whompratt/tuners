@@ -21,10 +21,12 @@
     // this worst case (~$0.15/mo over the free 10 GB) but never grow it.
     "GLOBAL_CAP_GB": "20"
   },
-  // Per-IP request throttle, enforced in the Worker (no custom domain
-  // needed). 30 uploads/min is far above any honest drainer.
+  // Platform rate limiter: consulted but measured NON-ENFORCING on this
+  // account (2026-07-25/26, always success:true under 8x sustained load,
+  // fresh namespace) — the enforced throttle is in-isolate in index.js.
+  // Kept so enforcement is honored if the binding ever starts counting.
   "ratelimits": [
-    { "name": "IP_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+    { "name": "IP_LIMIT", "namespace_id": "2001", "simple": { "limit": 30, "period": 60 } }
   ],
   // No per-request logs retained: the plan's "nothing about the sender
   // beyond the token" promise.

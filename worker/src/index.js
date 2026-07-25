@@ -28,6 +28,28 @@
 
 const NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}\.tar\.zst$/;
 const TOKEN_RE = /^[0-9a-f]{64}$/;
+const RATE_LIMIT = 30;
+const RATE_PERIOD_MS = 60_000;
+
+// In-isolate sliding-window throttle: the enforced rate limit. Per-isolate,
+// so it's a bound on a single noisy client, not a global guarantee — the
+// hard cost bounds are the storage ceilings and the free plan's fail-closed
+// request cap, not this.
+const rlWindow = new Map();
+
+function isolateThrottled(ip, limit, periodMs) {
+  const now = Date.now();
+  const recent = (rlWindow.get(ip) ?? []).filter((t) => now - t < periodMs);
+  if (recent.length >= limit) {
+    rlWindow.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  // Bound memory against key-spraying; losing counters just un-throttles.
+  if (rlWindow.size > 10_000) rlWindow.clear();
+  rlWindow.set(ip, recent);
+  return false;
+}
 
 function json(status, obj) {
   return new Response(JSON.stringify(obj), {
@@ -96,10 +118,16 @@ export default {
       return fail(404, "unknown path");
     }
 
+    const ip = request.headers.get("cf-connecting-ip") ?? "local";
     if (env.IP_LIMIT) {
-      const ip = request.headers.get("cf-connecting-ip") ?? "local";
+      // The platform limiter is consulted but NOT relied upon: measured
+      // non-enforcing on this account 2026-07-25/26 (fresh namespace, 8x
+      // sustained load, success:true throughout). Honored if it ever counts.
       const { success } = await env.IP_LIMIT.limit({ key: ip });
       if (!success) return fail(429, "rate limited — slow down");
+    }
+    if (isolateThrottled(ip, RATE_LIMIT, RATE_PERIOD_MS)) {
+      return fail(429, "rate limited — slow down");
     }
 
     const auth = request.headers.get("authorization") ?? "";

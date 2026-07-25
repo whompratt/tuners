@@ -43,8 +43,14 @@ The only billable product here is R2, bounded in layers:
 - `GLOBAL_CAP_GB` (20): hard ceiling on total bucket size, enforced per PUT
   from a cached listing → worst case is storage *pinned* ~10 GB over the free
   tier ≈ **$0.15/month**, never growing.
-- `IP_LIMIT` ratelimit binding: 30 requests/min/IP inside the Worker (no
-  custom domain needed), which also bounds R2 list/write operations.
+- Per-IP throttle, 30 requests/min: enforced by an in-isolate sliding window
+  in index.js. The platform `IP_LIMIT` ratelimit binding is also consulted
+  but was measured NON-ENFORCING on this account (2026-07-25/26: fresh
+  namespace, 8x sustained load, `success:true` throughout — emulator
+  enforces, production doesn't); it stays wired in case it starts counting.
+  The in-isolate window bounds a single noisy client per isolate — the hard
+  cost bounds are the storage ceilings and the fail-closed request cap, not
+  this throttle.
 - Per-sender rolling-24h byte cap (`DAILY_CAP_MB`) and 64 MB max bundle.
 - Rejected requests cost zero R2 operations (checks run cheap-to-expensive).
 - Absolute worst case (sustained distributed attack saturating the free
@@ -109,3 +115,6 @@ The round-trip curl suite from tests/receive.rs was last run green against
 the emulator 2026-07-25: open-mode auth (sender-id derivation cross-checked
 with the Rust twin), dedupe, hash rejection, blocklist 403, rate limit 429,
 per-sender 429, global 507, and lockdown mode via `--var TOKENS:...`.
+Live smoke test against the deployed endpoint 2026-07-25/26: all of the
+above verified except the platform ratelimit binding (see Cost protection);
+uploads round-tripped byte-identical through real R2.
