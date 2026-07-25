@@ -5,6 +5,7 @@ pub mod attribution;
 pub mod compare;
 pub mod corners;
 pub mod journal;
+pub mod driveline;
 pub mod metrics;
 pub mod profile;
 pub mod recommend;

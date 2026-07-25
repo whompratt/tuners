@@ -770,6 +770,47 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             suggestion: None,
             implied: Some(Change { family: Family::Gearing, softer: false, magnitude: None }),
         });
+        return;
+    }
+
+    // Model-based check (the aero–gearing coupling): the fitted drag curve
+    // says where the rev cut SHOULD arrive — the speed the longest flat-out
+    // run actually reaches. Behavioural rules above see only gross extremes;
+    // this catches the mismatch an aero change silently introduces.
+    if let Some(d) = &overall.driveline
+        && let Some(scale) = d.final_drive_scale(g.effective_redline)
+        && !(0.92..=1.08).contains(&scale)
+    {
+        let short = scale < 1.0;
+        recs.push(Recommendation { apply: Vec::new(),
+            area: "gearing",
+            advice: if short {
+                "lengthen the final drive to match this aero: the fitted drag \
+                 model says the longest run reaches past the current rev-cut \
+                 speed — the engine runs out before the car does"
+                    .into()
+            } else {
+                "shorten the final drive to match this aero: the rev cut sits \
+                 well past what the longest run can reach — unused top end \
+                 traded for acceleration everywhere"
+                    .into()
+            },
+            evidence: vec![format!(
+                "drag model: longest flat-out run reaches ~{:.0} mph, rev cut \
+                 arrives at {:.0} mph (gear {}) — ideal final drive ≈ current × {:.2}",
+                d.vmax_track * crate::util::MPS_TO_MPH,
+                d.redline_speed(g.effective_redline) * crate::util::MPS_TO_MPH,
+                d.top_gear,
+                scale,
+            )],
+            confidence: Confidence::Low,
+            suggestion: None,
+            implied: Some(Change {
+                family: Family::Gearing,
+                softer: short, // lengthen = lower final drive number
+                magnitude: None,
+            }),
+        });
     }
 }
 
@@ -955,6 +996,7 @@ mod tests {
             cornering_frac: 0.3,
             transient_oversteer: Default::default(),
             brake_dive_front: None,
+            driveline: None,
             balance_low_speed: Default::default(),
             balance_high_speed: Default::default(),
             balance_on_throttle: Default::default(),

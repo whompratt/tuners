@@ -164,6 +164,9 @@ pub struct StintMetrics {
     pub cornering_rear_slip: Option<f32>,
     pub cornering_frac: f32,
     pub transient_oversteer: TransientOversteer,
+    /// Fitted drag/driveline model (None without enough clean full-throttle
+    /// data) — the measured aero–gearing coupling.
+    pub driveline: Option<super::driveline::DrivelineFit>,
     /// Extra normalized front suspension travel while braking vs on throttle
     /// (nose dive). Measurement only — no rule threshold is calibrated yet;
     /// front aero confounds it at braking speeds. None without enough braking
@@ -572,6 +575,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         balance_off_throttle: band_balance(bands[3]),
         balance_on_brake: band_balance(bands[4]),
         corners: super::corners::summarize(frames),
+        driveline: super::driveline::fit(frames),
         wheelspin_frac: (throttle_samples > 0)
             .then(|| wheelspin as f32 / throttle_samples as f32),
         lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),

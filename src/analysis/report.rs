@@ -335,6 +335,28 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         )
         .unwrap();
     }
+    if let Some(d) = &m.driveline {
+        let scale = d.final_drive_scale(m.gears.effective_redline).unwrap_or(1.0);
+        writeln!(
+            out,
+            "    drag model: flat-out top speed {:.0} {su} (longest run here reaches \
+             ~{:.0} {su}) | rev cut arrives at {:.0} {su} in gear {} — final drive \
+             {} for this aero (ideal ≈ current × {:.2})",
+            speed_val(d.vmax_flat),
+            speed_val(d.vmax_track),
+            speed_val(d.redline_speed(m.gears.effective_redline)),
+            d.top_gear,
+            if scale < 0.95 {
+                "SHORT (rev cut before reachable speed)"
+            } else if scale > 1.05 {
+                "LONG (revs the run never uses)"
+            } else {
+                "matched"
+            },
+            scale,
+        )
+        .unwrap();
+    }
 
     out
 }
