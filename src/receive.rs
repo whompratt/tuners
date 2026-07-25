@@ -22,10 +22,19 @@
 //! of silently overwriting.
 //!
 //! Storage is one directory per sender under `root` — the per-sender library
-//! namespace the plan asks for. The tokens file holds `<token> <sender-id>`
-//! lines; revoke by deleting a line (it is re-read per request), delete a
-//! sender's data on request by removing their directory. Nothing else about
-//! the sender is recorded.
+//! namespace the plan asks for.
+//!
+//! Auth is OPEN by default (strangers-scale opt-in): the client generates its
+//! own 64-hex token and the sender id is sha256(token)[..16] — stable
+//! pseudonymous identity without issuance. Misbehaving sender ids go in the
+//! blocklist file. If the tokens file exists (`<token> <sender-id>` lines,
+//! re-read per request), the endpoint is in allowlist-only lockdown mode
+//! instead. Delete a sender's data on request by removing their directory;
+//! nothing else about the sender is recorded.
+//!
+//! Cost/abuse bounds mirror the Worker: per-sender rolling-24h cap plus a
+//! global storage ceiling (507 when full). The Worker adds a per-IP rate
+//! limit; this local twin doesn't bother (it sits on loopback).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -36,25 +45,29 @@ use std::time::{Duration, SystemTime};
 pub struct ReceiveConfig {
     pub root: PathBuf,
     pub tokens_path: PathBuf,
+    pub blocklist_path: PathBuf,
     pub max_bundle_bytes: u64,
     /// Per-sender cap on bytes accepted in any rolling 24h window.
     pub daily_cap_bytes: u64,
+    /// Ceiling on total stored bytes across all senders: hostile uploads can
+    /// pin storage at this worst case but never grow it.
+    pub global_cap_bytes: u64,
 }
 
 pub fn run(bind: &str, port: u16, cfg: ReceiveConfig) -> std::io::Result<()> {
     let listener = TcpListener::bind((bind, port))?;
-    let senders = match std::fs::read_to_string(&cfg.tokens_path) {
-        Ok(text) => text.lines().filter(|l| token_line(l).is_some()).count(),
-        Err(_) => 0,
+    let mode = if cfg.tokens_path.exists() {
+        let senders = std::fs::read_to_string(&cfg.tokens_path)
+            .map(|text| text.lines().filter(|l| token_line(l).is_some()).count())
+            .unwrap_or(0);
+        format!("lockdown ({} issued token(s) in {})", senders, cfg.tokens_path.display())
+    } else {
+        "open (client-generated tokens, sender = sha256(token)[..16])".to_string()
     };
     println!(
-        "tuners receiver: http://{bind}:{port}/v1/bundle/  root {}  tokens {} ({senders} sender(s))",
+        "tuners receiver: http://{bind}:{port}/v1/bundle/  root {}  auth {mode}",
         cfg.root.display(),
-        cfg.tokens_path.display(),
     );
-    if senders == 0 {
-        eprintln!("warning: no usable tokens — every upload will get 401 (mint one with --issue)");
-    }
     run_listener(listener, cfg)
 }
 
@@ -158,8 +171,7 @@ fn put_bundle(
     // Everything is checked BEFORE the body is read: a rejected upload costs
     // the sender headers, not megabytes.
     let token = auth.ok_or(("401 Unauthorized", err_json("missing bearer token")))?;
-    let sender = sender_for_token(&cfg.tokens_path, token)
-        .ok_or(("401 Unauthorized", err_json("unknown token")))?;
+    let sender = authenticate(cfg, token)?;
     let stem = validate_bundle_name(name).ok_or((
         "400 Bad Request",
         err_json("bundle name must be <stem>.tar.zst, stem of [A-Za-z0-9._-]"),
@@ -176,6 +188,12 @@ fn put_bundle(
         return Err((
             "413 Content Too Large",
             err_json(&format!("bundle exceeds {} byte cap", cfg.max_bundle_bytes)),
+        ));
+    }
+    if total_bytes(&cfg.root).saturating_add(len) > cfg.global_cap_bytes {
+        return Err((
+            "507 Insufficient Storage",
+            err_json("collection storage is full — uploads paused, retry tomorrow"),
         ));
     }
     let sender_dir = cfg.root.join(&sender);
@@ -252,6 +270,63 @@ fn put_bundle(
 
 fn err_json(msg: &str) -> String {
     format!("{{\"ok\":false,\"error\":\"{}\"}}", msg.replace('"', "'"))
+}
+
+/// Tokens file present = lockdown (issued tokens only); absent = open mode,
+/// where any well-formed 64-hex client-generated token maps to the sender id
+/// sha256(token)[..16] — the same derivation as the Worker, pinned by tests.
+fn authenticate(cfg: &ReceiveConfig, token: &str) -> Result<String, Reply> {
+    if cfg.tokens_path.exists() {
+        return sender_for_token(&cfg.tokens_path, token)
+            .ok_or(("401 Unauthorized", err_json("unknown token")));
+    }
+    let token = token.to_ascii_lowercase();
+    if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err((
+            "401 Unauthorized",
+            err_json("token must be 64 hex chars (client-generated at opt-in)"),
+        ));
+    }
+    let sender = crate::util::sha256_hex(token.as_bytes())[..16].to_string();
+    if blocklisted(&cfg.blocklist_path, &sender) {
+        return Err(("403 Forbidden", err_json("sender blocked")));
+    }
+    Ok(sender)
+}
+
+/// Blocklist file: one sender id per line, comments/blanks ignored.
+fn blocklisted(path: &Path, sender: &str) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| {
+        text.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .any(|l| l == sender)
+    })
+}
+
+/// Total stored bytes across every sender directory (the global ceiling).
+fn total_bytes(root: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| {
+            let Ok(files) = std::fs::read_dir(e.path()) else {
+                return 0;
+            };
+            files
+                .flatten()
+                .filter_map(|f| {
+                    let md = f.metadata().ok()?;
+                    (md.is_file() && f.file_name().to_string_lossy().ends_with(".tar.zst"))
+                        .then_some(md.len())
+                })
+                .sum()
+        })
+        .sum()
 }
 
 /// `<token> <sender-id>` from a tokens-file line, skipping comments/blanks.

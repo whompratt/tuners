@@ -1,7 +1,12 @@
 // Cloudflare Worker config for the telemetry-collection endpoint (plan 009).
 // Deploy: npx wrangler deploy   Local dev: npx wrangler dev (emulated R2,
-// secrets from .dev.vars). The TOKENS secret is set with
-// `npx wrangler secret put TOKENS` — never in this file.
+// secrets from .dev.vars).
+//
+// Auth is open by default (client-generated tokens). Optional secrets, both
+// set with `npx wrangler secret put <NAME>` — never in this file:
+//   BLOCKLIST  JSON array of banned sender ids, e.g. ["a3f9c2e811d04b57"]
+//   TOKENS     JSON {"<token>":"<sender-id>"} — setting it flips the endpoint
+//              to allowlist-only mode (the abuse circuit breaker)
 {
   "name": "tuners-collect",
   "main": "src/index.js",
@@ -11,8 +16,16 @@
   ],
   "vars": {
     "MAX_BUNDLE_MB": "64",
-    "DAILY_CAP_MB": "512"
+    "DAILY_CAP_MB": "512",
+    // Hard ceiling on total bucket size: hostile uploads can pin storage at
+    // this worst case (~$0.15/mo over the free 10 GB) but never grow it.
+    "GLOBAL_CAP_GB": "20"
   },
+  // Per-IP request throttle, enforced in the Worker (no custom domain
+  // needed). 30 uploads/min is far above any honest drainer.
+  "ratelimits": [
+    { "name": "IP_LIMIT", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+  ],
   // No per-request logs retained: the plan's "nothing about the sender
   // beyond the token" promise.
   "observability": { "enabled": false }

@@ -35,10 +35,13 @@ USAGE:
                     send synthetic telemetry (stand-in for the game); timescale
                     compresses in-game time for headless lap testing
   tuners receive  [--port 8090] [--bind 127.0.0.1] [--root inbox]
-                  [--tokens receive-tokens.txt] [--max-mb 64] [--daily-mb 512]
-                    telemetry-collection endpoint (plan 009): authenticated
-                    bundle PUTs stored per sender under --root; run behind a
-                    TLS reverse proxy. --issue <sender-id> mints a token
+                  [--tokens receive-tokens.txt] [--blocklist receive-blocklist.txt]
+                  [--max-mb 64] [--daily-mb 512] [--global-mb 20480]
+                    telemetry-collection endpoint (plan 009), local twin of
+                    worker/: bundle PUTs stored per sender under --root. Open
+                    mode by default (client-generated 64-hex tokens, sender =
+                    sha256 prefix); a --tokens file that exists = lockdown
+                    mode. --issue <sender-id> mints a lockdown token
 ";
 
 fn main() -> ExitCode {
@@ -422,8 +425,10 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
     let mut bind = "127.0.0.1".to_string();
     let mut root = "inbox".to_string();
     let mut tokens = "receive-tokens.txt".to_string();
+    let mut blocklist = "receive-blocklist.txt".to_string();
     let mut max_mb: u64 = 64;
     let mut daily_mb: u64 = 512;
+    let mut global_mb: u64 = 20 * 1024;
     let mut issue: Option<String> = None;
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -432,8 +437,10 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
             "--bind" => bind = value(flag, it.next())?.clone(),
             "--root" => root = value(flag, it.next())?.clone(),
             "--tokens" => tokens = value(flag, it.next())?.clone(),
+            "--blocklist" => blocklist = value(flag, it.next())?.clone(),
             "--max-mb" => max_mb = parse(flag, it.next())?,
             "--daily-mb" => daily_mb = parse(flag, it.next())?,
+            "--global-mb" => global_mb = parse(flag, it.next())?,
             "--issue" => issue = Some(value(flag, it.next())?.clone()),
             other => return Err(format!("unknown flag '{other}' for receive")),
         }
@@ -447,8 +454,10 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
     let cfg = tuners::receive::ReceiveConfig {
         root: PathBuf::from(root),
         tokens_path: PathBuf::from(tokens),
+        blocklist_path: PathBuf::from(blocklist),
         max_bundle_bytes: max_mb * 1024 * 1024,
         daily_cap_bytes: daily_mb * 1024 * 1024,
+        global_cap_bytes: global_mb * 1024 * 1024,
     };
     tuners::receive::run(&bind, port, cfg).map_err(|e| e.to_string())
 }

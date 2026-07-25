@@ -9,14 +9,25 @@
 //     X-Bundle-SHA256: <64 hex of the body>
 //   -> 200 {"ok":true,"stored":"<sender>/<name>-<hash16>.tar.zst","duplicate":bool}
 //
-// R2 itself verifies the claimed hash (put option `sha256`) — the Worker
-// never buffers or hashes the body, so a corrupted upload is rejected by
-// storage, not by code that could drift.
+// Auth is OPEN by default (strangers-scale opt-in): the app generates its own
+// 64-hex token at opt-in and the sender id is sha256(token)[..16] — stable
+// pseudonymous identity without issuance. Misbehaving senders go in the
+// BLOCKLIST secret (JSON array of sender ids). Setting the TOKENS secret
+// (JSON {"<token>":"<sender-id>"}) flips the endpoint back to allowlist-only
+// mode — the abuse circuit breaker.
 //
-// Bindings: BUNDLES (R2), TOKENS (secret: JSON {"<token>":"<sender-id>"}),
-// MAX_BUNDLE_MB / DAILY_CAP_MB (vars).
+// Cost protection (the wallet is the thing to defend — data hygiene is
+// ingest's job): per-IP rate limit binding, per-sender rolling-24h byte cap,
+// and a GLOBAL bucket-size ceiling so hostile uploads can pin storage at a
+// known worst case instead of growing it. Checks run cheap-to-expensive so
+// rejected requests cost headers, not R2 operations. R2 itself verifies the
+// claimed hash (put option `sha256`) — the Worker never buffers a body.
+//
+// Bindings: BUNDLES (R2), IP_LIMIT (ratelimit), TOKENS / BLOCKLIST (secrets,
+// both optional), MAX_BUNDLE_MB / DAILY_CAP_MB / GLOBAL_CAP_GB (vars).
 
 const NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}\.tar\.zst$/;
+const TOKEN_RE = /^[0-9a-f]{64}$/;
 
 function json(status, obj) {
   return new Response(JSON.stringify(obj), {
@@ -27,6 +38,14 @@ function json(status, obj) {
 
 function fail(status, error) {
   return json(status, { ok: false, error });
+}
+
+async function senderId(token) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
 }
 
 /// Bytes this sender stored in the last 24h, from object metadata — same
@@ -45,6 +64,25 @@ async function recentBytes(bucket, sender) {
   return total;
 }
 
+// Whole-bucket size, cached per isolate for 60s (and bumped on accepted
+// uploads) so a bucket-full attack costs ~zero list operations per request.
+// Best-effort across isolates — set GLOBAL_CAP_GB with margin, it is a
+// storage ceiling, not an accounting ledger.
+let globalCache = null;
+
+async function globalBytes(bucket) {
+  if (globalCache && Date.now() - globalCache.at < 60_000) return globalCache.bytes;
+  let total = 0;
+  let cursor;
+  do {
+    const page = await bucket.list({ cursor });
+    for (const obj of page.objects) total += obj.size;
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  globalCache = { bytes: total, at: Date.now() };
+  return total;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -58,13 +96,29 @@ export default {
       return fail(404, "unknown path");
     }
 
-    // Everything is checked before the body is consumed: a rejected upload
-    // costs the sender headers, not megabytes.
+    if (env.IP_LIMIT) {
+      const ip = request.headers.get("cf-connecting-ip") ?? "local";
+      const { success } = await env.IP_LIMIT.limit({ key: ip });
+      if (!success) return fail(429, "rate limited — slow down");
+    }
+
     const auth = request.headers.get("authorization") ?? "";
-    const token = auth.match(/^Bearer\s+(\S+)$/i)?.[1];
+    const token = auth.match(/^Bearer\s+(\S+)$/i)?.[1]?.toLowerCase();
     if (!token) return fail(401, "missing bearer token");
-    const sender = JSON.parse(env.TOKENS ?? "{}")[token];
-    if (!sender) return fail(401, "unknown token");
+    let sender;
+    if (env.TOKENS) {
+      // Lockdown mode: only issued tokens upload.
+      sender = JSON.parse(env.TOKENS)[token];
+      if (!sender) return fail(401, "unknown token");
+    } else {
+      if (!TOKEN_RE.test(token)) {
+        return fail(401, "token must be 64 hex chars (client-generated at opt-in)");
+      }
+      sender = await senderId(token);
+      if (JSON.parse(env.BLOCKLIST ?? "[]").includes(sender)) {
+        return fail(403, "sender blocked");
+      }
+    }
 
     const name = url.pathname.slice("/v1/bundle/".length);
     if (!NAME_RE.test(name)) {
@@ -84,6 +138,11 @@ export default {
     const maxBytes = parseFloat(env.MAX_BUNDLE_MB ?? "64") * 1024 * 1024;
     if (len > maxBytes) return fail(413, `bundle exceeds ${Math.floor(maxBytes)} byte cap`);
 
+    const globalCap = parseFloat(env.GLOBAL_CAP_GB ?? "20") * 1024 * 1024 * 1024;
+    if ((await globalBytes(env.BUNDLES)) + len > globalCap) {
+      return fail(507, "collection storage is full — uploads paused, retry tomorrow");
+    }
+
     const dailyCap = parseFloat(env.DAILY_CAP_MB ?? "512") * 1024 * 1024;
     if ((await recentBytes(env.BUNDLES, sender)) + len > dailyCap) {
       return fail(429, "daily upload cap reached — the outbox can retry tomorrow");
@@ -102,6 +161,7 @@ export default {
       // R2 rejects a body whose hash doesn't match the claim.
       return fail(422, "body does not match X-Bundle-SHA256");
     }
+    if (globalCache) globalCache.bytes += len;
     return json(200, { ok: true, stored: key, duplicate: false });
   },
 };

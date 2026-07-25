@@ -14,23 +14,43 @@ struct Server {
     root: PathBuf,
 }
 
-fn start(max_bundle_bytes: u64, daily_cap_bytes: u64, tag: &str) -> Server {
+fn start_mode(
+    max_bundle_bytes: u64,
+    daily_cap_bytes: u64,
+    global_cap_bytes: u64,
+    lockdown: bool,
+    blocklist: &str,
+    tag: &str,
+) -> Server {
     let dir = std::env::temp_dir().join(format!("tuners-receive-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let tokens = dir.join("tokens.txt");
-    std::fs::write(&tokens, "# comment line\nsecrettoken friend-1\n").unwrap();
+    if lockdown {
+        std::fs::write(&tokens, "# comment line\nsecrettoken friend-1\n").unwrap();
+    }
+    let blocklist_path = dir.join("blocklist.txt");
+    if !blocklist.is_empty() {
+        std::fs::write(&blocklist_path, blocklist).unwrap();
+    }
     let root = dir.join("inbox");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let cfg = ReceiveConfig {
         root: root.clone(),
         tokens_path: tokens,
+        blocklist_path,
         max_bundle_bytes,
         daily_cap_bytes,
+        global_cap_bytes,
     };
     std::thread::spawn(move || run_listener(listener, cfg));
     Server { addr, root }
+}
+
+/// Lockdown-mode server (issued-token allowlist), generous global cap.
+fn start(max_bundle_bytes: u64, daily_cap_bytes: u64, tag: &str) -> Server {
+    start_mode(max_bundle_bytes, daily_cap_bytes, u64::MAX, true, "", tag)
 }
 
 /// PUT with explicit content-length so tests can lie about it (413 path).
@@ -156,6 +176,66 @@ fn hostile_names_rejected() {
         assert_eq!(status, 400, "{name}");
     }
     assert!(stored_files(&srv.root).is_empty());
+}
+
+/// The open-mode sender derivation is shared with the Worker: token 'a'*64
+/// MUST map to sender ffe054fe7ae0cb6d in both implementations (this exact
+/// pair was verified against worker/src/index.js on emulated R2, 2026-07-25).
+#[test]
+fn open_mode_client_tokens() {
+    let srv = start_mode(64 << 20, 512 << 20, u64::MAX, false, "", "open");
+    let token = "a".repeat(64);
+    let body = b"open mode bundle";
+    let (status, resp) = put(srv.addr, "x.tar.zst", Some(&token), body);
+    assert_eq!(status, 200, "{resp}");
+    assert!(resp.contains("\"stored\":\"ffe054fe7ae0cb6d/x-"), "{resp}");
+    assert_eq!(
+        tuners::util::sha256_hex(token.as_bytes())[..16].to_string(),
+        "ffe054fe7ae0cb6d"
+    );
+    // Uppercase hex normalizes to the same sender.
+    let (status, resp) = put(srv.addr, "y.tar.zst", Some(&"A".repeat(64)), body);
+    assert_eq!(status, 200);
+    assert!(resp.contains("\"stored\":\"ffe054fe7ae0cb6d/y-"), "{resp}");
+
+    for bad in ["tooshort", &"z".repeat(64), &"a".repeat(63), &"a".repeat(65)] {
+        let (status, _) = put(srv.addr, "z.tar.zst", Some(bad), body);
+        assert_eq!(status, 401, "{bad}");
+    }
+}
+
+#[test]
+fn open_mode_blocklist() {
+    // Block the sender id of token 'b'*64 (= a0fab1377f49a759, matching the
+    // Worker's dev blocklist fixture).
+    let blocked = &tuners::util::sha256_hex("b".repeat(64).as_bytes())[..16];
+    let srv = start_mode(
+        64 << 20,
+        512 << 20,
+        u64::MAX,
+        false,
+        &format!("# banned\n{blocked}\n"),
+        "blocklist",
+    );
+    let (status, resp) = put(srv.addr, "x.tar.zst", Some(&"b".repeat(64)), b"nope");
+    assert_eq!(status, 403, "{resp}");
+    let (status, _) = put(srv.addr, "x.tar.zst", Some(&"a".repeat(64)), b"fine");
+    assert_eq!(status, 200);
+}
+
+#[test]
+fn global_storage_ceiling() {
+    // 40-byte global cap: two 16-byte bundles from DIFFERENT senders fit,
+    // a third from a fresh sender is refused — per-sender caps alone can't
+    // bound cost when tokens are free to mint.
+    let srv = start_mode(16, 512 << 20, 40, false, "", "global");
+    let (status, _) = put(srv.addr, "one.tar.zst", Some(&"a".repeat(64)), b"0123456789abcdef");
+    assert_eq!(status, 200);
+    let (status, _) = put(srv.addr, "two.tar.zst", Some(&"c".repeat(64)), b"0123456789ABCDEF");
+    assert_eq!(status, 200);
+    let (status, resp) = put(srv.addr, "three.tar.zst", Some(&"d".repeat(64)), b"0123456789!@#$%^");
+    assert_eq!(status, 507, "{resp}");
+    assert!(resp.contains("storage is full"), "{resp}");
 }
 
 #[test]
