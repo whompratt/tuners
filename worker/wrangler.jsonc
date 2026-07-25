@@ -1,0 +1,19 @@
+// Cloudflare Worker config for the telemetry-collection endpoint (plan 009).
+// Deploy: npx wrangler deploy   Local dev: npx wrangler dev (emulated R2,
+// secrets from .dev.vars). The TOKENS secret is set with
+// `npx wrangler secret put TOKENS` — never in this file.
+{
+  "name": "tuners-collect",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-01",
+  "r2_buckets": [
+    { "binding": "BUNDLES", "bucket_name": "tuners-bundles" }
+  ],
+  "vars": {
+    "MAX_BUNDLE_MB": "64",
+    "DAILY_CAP_MB": "512"
+  },
+  // No per-request logs retained: the plan's "nothing about the sender
+  // beyond the token" promise.
+  "observability": { "enabled": false }
+}
