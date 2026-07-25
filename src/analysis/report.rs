@@ -324,6 +324,17 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         pct(m.gears.limiter_frac),
     )
     .unwrap();
+    if m.gears.limiter_detected {
+        writeln!(
+            out,
+            "    detected rev cut at {:.0} rpm ({:.0}% of the reported {:.0} redline) — \
+             gearing stats use the detected value",
+            m.gears.effective_redline,
+            100.0 * m.gears.effective_redline / m.redline.max(1.0),
+            m.redline,
+        )
+        .unwrap();
+    }
 
     out
 }

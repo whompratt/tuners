@@ -100,8 +100,17 @@ pub struct GearStats {
     pub top_gear_high_rev_frac: f32,
     pub upshifts: u32,
     pub avg_upshift_rpm: Option<f32>,
-    /// Fraction of grounded samples at >= LIMITER of redline.
+    /// Fraction of grounded samples at >= LIMITER of the EFFECTIVE redline.
     pub limiter_frac: f32,
+    /// The redline gearing stats are judged against. Some cars' reported
+    /// engine_max_rpm sits well above the actual rev cut (Datsun 240Z:
+    /// limiter ~7500 vs reported 8000) — when 3+ gears max out within 1% of
+    /// the same sustained ceiling, that ceiling IS the limiter and becomes
+    /// the effective redline. Otherwise the reported value stands.
+    pub effective_redline: f32,
+    /// True when the effective redline came from an observed multi-gear rev
+    /// ceiling rather than the reported engine_max_rpm.
+    pub limiter_detected: bool,
 }
 
 /// Shares of cornering time spent in momentary oversteer — the transients a
@@ -255,10 +264,10 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut wheelspin = 0usize;
     let mut brake_samples = 0usize;
     let mut lockup = 0usize;
-    let mut gear_counts = [0usize; MAX_REAL_GEAR as usize + 1]; // index = gear, [0] unused
-    let mut gear_max_rpm = [0.0f32; MAX_REAL_GEAR as usize + 1];
-    let mut gear_high_rev = [0usize; MAX_REAL_GEAR as usize + 1];
-    let mut limiter = 0usize;
+    // Grounded real-gear frames (gear, rpm), kept whole so gearing stats can
+    // be judged against the EFFECTIVE redline, which is only known once the
+    // whole stint's rev ceiling has been seen.
+    let mut gear_frames: Vec<(u8, f32)> = Vec::new();
     let mut upshift_rpm_sum = 0.0f32;
     let mut upshifts = 0u32;
     let mut prev_real_gear: Option<(u8, f32)> = None; // (gear, rpm while in it)
@@ -425,12 +434,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         } else {
             grounded += 1;
             if (1..=MAX_REAL_GEAR).contains(&f.gear) {
-                gear_counts[f.gear as usize] += 1;
-                gear_max_rpm[f.gear as usize] =
-                    gear_max_rpm[f.gear as usize].max(f.current_engine_rpm);
-                if f.engine_max_rpm > 0.0 && f.current_engine_rpm >= HIGH_REV * f.engine_max_rpm {
-                    gear_high_rev[f.gear as usize] += 1;
-                }
+                gear_frames.push((f.gear, f.current_engine_rpm));
                 if let Some((prev, prev_rpm)) = prev_real_gear
                     && f.gear > prev
                 {
@@ -438,9 +442,6 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                     upshifts += 1;
                 }
                 prev_real_gear = Some((f.gear, f.current_engine_rpm));
-            }
-            if f.engine_max_rpm > 0.0 && f.current_engine_rpm >= LIMITER * f.engine_max_rpm {
-                limiter += 1;
             }
         }
 
@@ -468,11 +469,62 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let gfrac = |count: usize| count as f32 / grounded.max(1) as f32;
     let corners_from = |vals: [f32; 4]| Corners { fl: vals[0], fr: vals[1], rl: vals[2], rr: vals[3] };
 
+    let mut gear_counts = [0usize; MAX_REAL_GEAR as usize + 1];
+    let mut gear_max_rpm = [0.0f32; MAX_REAL_GEAR as usize + 1];
+    for &(g, rpm) in &gear_frames {
+        gear_counts[g as usize] += 1;
+        gear_max_rpm[g as usize] = gear_max_rpm[g as usize].max(rpm);
+    }
     let time_frac: Vec<(u8, f32)> = (1..=MAX_REAL_GEAR)
         .filter(|g| gear_counts[*g as usize] > 0)
         .map(|g| (g, gfrac(gear_counts[g as usize])))
         .collect();
     let top_gear = time_frac.last().map(|(g, _)| *g).unwrap_or(0);
+
+    // Effective redline: the SUSTAINED rev ceiling (highest 25-rpm bucket
+    // holding >= 0.25s, so a single downhill over-rev spike can't set it),
+    // adopted only when 3+ well-used gears max out within 1% of it — the
+    // signature of a rev cut, not of a consistent shift point in one gear.
+    let reported_redline = first.engine_max_rpm;
+    let ceiling = {
+        let mut hist = std::collections::BTreeMap::<i32, u32>::new();
+        for &(_, rpm) in &gear_frames {
+            *hist.entry((rpm / 25.0) as i32).or_default() += 1;
+        }
+        hist.iter()
+            .rev()
+            .find(|(_, count)| **count >= 15)
+            .map(|(bucket, _)| (*bucket as f32 + 1.0) * 25.0)
+            .unwrap_or(0.0)
+    };
+    // A real rev cut clusters TIGHT (the Datsun's six gears max within 8 rpm
+    // of 7500); a consistent shift habit clusters loose (the Ford GT's within
+    // ~90 rpm of 6875, plus a brief 7094 overshoot) — the cluster is gears
+    // whose max sits AT the sustained ceiling: within 0.5% below, 1% above
+    // (momentary overshoot past a cut is a spike, not a cut).
+    let gears_at_ceiling = (1..=MAX_REAL_GEAR as usize)
+        .filter(|g| {
+            gear_counts[*g] >= 100
+                && gear_max_rpm[*g] >= 0.995 * ceiling
+                && gear_max_rpm[*g] <= 1.01 * ceiling
+        })
+        .count();
+    // Adopt only a MATERIALLY lower cut (<97% of reported): near-reported
+    // ceilings are consistent shift points (the Ferrari rides to 97.5% in
+    // every gear), and correcting by <3% moves no threshold meaningfully
+    // while it would quietly shift calibrated behavior.
+    let limiter_detected = ceiling > 0.0 && gears_at_ceiling >= 3 && ceiling < 0.97 * reported_redline;
+    let effective_redline = if limiter_detected { ceiling } else { reported_redline };
+    let limiter = gear_frames
+        .iter()
+        .filter(|(_, rpm)| effective_redline > 0.0 && *rpm >= LIMITER * effective_redline)
+        .count();
+    let top_gear_high_rev = gear_frames
+        .iter()
+        .filter(|(g, rpm)| {
+            *g == top_gear && effective_redline > 0.0 && *rpm >= HIGH_REV * effective_redline
+        })
+        .count();
 
     StintMetrics {
         samples: frames.len(),
@@ -537,11 +589,13 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             time_frac,
             top_gear,
             top_gear_max_rpm: gear_max_rpm[top_gear as usize],
-            top_gear_high_rev_frac: gear_high_rev[top_gear as usize] as f32
+            top_gear_high_rev_frac: top_gear_high_rev as f32
                 / gear_counts[top_gear as usize].max(1) as f32,
             upshifts,
             avg_upshift_rpm: (upshifts > 0).then(|| upshift_rpm_sum / upshifts as f32),
             limiter_frac: gfrac(limiter),
+            effective_redline,
+            limiter_detected,
         },
         surface_rumble_avg: rumble_sum / n as f32,
         surface_loose: rumble_sum / n as f32 > LOOSE_SURFACE_RUMBLE,

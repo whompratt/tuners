@@ -701,11 +701,23 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
 fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     let g = &overall.gears;
     if g.limiter_frac >= LIMITER_FRAC {
-        let mut evidence = vec![format!(
-            "on the rev limiter {:.1}% of the stint (redline {:.0} rpm)",
-            g.limiter_frac * 100.0,
-            overall.redline,
-        )];
+        let mut evidence = vec![if g.limiter_detected {
+            format!(
+                "on the rev limiter {:.1}% of the stint — the ACTUAL rev cut sits at \
+                 {:.0} rpm ({:.0}% of the reported {:.0} redline; 3+ gears max out \
+                 there)",
+                g.limiter_frac * 100.0,
+                g.effective_redline,
+                100.0 * g.effective_redline / overall.redline.max(1.0),
+                overall.redline,
+            )
+        } else {
+            format!(
+                "on the rev limiter {:.1}% of the stint (redline {:.0} rpm)",
+                g.limiter_frac * 100.0,
+                g.effective_redline,
+            )
+        }];
         if let Some(rpm) = g.avg_upshift_rpm {
             evidence.push(format!("average upshift at {rpm:.0} rpm"));
         }
@@ -742,11 +754,12 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             evidence: vec![
                 format!(
                     "{:.1}% of the stint in top gear ({}) but only {:.1}% of that time \
-                     above 90% of the {:.0} redline (highest seen {:.0} rpm)",
+                     above 90% of the {:.0} redline{} (highest seen {:.0} rpm)",
                     top_time * 100.0,
                     g.top_gear,
                     g.top_gear_high_rev_frac * 100.0,
-                    overall.redline,
+                    g.effective_redline,
+                    if g.limiter_detected { " (the car's real rev cut)" } else { "" },
                     g.top_gear_max_rpm,
                 ),
                 "check the shorter gearing doesn't put the longest straight on the \
