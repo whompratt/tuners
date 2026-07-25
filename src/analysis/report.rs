@@ -3,7 +3,7 @@
 use super::metrics::{stint_metrics, StintMetrics};
 use super::{classify_gaps, driving_segments, split_laps, GapKind, LapSlice, Stint};
 use crate::packet::{class_name, drivetrain_name};
-use crate::util::{format_lap_time, MPS_TO_MPH};
+use crate::util::{format_lap_time, speed_unit, speed_val, temp_unit, temp_val};
 use std::fmt::Write;
 use std::path::Path;
 
@@ -104,8 +104,9 @@ pub fn render_laps(laps: &[LapSlice]) -> String {
         .join(" | ");
         writeln!(
             out,
-            "    {label}: {time}{compare} | max {:.0} mph | {extras}",
-            m.max_speed * MPS_TO_MPH,
+            "    {label}: {time}{compare} | max {:.0} {} | {extras}",
+            speed_val(m.max_speed),
+            speed_unit(),
         )
         .unwrap();
     }
@@ -118,11 +119,12 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
 
     writeln!(
         out,
-        "stint {index}: {:.1}s | {:.2} mi | avg {:.0} mph | max {:.0} mph",
+        "stint {index}: {:.1}s | {:.2} mi | avg {:.0} {su} | max {:.0} {su}",
         m.duration_s,
         m.distance_m / 1609.34,
-        m.avg_speed * MPS_TO_MPH,
-        m.max_speed * MPS_TO_MPH,
+        speed_val(m.avg_speed),
+        speed_val(m.max_speed),
+        su = speed_unit(),
     )
     .unwrap();
     writeln!(
@@ -139,20 +141,24 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     .unwrap();
 
     let t = &m.tire_temp;
-    writeln!(out, "\n  tires (\u{b0}F avg/max)").unwrap();
-    writeln!(out, "    FL {:>5.0}/{:<5.0}  FR {:>5.0}/{:<5.0}", t.fl.avg, t.fl.max, t.fr.avg, t.fr.max).unwrap();
-    writeln!(out, "    RL {:>5.0}/{:<5.0}  RR {:>5.0}/{:<5.0}", t.rl.avg, t.rl.max, t.rr.avg, t.rr.max).unwrap();
+    let tv = temp_val;
+    writeln!(out, "\n  tires ({} avg/max)", temp_unit()).unwrap();
+    writeln!(out, "    FL {:>5.0}/{:<5.0}  FR {:>5.0}/{:<5.0}", tv(t.fl.avg), tv(t.fl.max), tv(t.fr.avg), tv(t.fr.max)).unwrap();
+    writeln!(out, "    RL {:>5.0}/{:<5.0}  RR {:>5.0}/{:<5.0}", tv(t.rl.avg), tv(t.rl.max), tv(t.rr.avg), tv(t.rr.max)).unwrap();
     let front = (t.fl.avg + t.fr.avg) / 2.0;
     let rear = (t.rl.avg + t.rr.avg) / 2.0;
     let left = (t.fl.avg + t.rl.avg) / 2.0;
     let right = (t.fr.avg + t.rr.avg) / 2.0;
+    // Temperature DIFFERENCES scale by 1/1.8 into °C but take no +32 offset.
+    let dt = |a: f32, b: f32| (tv(a) - tv(b)).abs();
     writeln!(
         out,
-        "    front {} {:.0}\u{b0}F vs rear | {} side {:.0}\u{b0}F hotter",
+        "    front {} {:.0}{tu} vs rear | {} side {:.0}{tu} hotter",
         if front >= rear { "hotter by" } else { "cooler by" },
-        (front - rear).abs(),
+        dt(front, rear),
         if left >= right { "left" } else { "right" },
-        (left - right).abs(),
+        dt(left, right),
+        tu = temp_unit(),
     )
     .unwrap();
 
@@ -189,10 +195,13 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         Some(idx) => format!("{idx:+.2} ({} samples)", b.samples),
         None => "—".into(),
     };
+    // The 85 mph band boundary, in display units (38.02 m/s canonical).
+    let band_mph = speed_val(38.02);
+    let su = speed_unit();
     if m.understeer_index.is_some() {
         writeln!(
             out,
-            "    balance by speed: {} below 85 mph | {} above",
+            "    balance by speed: {} below {band_mph:.0} {su} | {} above",
             band(&m.balance_low_speed),
             band(&m.balance_high_speed),
         )
@@ -211,7 +220,7 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         writeln!(
             out,
             "    oversteer flashes: {} of cornering ({} episodes) | on power {} | \
-             >=85 mph {} | rear-first at limit {}",
+             >={band_mph:.0} {su} {} | rear-first at limit {}",
             pct(os.clear_frac),
             os.episodes,
             pct(os.on_power_frac),
@@ -223,11 +232,18 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     if let Some(c) = &m.corners {
         writeln!(
             out,
-            "    corners: {} events | avg apex {:.0} mph | balance {} entry | {} exit",
+            "    corners: {} events | avg apex {:.0} {su} | balance {} entry | {} exit",
             c.corners,
-            c.avg_apex_speed * MPS_TO_MPH,
+            speed_val(c.avg_apex_speed),
             band(&c.entry),
             band(&c.exit),
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    entry by pedal: {} trail-braking | {} coasting/turn-in",
+            band(&c.entry_braking),
+            band(&c.entry_coasting),
         )
         .unwrap();
     }

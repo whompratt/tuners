@@ -11,8 +11,9 @@ USAGE:
                     listen for Data Out packets, record a stint, show live status
   tuners replay   <stint-file>
                     decode a recorded stint and print a summary (exits non-zero on errors)
-  tuners analyze  <stint-file>
+  tuners analyze  <stint-file> [--units imperial|metric|uk]
                     per-stint tuning observations: tires, grip, suspension, gearing
+                    (units default to the active session's display prefs)
   tuners compare  <stint-A> <stint-B>
                     tune A/B: lap-time delta, where it comes from, mistakes excluded
   tuners recommend <stint-file>
@@ -97,16 +98,49 @@ fn cmd_replay(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// Strip a `--units imperial|metric|uk` flag from args and set the report
+/// display units. Default: the active session's unit prefs (the UK user's
+/// psi/°C/mph carry into the CLI), imperial with no session.
+fn apply_units(args: &[String]) -> Result<Vec<String>, String> {
+    let mut rest = Vec::new();
+    let mut choice: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--units" {
+            choice = Some(value(a, it.next())?.clone());
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    let units = match choice.as_deref() {
+        Some("imperial") => tuners::util::DisplayUnits { temp_c: false, speed_kmh: false },
+        Some("metric") => tuners::util::DisplayUnits { temp_c: true, speed_kmh: true },
+        Some("uk") => tuners::util::DisplayUnits { temp_c: true, speed_kmh: false },
+        Some(other) => return Err(format!("--units {other}: use imperial, metric, or uk")),
+        None => {
+            let s = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
+            tuners::util::DisplayUnits {
+                temp_c: s.facts.get("unit_temp").map(String::as_str) == Some("c"),
+                speed_kmh: s.facts.get("unit_speed").map(String::as_str) == Some("kmh"),
+            }
+        }
+    };
+    tuners::util::set_display_units(units);
+    Ok(rest)
+}
+
 fn cmd_analyze(args: &[String]) -> Result<(), String> {
-    let [path] = args else {
-        return Err("usage: tuners analyze <stint-file>".into());
+    let args = apply_units(args)?;
+    let [path] = &args[..] else {
+        return Err("usage: tuners analyze <stint-file> [--units imperial|metric|uk]".into());
     };
     print!("{}", analysis::report::full_session_report(path.as_ref())?);
     Ok(())
 }
 
 fn cmd_recommend(args: &[String]) -> Result<(), String> {
-    let [path] = args else {
+    let args = apply_units(args)?;
+    let [path] = &args[..] else {
         return Err("usage: tuners recommend <stint-file>".into());
     };
     let session = analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;

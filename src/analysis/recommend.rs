@@ -1019,6 +1019,8 @@ mod tests {
             corners: 20,
             entry: band(5000, entry),
             exit: band(5000, exit),
+            entry_braking: Default::default(),
+            entry_coasting: Default::default(),
             avg_apex_speed: 40.0,
         })
     }

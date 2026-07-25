@@ -17,6 +17,8 @@ const EXIT_LAT: f32 = 3.0;
 const MAX_GAP_S: f32 = 0.3;
 /// Events shorter than this are kinks, not corners.
 const MIN_CORNER_S: f32 = 0.8;
+/// Brake input treated as pedal-on (same convention as the stint metrics).
+const PEDAL_ON: u8 = 128;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CornerEvent {
@@ -28,6 +30,11 @@ pub struct CornerEvent {
     /// Balance over samples before / after the apex.
     pub entry: BandBalance,
     pub exit: BandBalance,
+    /// Entry conditioned on the brake pedal: trail-braking samples vs
+    /// coasting/turn-in samples. Positional entry mixes the two; the split
+    /// separates a brake-bias push from a roll-stiffness push.
+    pub entry_braking: BandBalance,
+    pub entry_coasting: BandBalance,
 }
 
 /// Per-stint aggregate over all detected corners, sample-weighted.
@@ -36,6 +43,9 @@ pub struct CornerSummary {
     pub corners: usize,
     pub entry: BandBalance,
     pub exit: BandBalance,
+    /// Entry split by brake pedal (see CornerEvent).
+    pub entry_braking: BandBalance,
+    pub entry_coasting: BandBalance,
     pub avg_apex_speed: f32,
 }
 
@@ -93,24 +103,34 @@ fn push_event(frames: &[TimedFrame], start: usize, end: usize, events: &mut Vec<
         .min_by(|(_, a), (_, b)| a.frame.speed.total_cmp(&b.frame.speed))
         .map(|(i, _)| i)
         .unwrap_or(0);
+    let entry_slice = &slice[..apex.max(1)];
     events.push(CornerEvent {
         start_s,
         end_s,
         apex_speed: slice[apex].frame.speed,
-        entry: phase_balance(&slice[..apex.max(1)]),
-        exit: phase_balance(&slice[apex..]),
+        entry: phase_balance(entry_slice, |_| true),
+        exit: phase_balance(&slice[apex..], |_| true),
+        entry_braking: phase_balance(entry_slice, |f| f.brake >= PEDAL_ON),
+        entry_coasting: phase_balance(entry_slice, |f| f.brake < PEDAL_ON),
     });
 }
 
-fn phase_balance(frames: &[TimedFrame]) -> BandBalance {
+fn phase_balance(
+    frames: &[TimedFrame],
+    keep: impl Fn(&crate::packet::TelemetryFrame) -> bool,
+) -> BandBalance {
     let mut front = 0.0f32;
     let mut rear = 0.0f32;
+    let mut n = 0usize;
     for tf in frames {
+        if !keep(&tf.frame) {
+            continue;
+        }
         let s = &tf.frame.tire_slip_angle;
         front += (s.fl.abs() + s.fr.abs()) / 2.0;
         rear += (s.rl.abs() + s.rr.abs()) / 2.0;
+        n += 1;
     }
-    let n = frames.len();
     BandBalance {
         samples: n,
         index: (n > 0).then(|| (front - rear) / n as f32),
@@ -146,6 +166,8 @@ pub fn summarize(frames: &[TimedFrame]) -> Option<CornerSummary> {
         corners: events.len(),
         entry: fold(|e| e.entry),
         exit: fold(|e| e.exit),
+        entry_braking: fold(|e| e.entry_braking),
+        entry_coasting: fold(|e| e.entry_coasting),
         avg_apex_speed: events.iter().map(|e| e.apex_speed).sum::<f32>() / events.len() as f32,
     })
 }

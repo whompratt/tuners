@@ -2,6 +2,41 @@
 
 pub const MPS_TO_MPH: f32 = 2.236_936_3;
 
+/// CLI report display units (storage stays canonical: °F, m/s). Thread-local
+/// so tests can't pollute each other; defaults imperial, set once by main
+/// from the active session's unit prefs or --units.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DisplayUnits {
+    pub temp_c: bool,
+    pub speed_kmh: bool,
+}
+
+thread_local! {
+    static DISPLAY_UNITS: std::cell::Cell<DisplayUnits> = const { std::cell::Cell::new(DisplayUnits { temp_c: false, speed_kmh: false }) };
+}
+
+pub fn set_display_units(u: DisplayUnits) {
+    DISPLAY_UNITS.with(|c| c.set(u));
+}
+
+/// Canonical °F -> display value.
+pub fn temp_val(f: f32) -> f32 {
+    if DISPLAY_UNITS.with(|c| c.get()).temp_c { (f - 32.0) / 1.8 } else { f }
+}
+
+pub fn temp_unit() -> &'static str {
+    if DISPLAY_UNITS.with(|c| c.get()).temp_c { "°C" } else { "°F" }
+}
+
+/// Canonical m/s -> display value.
+pub fn speed_val(mps: f32) -> f32 {
+    if DISPLAY_UNITS.with(|c| c.get()).speed_kmh { mps * 3.6 } else { mps * MPS_TO_MPH }
+}
+
+pub fn speed_unit() -> &'static str {
+    if DISPLAY_UNITS.with(|c| c.get()).speed_kmh { "km/h" } else { "mph" }
+}
+
 /// Format Unix seconds as a UTC `YYYYMMDD-HHMMSS` stamp (for session filenames).
 /// Date math is Howard Hinnant's civil_from_days algorithm.
 pub fn utc_stamp(unix_secs: u64) -> String {

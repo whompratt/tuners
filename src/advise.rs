@@ -1212,33 +1212,51 @@ pub fn advise(
                     .iter_mut()
                     .filter(|r| r.implied.is_some_and(|i| i.family == family))
                 {
+                    let cur = setups
+                        .last()
+                        .copied()
+                        .flatten()
+                        .and_then(|b| b.values.get(key)?.parse::<f32>().ok());
+                    // Convergence honesty (plan 007): "optimum" is a bracket
+                    // claim, not proof. Quote the fit's own expected gain for
+                    // the move; when it is under the campaign's measured
+                    // noise floor, holding is equally defensible and the
+                    // advice must say so instead of implying a sure win.
+                    let floor = drift_floor.map_or(0.10, |(_, f)| f.max(0.10));
+                    let gain = cur.map(|c| a * (c - vertex) * (c - vertex));
                     if at_optimum {
                         r.suggestion = Some(format!("{phrase}: hold {disp}"));
-                        r.advice = "no change asked: the current setting is the \
-                             estimated optimum. Any stint driven here tightens \
-                             the estimate for free"
-                            .to_string();
+                        r.advice = format!(
+                            "no change asked: the current setting is the \
+                             estimated optimum (bracketed — further narrowing \
+                             is expected to gain less than the ±{floor:.2}s \
+                             noise floor, which is not proof of convergence). \
+                             Any stint driven here tightens the estimate for \
+                             free"
+                        );
                         r.implied = None;
                         r.apply.clear();
                     } else {
                         r.suggestion = Some(format!("{phrase}: {disp}"));
                         r.apply = vec![(key.to_string(), vertex.to_string())];
-                        r.advice = format!(
-                            "set and drive one stint: this is the estimated \
-                             optimum of the mapped response. Everything else \
-                             unchanged; set {phrase} to {vertex}"
-                        );
+                        r.advice = match gain {
+                            Some(g) if g < floor => format!(
+                                "probe the estimated optimum: the fit expects \
+                                 only {g:.2}s here — within the ±{floor:.2}s \
+                                 noise floor, so holding the current value is \
+                                 equally defensible and a stint at {vertex} \
+                                 mainly tightens the map. Everything else \
+                                 unchanged; set {phrase} to {vertex}"
+                            ),
+                            _ => format!(
+                                "set and drive one stint: this is the estimated \
+                                 optimum of the mapped response. Everything else \
+                                 unchanged; set {phrase} to {vertex}"
+                            ),
+                        };
                         r.implied = Some(journal::Change {
                             family,
-                            softer: vertex
-                                < setups
-                                    .last()
-                                    .copied()
-                                    .flatten()
-                                    .and_then(|b| {
-                                        b.values.get(key)?.parse::<f32>().ok()
-                                    })
-                                    .unwrap_or(vertex),
+                            softer: vertex < cur.unwrap_or(vertex),
                             magnitude: None,
                         });
                     }
