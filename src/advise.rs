@@ -120,6 +120,10 @@ pub struct AdviseView {
     /// Journaled stint with no completed laps yet (still recording): excluded
     /// from the trajectory, advice targets the previous stint meanwhile.
     pub in_progress: Option<String>,
+    /// Journaled stints whose recordings no longer exist (deleted from the
+    /// dashboard): skipped, with their notes merged into the next step so
+    /// slider positions stay honest.
+    pub missing: Vec<String>,
     /// Per-family measured landscapes (see LandscapeView).
     pub landscapes: Vec<LandscapeView>,
     /// Largest |ideal delta| measured between SAME-setup stints — the
@@ -437,7 +441,7 @@ fn key_from_phrase(text: &str) -> Option<String> {
 
 /// Trailing "YYYYMMDD-HHMMSS" stamp of a stint filename, comparable with
 /// tune revision stamps (same fixed format, so string order = time order).
-fn stint_stamp(path: &str) -> Option<&str> {
+pub(crate) fn stint_stamp(path: &str) -> Option<&str> {
     let name = Path::new(path).file_stem()?.to_str()?;
     let stamp = name.get(name.len().checked_sub(15)?..)?;
     (stamp.as_bytes()[8] == b'-'
@@ -466,6 +470,38 @@ fn campaign_bound(journal_text: &str) -> CampaignBound {
         }
     }
     bound
+}
+
+/// A journaled stint whose file was deleted (dashboard delete) is skipped,
+/// but its note describes setup changes that really happened — it merges into
+/// the NEXT entry's note so cumulative slider positions stay honest (that
+/// step honestly becomes a compound). A trailing deleted entry just drops:
+/// its changes have no driven stint. Returns (kept entries, missing paths).
+fn drop_missing_entries(
+    entries: Vec<journal::Entry>,
+    exists: impl Fn(&str) -> bool,
+) -> (Vec<journal::Entry>, Vec<String>) {
+    let mut missing = Vec::new();
+    let mut kept: Vec<journal::Entry> = Vec::with_capacity(entries.len());
+    let mut carry: Option<String> = None;
+    for mut entry in entries {
+        if !exists(&entry.path) {
+            missing.push(entry.path.clone());
+            carry = match (carry.take(), entry.note.take()) {
+                (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+                (a, b) => a.or(b),
+            };
+            continue;
+        }
+        if let Some(c) = carry.take() {
+            entry.note = Some(match entry.note.take() {
+                Some(n) => format!("{c}; {n}"),
+                None => c,
+            });
+        }
+        kept.push(entry);
+    }
+    (kept, missing)
 }
 
 /// Newest stint recording in `dir` whose first driving frame matches `car`
@@ -548,6 +584,7 @@ pub fn advise(
             anchor: None,
             aba: None,
             in_progress: None,
+            missing: Vec::new(),
             landscapes: Vec::new(),
             drift_floor: None,
             advice_for: path,
@@ -573,6 +610,15 @@ pub fn advise(
                 session = archived;
             }
         }
+    }
+
+    let missing;
+    (entries, missing) = drop_missing_entries(entries, |p| Path::new(p).exists());
+    if entries.is_empty() {
+        return Err(format!(
+            "{journal_path}: every journaled stint recording is missing — the files \
+             were deleted"
+        ));
     }
 
     // Load and profile every stint, in journal (chronological) order. The
@@ -1394,6 +1440,7 @@ pub fn advise(
         anchor,
         aba,
         in_progress,
+        missing,
         landscapes,
         drift_floor,
         advice_for: last_entry.path.clone(),
@@ -1538,6 +1585,34 @@ mod tests {
         // Best pinned at the slider bound: no new point exists.
         let nodes = [(0.0, -0.3, 1), (50.0, 0.2, 1)];
         assert_eq!(probe_value(&nodes, Some((0.0, 100.0))), None);
+    }
+
+    /// Deleted recordings are skipped but their tune changes carry forward:
+    /// the next surviving entry's note becomes the honest compound, and a
+    /// trailing missing entry just drops.
+    #[test]
+    fn missing_stints_merge_notes_forward() {
+        let e = |path: &str, note: Option<&str>| journal::Entry {
+            path: path.to_string(),
+            note: note.map(String::from),
+        };
+        let entries = vec![
+            e("a.ftel", Some("baseline")),
+            e("gone1.ftel", Some("front arb -0.4")),
+            e("gone2.ftel", Some("final drive +0.15")),
+            e("b.ftel", Some("rear arb -1")),
+            e("gone3.ftel", Some("front camber -1")),
+        ];
+        let (kept, missing) =
+            drop_missing_entries(entries, |p| !p.starts_with("gone"));
+        assert_eq!(missing, vec!["gone1.ftel", "gone2.ftel", "gone3.ftel"]);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].note.as_deref(), Some("baseline"));
+        assert_eq!(
+            kept[1].note.as_deref(),
+            Some("front arb -0.4; final drive +0.15; rear arb -1"),
+            "both skipped steps' changes precede the surviving stint"
+        );
     }
 
     /// Boundary markers gate the implicit-step scan: parked journals accrue

@@ -98,7 +98,13 @@ fn handle(
         }
         ("POST", "/api/stint/delete") => {
             let active = recorder.lock().unwrap().file.clone();
-            delete_stint(sessions_dir, query_param(query, "file"), active.as_deref())
+            delete_stint(
+                sessions_dir,
+                query_param(query, "file"),
+                active.as_deref(),
+                query_param(query, "force").as_deref() == Some("1"),
+                "tune-journal.txt",
+            )
         }
         ("POST", "/api/session") => session_post(&form_params(&request_body), session_path),
         ("POST", "/api/session/tune") => {
@@ -229,10 +235,39 @@ fn live_state_json(s: &crate::live::LiveState) -> String {
 /// Delete one stint recording. Stricter than the read guard: only a bare
 /// filename inside the stints directory (no paths), and never the file the
 /// recorder is writing right now.
+/// Journal files (live and archived, matching the base's naming scheme) that
+/// reference a stint by filename.
+fn journals_referencing(stint_name: &str, journal_base: &str) -> Vec<String> {
+    let base = Path::new(journal_base);
+    let dir = match base.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let stem = base.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.starts_with(&stem) || !name.ends_with(".txt") {
+                continue;
+            }
+            if std::fs::read_to_string(entry.path())
+                .is_ok_and(|text| text.contains(stint_name))
+            {
+                out.push(name);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 fn delete_stint(
     sessions_dir: &str,
     file: Option<String>,
     active: Option<&Path>,
+    force: bool,
+    journal_base: &str,
 ) -> (&'static str, &'static str, String) {
     let Some(name) = file else {
         return ("400 Bad Request", "text/plain; charset=utf-8", "missing file parameter".into());
@@ -245,6 +280,16 @@ fn delete_stint(
             "409 Conflict",
             "text/plain; charset=utf-8",
             "stint is currently being recorded".into(),
+        );
+    }
+    // A journaled stint is campaign evidence: deleting it degrades advice
+    // (the entry is skipped, its note merged into the next step). Require an
+    // explicit force so the dashboard can confirm first.
+    if !force && let Some(journal) = journals_referencing(&name, journal_base).first() {
+        return (
+            "409 Conflict",
+            "text/plain; charset=utf-8",
+            format!("journaled in {journal} — deleting drops that step's measurement"),
         );
     }
     match std::fs::remove_file(Path::new(sessions_dir).join(&name)) {
@@ -298,10 +343,29 @@ fn session_json(s: &crate::tuning::TuningSession) -> String {
         .filter(|_| s.revisions.len() > 1)
         .map_or("null".into(), |rev| map(&rev.values));
     format!(
-        "{{\"car\":{car},\"carName\":{name},\"facts\":{},\"revisions\":{},\"latest\":{latest},\"baseline\":{baseline}}}",
+        "{{\"car\":{car},\"carName\":{name},\"facts\":{},\"revisions\":{},\"latest\":{latest},\"baseline\":{baseline},\"campaignStart\":{}}}",
         map(&s.facts),
         s.revisions.len(),
+        campaign_start(s, "tune-journal.txt").map_or("null".into(), |v| json_str(&v)),
     )
+}
+
+/// When the active campaign began: the earlier of the first tune revision and
+/// the first journaled stint (the seeded baseline stint starts before the
+/// first save). Scopes the dashboard stint list to the campaign.
+fn campaign_start(s: &crate::tuning::TuningSession, journal_base: &str) -> Option<String> {
+    let mut start = s.revisions.first().map(|r| r.stamp.clone());
+    let jpath = crate::tuning::journal_path_for(s.car, journal_base);
+    if let Ok(text) = std::fs::read_to_string(&jpath)
+        && let Some(first) = crate::analysis::journal::parse_journal(&text).first()
+        && let Some(stamp) = crate::advise::stint_stamp(&first.path)
+    {
+        start = Some(match start {
+            Some(cur) if cur.as_str() <= stamp => cur,
+            _ => stamp.to_string(),
+        });
+    }
+    start
 }
 
 /// Create/update the session: car + facts (revisions kept unless reset=1).
@@ -824,7 +888,7 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         )
     });
     format!(
-        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"landscapes\":[{}],\"driftFloor\":{},\"inProgress\":{},\"recommendations\":[{}],\"currentTune\":[{}]}}",
+        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"landscapes\":[{}],\"driftFloor\":{},\"inProgress\":{},\"missing\":[{}],\"recommendations\":[{}],\"currentTune\":[{}]}}",
         v.journal.as_deref().map_or("null".into(), json_str),
         json_str(&v.advice_for),
         steps.join(","),
@@ -832,6 +896,7 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         v.drift_floor
             .map_or("null".into(), |(n, f)| format!("[{n},{f:.3}]")),
         v.in_progress.as_deref().map_or("null".into(), json_str),
+        v.missing.iter().map(|p| json_str(p)).collect::<Vec<_>>().join(","),
         recs.join(","),
         tune.join(","),
     )
@@ -1030,10 +1095,20 @@ fn laps_json(path: &Path) -> Result<String, String> {
             )
         })
         .collect();
+    // Per-bin corroboration of the spliced ideal: 1 = a second lap reproduces
+    // this bin's speed within splice tolerance — the dashboard's confidence
+    // strip under the speed chart.
+    let corroborated: Vec<&str> = profile
+        .corroboration()
+        .corroborated
+        .iter()
+        .map(|ok| if *ok { "1" } else { "0" })
+        .collect();
     Ok(format!(
-        "{{\"binMeters\":{:.0},\"bestTime\":{:.3},\"laps\":[{}]}}",
+        "{{\"binMeters\":{:.0},\"bestTime\":{:.3},\"corroborated\":[{}],\"laps\":[{}]}}",
         crate::analysis::profile::BIN_METERS,
         profile.best_lap_time_s,
+        corroborated.join(","),
         laps.join(","),
     ))
 }
@@ -1120,6 +1195,48 @@ mod tests {
     }
 
     use super::*;
+
+    /// Deleting a journaled stint needs an explicit force; unjournaled stints
+    /// delete freely. Campaign start is the earlier of first revision and
+    /// first journaled stint.
+    #[test]
+    fn journaled_stint_delete_requires_force() {
+        let dir = std::env::temp_dir().join(format!("tuners-delguard-{}", std::process::id()));
+        let sessions = dir.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let jbase = dir.join("tune-journal.txt").to_string_lossy().into_owned();
+        std::fs::write(
+            dir.join("tune-journal-99.txt"),
+            "# car\nsessions/stint-20260725-100000.ftel | baseline\n",
+        )
+        .unwrap();
+        for f in ["stint-20260725-100000.ftel", "stint-20260725-110000.ftel"] {
+            std::fs::write(sessions.join(f), b"x").unwrap();
+        }
+        let sdir = sessions.to_string_lossy().into_owned();
+
+        let (status, _, body) =
+            delete_stint(&sdir, Some("stint-20260725-100000.ftel".into()), None, false, &jbase);
+        assert_eq!(status, "409 Conflict", "{body}");
+        assert!(body.contains("tune-journal-99.txt"), "{body}");
+        assert!(sessions.join("stint-20260725-100000.ftel").exists());
+
+        let (status, ..) =
+            delete_stint(&sdir, Some("stint-20260725-110000.ftel".into()), None, false, &jbase);
+        assert_eq!(status, "200 OK", "unjournaled deletes without force");
+
+        let (status, ..) =
+            delete_stint(&sdir, Some("stint-20260725-100000.ftel".into()), None, true, &jbase);
+        assert_eq!(status, "200 OK", "force overrides the guard");
+        assert!(!sessions.join("stint-20260725-100000.ftel").exists());
+
+        // Campaign start: journal baseline stint (100000) predates the first
+        // revision save (100500) — the earlier stamp wins.
+        let mut s = crate::tuning::TuningSession { car: Some(99), ..Default::default() };
+        s.revisions.push(crate::tuning::Revision { stamp: "20260725-100500".into(), ..Default::default() });
+        assert_eq!(campaign_start(&s, &jbase).as_deref(), Some("20260725-100000"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// New-session archives the active pair whole; resume swaps it back, and
     /// two campaigns for the SAME car keep separate journals throughout.
@@ -1342,23 +1459,26 @@ mod tests {
         let dir_s = dir.to_string_lossy().into_owned();
         std::fs::write(dir.join("stint-x.ftel"), b"data").unwrap();
 
+        let jb = dir.join("tune-journal.txt").to_string_lossy().into_owned();
         for bad in ["../stint-x.ftel", "sub/stint-x.ftel", "stint-x.txt"] {
-            let (status, _, _) = delete_stint(&dir_s, Some(bad.into()), None);
+            let (status, _, _) = delete_stint(&dir_s, Some(bad.into()), None, false, &jb);
             assert_eq!(status, "400 Bad Request", "{bad}");
         }
         let (status, _, _) = delete_stint(
             &dir_s,
             Some("stint-x.ftel".into()),
             Some(dir.join("stint-x.ftel").as_path()),
+            false,
+            &jb,
         );
         assert_eq!(status, "409 Conflict", "active recording is protected");
         assert!(dir.join("stint-x.ftel").exists());
 
-        let (status, _, _) = delete_stint(&dir_s, Some("stint-x.ftel".into()), None);
+        let (status, _, _) = delete_stint(&dir_s, Some("stint-x.ftel".into()), None, false, &jb);
         assert_eq!(status, "200 OK");
         assert!(!dir.join("stint-x.ftel").exists());
 
-        let (status, _, _) = delete_stint(&dir_s, Some("stint-x.ftel".into()), None);
+        let (status, _, _) = delete_stint(&dir_s, Some("stint-x.ftel".into()), None, false, &jb);
         assert_eq!(status, "404 Not Found");
         std::fs::remove_dir_all(&dir).ok();
     }

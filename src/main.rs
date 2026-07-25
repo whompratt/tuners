@@ -316,6 +316,12 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
              recording?) — its step joins the trajectory once a lap completes"
         );
     }
+    for p in &view.missing {
+        println!(
+            "\nnote: {p} is journaled but the recording no longer exists \
+             (deleted?) — skipped; its tune change was merged into the next step"
+        );
+    }
     let asks = view
         .recommendations
         .iter()

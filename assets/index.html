@@ -398,14 +398,24 @@ async function load() {
   renderSessions();
 }
 
+let showEarlierStints = false;
 function renderSessions() {
   const filter = document.getElementById('car-filter').value;
   const list = document.getElementById('sessions');
   list.innerHTML = '';
-  const shown = allSessions.filter(s => filter === 'all' || String(s.car) === filter);
+  let shown = allSessions.filter(s => filter === 'all' || String(s.car) === filter);
   if (!shown.length) {
     list.innerHTML = '<div class="placeholder">no stints for this car</div>';
     return;
+  }
+  // Scope to the active campaign: stints of the session car from before the
+  // campaign started belong to archived sessions — tucked behind a toggle.
+  let earlier = [];
+  if (sessionData && sessionData.campaignStart
+      && String(sessionData.car) === filter && !showEarlierStints) {
+    const stamp = f => (f.match(/(\d{8}-\d{6})/) || [])[1] || '';
+    earlier = shown.filter(s => stamp(s.file) < sessionData.campaignStart);
+    shown = shown.filter(s => stamp(s.file) >= sessionData.campaignStart);
   }
   for (const s of [...shown].reverse()) {
     const el = document.createElement('div');
@@ -425,13 +435,34 @@ function renderSessions() {
     el.querySelector('.del').onclick = ev => { ev.stopPropagation(); deleteStint(s.file); };
     list.appendChild(el);
   }
+  if (earlier.length) {
+    const el = document.createElement('div');
+    el.className = 'placeholder';
+    el.style.cursor = 'pointer';
+    el.textContent = `show ${earlier.length} stint${earlier.length === 1 ? '' : 's'} from earlier sessions of this car`;
+    el.onclick = () => { showEarlierStints = true; renderSessions(); };
+    list.appendChild(el);
+  } else if (showEarlierStints && sessionData && String(sessionData.car) === filter) {
+    const el = document.createElement('div');
+    el.className = 'placeholder';
+    el.style.cursor = 'pointer';
+    el.textContent = 'hide earlier-session stints';
+    el.onclick = () => { showEarlierStints = false; renderSessions(); };
+    list.appendChild(el);
+  }
 }
 
 async function deleteStint(file) {
   const name = file.split('/').pop();
-  if (!confirm(`Delete ${name}?\n\nThis cannot be undone. If this stint is in the ` +
-      `tuning journal, advise will break until the journal is hand-edited.`)) return;
-  const resp = await fetch(`/api/stint/delete?file=${encodeURIComponent(name)}`, { method: 'POST' });
+  if (!confirm(`Delete ${name}?\n\nThis cannot be undone.`)) return;
+  let resp = await fetch(`/api/stint/delete?file=${encodeURIComponent(name)}`, { method: 'POST' });
+  if (resp.status === 409) {
+    // Journaled stint: the server wants an explicit force. Advice survives
+    // (the step is skipped, its note merged forward) but loses a measurement.
+    const why = await resp.text();
+    if (!confirm(`${why}\n\nDelete anyway?`)) return;
+    resp = await fetch(`/api/stint/delete?file=${encodeURIComponent(name)}&force=1`, { method: 'POST' });
+  }
   if (!resp.ok) { alert(`cannot delete: ${await resp.text()}`); return; }
   if (sel.a === file) sel.a = null;
   if (sel.b === file) sel.b = null;
@@ -725,6 +756,21 @@ function drawChart(hoverBin) {
     ctx.stroke();
   });
 
+  // Confidence strip: which bins of the spliced ideal a SECOND lap reproduces
+  // (splice tolerance). Green = corroborated, dim = single-lap evidence.
+  const corr = lapData.corroborated || [];
+  if (corr.length > 1) {
+    const yTop = pad.t + plotH + 2;
+    const xw = plotW / Math.max(bins - 1, 1);
+    for (let b = 0; b < Math.min(bins, corr.length); ) {
+      let e = b;
+      while (e < corr.length && corr[e] === corr[b]) e++;
+      ctx.fillStyle = corr[b] ? 'rgba(25,158,112,0.75)' : 'rgba(137,135,129,0.25)';
+      ctx.fillRect(Math.max(pad.l, x(b) - xw / 2), yTop, (e - b) * xw, 3.5);
+      b = e;
+    }
+  }
+
   if (hoverBin != null) {                          // crosshair
     ctx.strokeStyle = css('--baseline');
     ctx.lineWidth = 1;
@@ -736,7 +782,9 @@ function drawChart(hoverBin) {
     `<span><span class="chip" style="background:${SERIES[i % SERIES.length]}"></span>` +
     `lap ${lap.lap} — <span class="num">${fmtLap(lap.time)}</span>` +
     `${lap.standing ? ' (standing start)' : lap.time === best ? ' (best)' : ''}</span>`
-  ).join('');
+  ).join('') + (corr.length > 1
+    ? '<span style="color:var(--muted)">strip under chart: ideal-lap corroboration (green = a second lap agrees)</span>'
+    : '');
 }
 
 document.getElementById('canvas-wrap').addEventListener('mousemove', ev => {
@@ -764,7 +812,9 @@ function tooltip(bin, px, py) {
     .map(({ lap, i, mph }) =>
       `<div><span class="chip" style="background:${SERIES[i % SERIES.length]}"></span>` +
       `lap ${lap.lap} <span class="num">${mph.toFixed(0)} ${SPD().l}</span></div>`);
-  tip.innerHTML = `<div class="t-head">${km} km</div>` + rows.join('');
+  const uncorr = lapData.corroborated && lapData.corroborated.length > bin && !lapData.corroborated[bin]
+    ? '<div style="color:var(--muted);font-size:11px">single-lap bin — uncorroborated</div>' : '';
+  tip.innerHTML = `<div class="t-head">${km} km</div>` + rows.join('') + uncorr;
   tip.style.display = 'block';
   const wrap = document.getElementById('canvas-wrap').getBoundingClientRect();
   const flip = px > wrap.width - 170;
@@ -1152,6 +1202,11 @@ async function loadAdvice() {
     html += `<div style="margin-top:6px;font-size:13px;color:var(--muted)">` +
       `${a.inProgress.split('/').pop()} is journaled but has no completed laps yet — ` +
       `its step joins the trajectory once a lap completes</div>`;
+  }
+  for (const p of a.missing || []) {
+    html += `<div style="margin-top:6px;font-size:13px;color:var(--muted)">` +
+      `${p.split('/').pop()} is journaled but its recording was deleted — ` +
+      `skipped; its tune change merged into the next step</div>`;
   }
   if (a.anchor) {
     const an = a.anchor;
