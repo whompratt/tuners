@@ -1,0 +1,59 @@
+# Release builds (plan 010 phase 5): push a `v*` tag to build the desktop app
+# for Windows (NSIS + MSI) and Linux (AppImage + deb + rpm) and attach the
+# installers to a draft GitHub release. Publish the draft by hand after a
+# smoke test. Updater artifacts/signing are wired later (needs a keypair —
+# `pnpm tauri signer generate` — and testers to update).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install linux webview/bundler deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: install frontend deps
+        run: pnpm install --frozen-lockfile
+        working-directory: app
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_name }}
+          releaseName: "tuners ${{ github.ref_name }}"
+          releaseBody: "See the commit log for what changed."
+          releaseDraft: true

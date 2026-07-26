@@ -241,6 +241,7 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 }
 .rail a:hover { color: var(--ink); }
 .rail a.active { background: var(--surface); color: var(--ink); }
+.rail-version { margin-top: auto; padding: 0 8px; font-size: 11px; color: var(--muted); }
 
 /* --- screen scaffolding --- */
 .screen { flex: 1; padding: 16px 24px; overflow: auto; }

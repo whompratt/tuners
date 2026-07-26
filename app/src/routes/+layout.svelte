@@ -2,6 +2,7 @@
   import "../app.css";
   import { onMount } from "svelte";
   import { page } from "$app/state";
+  import { getVersion } from "@tauri-apps/api/app";
   import { events } from "$lib/bindings";
   import { app, loadAdvice, loadPending, loadSession, loadStints } from "$lib/app.svelte";
   import { initAdvanced } from "$lib/advanced.svelte";
@@ -10,6 +11,7 @@
   import Onboarding from "$lib/components/Onboarding.svelte";
 
   let { children } = $props();
+  let version = $state("");
 
   const NAV = [
     ["/", "Home"],
@@ -21,6 +23,7 @@
 
   onMount(() => {
     initAdvanced();
+    getVersion().then((v) => (version = v));
     (async () => {
       await loadStints(true);
       await loadSession();
@@ -54,5 +57,6 @@
   {#each NAV as [href, label] (href)}
     <a {href} class:active={page.url.pathname === href}>{label}</a>
   {/each}
+  {#if version}<div class="rail-version">v{version}</div>{/if}
 </nav>
 {@render children()}
