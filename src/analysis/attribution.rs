@@ -219,7 +219,7 @@ mod tests {
         let mut road = vec![(30.0, 0.8); 3];
         road.extend(vec![(60.0, 0.1); 6]);
         road.extend(vec![(30.0, 0.8); 3]);
-        let a = split_delta(&profile_with(&road), &vec![0.01f32; 12]);
+        let a = split_delta(&profile_with(&road), &[0.01f32; 12]);
         assert_eq!(a.corners, 2, "real straight keeps corners separate");
     }
 }

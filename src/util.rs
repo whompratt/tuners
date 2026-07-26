@@ -2,6 +2,43 @@
 
 pub const MPS_TO_MPH: f32 = 2.236_936_3;
 
+/// Single data root (plan 010): sessions, tune files, journals, archives,
+/// outbox, and collection config all resolve under one directory. Resolution
+/// order: `TUNERS_DATA` env, then a root installed by the app shell
+/// (app_data_dir), then the current directory — which keeps CLI behavior in
+/// a repo checkout identical to before the root existed.
+static DATA_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Install the fallback root (the desktop app passes its app_data_dir).
+/// `TUNERS_DATA` still wins; no-op if the root was already resolved.
+pub fn set_data_root(fallback: std::path::PathBuf) {
+    let _ = DATA_ROOT.set(
+        std::env::var_os("TUNERS_DATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or(fallback),
+    );
+}
+
+pub fn data_root() -> &'static std::path::Path {
+    DATA_ROOT.get_or_init(|| {
+        std::env::var_os("TUNERS_DATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    })
+}
+
+/// A path under the data root. With the default root the relative name comes
+/// back unchanged, so stored references (journal stint paths) never grow a
+/// "./" prefix.
+pub fn data_path(rel: &str) -> std::path::PathBuf {
+    let root = data_root();
+    if root == std::path::Path::new(".") {
+        std::path::PathBuf::from(rel)
+    } else {
+        root.join(rel)
+    }
+}
+
 /// CLI report display units (storage stays canonical: °F, m/s). Thread-local
 /// so tests can't pollute each other; defaults imperial, set once by main
 /// from the active session's unit prefs or --units.

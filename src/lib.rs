@@ -1,5 +1,6 @@
 pub mod advise;
 pub mod analysis;
+pub mod api;
 pub mod bundle;
 pub mod capture;
 pub mod cars;
@@ -10,7 +11,6 @@ pub mod packet;
 pub mod receive;
 pub mod record;
 pub mod replay;
-pub mod serve;
 pub mod simulate;
 pub mod stint;
 pub mod tuning;

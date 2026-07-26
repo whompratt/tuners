@@ -111,7 +111,7 @@ pub fn generate_token() -> String {
 /// belongs to the session car. Runs on its own thread — the recorder loop
 /// must never wait on bundling. Failures are printed, never fatal.
 pub fn maybe_enqueue(stint_path: PathBuf, session_file: PathBuf, car: i32) {
-    let cfg = CollectConfig::load(CONFIG_PATH.as_ref());
+    let cfg = CollectConfig::load(&crate::util::data_path(CONFIG_PATH));
     if !cfg.ready() {
         return;
     }
@@ -125,9 +125,17 @@ pub fn maybe_enqueue(stint_path: PathBuf, session_file: PathBuf, car: i32) {
             );
             return;
         }
-        let journal_path = crate::tuning::journal_path_for(session.car, "tune-journal.txt");
+        let journal_path = crate::tuning::journal_path_for(
+            session.car,
+            &crate::util::data_path("tune-journal.txt").to_string_lossy(),
+        );
         let journal = std::fs::read_to_string(&journal_path).unwrap_or_default();
-        match enqueue(OUTBOX_DIR.as_ref(), &stint_path, &session, &journal) {
+        match enqueue(
+            &crate::util::data_path(OUTBOX_DIR),
+            &stint_path,
+            &session,
+            &journal,
+        ) {
             Ok(Some(p)) => println!("collect: queued {}", p.display()),
             Ok(None) => {}
             Err(e) => eprintln!("collect: {} not bundled: {e}", stint_path.display()),

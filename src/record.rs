@@ -1,4 +1,4 @@
-//! In-process recorder: `tuners serve` binds the UDP port and cuts the stream
+//! In-process recorder: the app shell binds the UDP port and cuts the stream
 //! into session files automatically, so the user runs one binary, opens the
 //! dashboard, and drives. Session boundaries come from the Cutter state machine
 //! plus the dashboard's "new session" button (tune edits are invisible in
@@ -196,7 +196,7 @@ impl Cutter {
 /// What the recorder is doing, for the dashboard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecorderMode {
-    /// UDP port taken (external `tuners capture` or another serve) — view-only.
+    /// UDP port taken (external `tuners capture` or another instance) — view-only.
     External(String),
     /// Listening; no race telemetry yet (menus / free roam are not recorded).
     Waiting,
@@ -368,7 +368,7 @@ pub fn run_recorder(
                                 );
                                 let baseline_ok =
                                     session.car.is_none() || last_closed_car == session.car;
-                                // Baseline seed must survive serve restarts: with no
+                                // Baseline seed must survive app restarts: with no
                                 // (matching) stint closed in this process, fall back
                                 // to the newest on-disk stint of the session car.
                                 let baseline = last_closed.filter(|_| baseline_ok).or_else(|| {

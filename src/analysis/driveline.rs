@@ -219,6 +219,7 @@ mod tests {
     /// Synthetic full-throttle pull with known alpha/beta on a flat road:
     /// the fit must recover them and the vmax prediction.
     #[test]
+    #[allow(clippy::field_reassign_with_default)] // frame setup reads clearer sequentially
     fn fit_recovers_known_drag_model() {
         let (alpha, beta) = (0.0008f32, 0.0006f32);
         let power = 500_000.0f32;

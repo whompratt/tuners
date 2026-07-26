@@ -574,7 +574,7 @@ pub fn latest_stint_for_car(dir: &str, car: Option<i32>) -> Option<String> {
     paths.iter().rev().find_map(|p| {
         let matches = match car {
             None => true,
-            Some(car) => crate::serve::stint_car(p) == Some(car),
+            Some(car) => crate::api::stint_car(p) == Some(car),
         };
         matches.then(|| p.to_string_lossy().into_owned())
     })
@@ -619,7 +619,7 @@ pub fn advise(
                     && stint_stamp(&path.to_string_lossy())
                         .is_some_and(|s| s > last_stamp.as_str())
                     && session.car.is_some()
-                    && crate::serve::stint_car(&path) == session.car)
+                    && crate::api::stint_car(&path) == session.car)
                     .then(|| format!("{stints_dir}/{}", e.file_name().to_string_lossy()))
             })
             .collect();
@@ -883,46 +883,44 @@ pub fn advise(
     let n = loaded.len();
     if let Some(Some(last_setup)) = setups.last()
         && n >= 2
+        && let Some((i, keys)) = min_diff_ancestor(&setups[..n - 1], last_setup)
+        && let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[n - 1].2)
     {
-        if let Some((i, keys)) = min_diff_ancestor(&setups[..n - 1], last_setup)
-            && let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[n - 1].2)
-        {
-            let attr = analysis::attribution::split_delta(&loaded[i].2, &cmp.bin_delta_s);
-            let areas = area_list(&keys);
-            let changes = crate::tuning::diff_note(setups[i].unwrap(), last_setup);
-            let weak = weak_pair(i, n - 1);
-            let outcome = journal::judge(cmp.ideal_delta_s);
-            let single_family = (areas.len() == 1)
-                .then(|| journal::family_for_area(areas[0]))
-                .flatten();
-            if let Some(family) = single_family {
-                let deltas: Vec<f32> = keys
-                    .iter()
-                    .filter_map(|k| {
-                        let old = setups[i].unwrap().values.get(k)?.parse::<f32>().ok()?;
-                        let new = last_setup.values.get(k)?.parse::<f32>().ok()?;
-                        Some(new - old)
-                    })
-                    .collect();
-                let change = journal::Change {
-                    family,
-                    softer: deltas.iter().sum::<f32>() < 0.0,
-                    magnitude: (deltas.len() == 1).then(|| deltas[0]),
-                };
-                anchor_change = Some((change, outcome, changes.clone(), weak));
-            }
-            anchor = Some(AnchorView {
-                vs_step: i + 1,
-                areas: areas.join(", "),
-                changes,
-                delta_s: cmp.ideal_delta_s,
-                word: outcome.word(),
-                weak,
-                reconciled: anchor_change.is_some(),
-                split: (attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s),
-                effects: effects::delta(&fx[i], &fx[n - 1]),
-            });
+        let attr = analysis::attribution::split_delta(&loaded[i].2, &cmp.bin_delta_s);
+        let areas = area_list(&keys);
+        let changes = crate::tuning::diff_note(setups[i].unwrap(), last_setup);
+        let weak = weak_pair(i, n - 1);
+        let outcome = journal::judge(cmp.ideal_delta_s);
+        let single_family = (areas.len() == 1)
+            .then(|| journal::family_for_area(areas[0]))
+            .flatten();
+        if let Some(family) = single_family {
+            let deltas: Vec<f32> = keys
+                .iter()
+                .filter_map(|k| {
+                    let old = setups[i].unwrap().values.get(k)?.parse::<f32>().ok()?;
+                    let new = last_setup.values.get(k)?.parse::<f32>().ok()?;
+                    Some(new - old)
+                })
+                .collect();
+            let change = journal::Change {
+                family,
+                softer: deltas.iter().sum::<f32>() < 0.0,
+                magnitude: (deltas.len() == 1).then(|| deltas[0]),
+            };
+            anchor_change = Some((change, outcome, changes.clone(), weak));
         }
+        anchor = Some(AnchorView {
+            vs_step: i + 1,
+            areas: areas.join(", "),
+            changes,
+            delta_s: cmp.ideal_delta_s,
+            word: outcome.word(),
+            weak,
+            reconciled: anchor_change.is_some(),
+            split: (attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s),
+            effects: effects::delta(&fx[i], &fx[n - 1]),
+        });
     }
 
     // Trailing excursion-and-revert (A-B-A): the pair's deltas cancel drift.

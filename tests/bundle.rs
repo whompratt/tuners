@@ -52,7 +52,7 @@ fn bundle_round_trip_from_real_fixture() {
         b.manifest.get("bundle_version").map(String::as_str),
         Some("1")
     );
-    assert!(b.manifest.get("consent").is_some());
+    assert!(b.manifest.contains_key("consent"));
 
     // The recording is byte-identical and decodes with the real reader.
     assert_eq!(b.stint, std::fs::read(stint_path).unwrap());

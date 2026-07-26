@@ -245,11 +245,12 @@ pub fn export_journal(text: &str, car: i32) -> String {
     for line in text.lines() {
         let line = line.trim();
         for marker in ["# parked ", "# resumed "] {
-            if let Some(stamp) = line.strip_prefix(marker) {
-                if !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
-                    out.push_str(line);
-                    out.push('\n');
-                }
+            if let Some(stamp) = line.strip_prefix(marker)
+                && !stamp.is_empty()
+                && stamp.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+            {
+                out.push_str(line);
+                out.push('\n');
             }
         }
         if line.is_empty() || line.starts_with('#') {

@@ -23,14 +23,6 @@ USAGE:
                     active session car's journal (tune-journal-<car>.txt),
                     falling back to tune-journal.txt with no session;
                     journal lines: <stint-file> | <change since previous stint>
-  tuners serve    [--port 8080] [--sessions sessions] [--udp-port 20440]
-                  [--journal tune-journal.txt] [--session tune-session.txt]
-                    the app: records telemetry automatically (race mode only,
-                    sessions split from the dashboard) and serves the dashboard
-                    with charts, A/B compare, and a live view + quality meter.
-                    Tune-change notes are journaled per session car
-                    (--journal is the base name: tune-journal-<car>.txt). If the UDP port is busy (external capture),
-                    view-only. --udp-port 0 disables recording entirely
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
                     send synthetic telemetry (stand-in for the game); timescale
                     compresses in-game time for headless lap testing
@@ -75,7 +67,6 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "compare" => cmd_compare(&args[1..]),
         "recommend" => cmd_recommend(&args[1..]),
         "advise" => cmd_advise(&args[1..]),
-        "serve" => cmd_serve(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "receive" => cmd_receive(&args[1..]),
         "export" => cmd_export(&args[1..]),
@@ -91,7 +82,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
 fn cmd_capture(args: &[String]) -> Result<(), String> {
     let mut opts = capture::CaptureOpts {
         port: 20440,
-        out_dir: PathBuf::from("sessions"),
+        out_dir: tuners::util::data_path("sessions"),
         max_packets: None,
         max_duration: None,
     };
@@ -146,7 +137,8 @@ fn apply_units(args: &[String]) -> Result<Vec<String>, String> {
         },
         Some(other) => return Err(format!("--units {other}: use imperial, metric, or uk")),
         None => {
-            let s = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
+            let s =
+                tuners::tuning::TuningSession::load(&tuners::util::data_path("tune-session.txt"));
             tuners::util::DisplayUnits {
                 temp_c: s.facts.get("unit_temp").map(String::as_str) == Some("c"),
                 speed_kmh: s.facts.get("unit_speed").map(String::as_str) == Some("kmh"),
@@ -202,33 +194,17 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_serve(args: &[String]) -> Result<(), String> {
-    let mut port: u16 = 8080;
-    let mut sessions_dir = "sessions".to_string();
-    let mut udp_port: u16 = 20440;
-    let mut journal = "tune-journal.txt".to_string();
-    let mut session = "tune-session.txt".to_string();
-    let mut it = args.iter();
-    while let Some(flag) = it.next() {
-        match flag.as_str() {
-            "--port" => port = parse(flag, it.next())?,
-            "--sessions" => sessions_dir = value(flag, it.next())?.clone(),
-            "--udp-port" => udp_port = parse(flag, it.next())?,
-            "--journal" => journal = value(flag, it.next())?.clone(),
-            "--session" => session = value(flag, it.next())?.clone(),
-            other => return Err(format!("unknown flag '{other}' for serve")),
-        }
-    }
-    tuners::serve::run(port, sessions_dir, udp_port, journal, session).map_err(|e| e.to_string())
-}
-
 fn cmd_advise(args: &[String]) -> Result<(), String> {
     let journal_path = match args {
         [] => {
             // The journal belongs to the session: with an active session car,
             // the default resolves to that car's journal file.
-            let session = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
-            let path = tuners::tuning::journal_path_for(session.car, "tune-journal.txt");
+            let session =
+                tuners::tuning::TuningSession::load(&tuners::util::data_path("tune-session.txt"));
+            let path = tuners::tuning::journal_path_for(
+                session.car,
+                &tuners::util::data_path("tune-journal.txt").to_string_lossy(),
+            );
             if let Some(car) = session.car {
                 let name = tuners::cars::car_name(car).unwrap_or("unknown car");
                 println!("journal: {path} (session car: {name})");
@@ -238,7 +214,11 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         [p] => p.clone(),
         _ => return Err("usage: tuners advise [journal-file]".into()),
     };
-    let view = tuners::advise::advise(&journal_path, "tune-session.txt".as_ref(), "sessions")?;
+    let view = tuners::advise::advise(
+        &journal_path,
+        &tuners::util::data_path("tune-session.txt"),
+        &tuners::util::data_path("sessions").to_string_lossy(),
+    )?;
 
     if view.journal.is_none() {
         println!(
@@ -476,8 +456,11 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
         }
     }
     let stint = stint.ok_or("usage: tuners export <stint-file> [--out dir]")?;
-    let session = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
-    let journal_path = tuners::tuning::journal_path_for(session.car, "tune-journal.txt");
+    let session = tuners::tuning::TuningSession::load(&tuners::util::data_path("tune-session.txt"));
+    let journal_path = tuners::tuning::journal_path_for(
+        session.car,
+        &tuners::util::data_path("tune-journal.txt").to_string_lossy(),
+    );
     let journal = std::fs::read_to_string(&journal_path).unwrap_or_default();
     let raw_len = std::fs::metadata(&stint).map(|m| m.len()).unwrap_or(0);
 

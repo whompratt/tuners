@@ -2,7 +2,7 @@
 //! keep a shared snapshot (latest frame + data-quality summary) for the dashboard
 //! to relay over SSE (docs/plans/006-dashboard.md phase 4).
 //!
-//! The serve process never binds the UDP port — capture owns it. StintWriter
+//! The tailer never binds the UDP port — the recorder (or capture) owns it. StintWriter
 //! writes each record with a single unbuffered `write_all`, so tailing the file
 //! sees new packets within one poll interval.
 
@@ -178,7 +178,7 @@ fn newest_stint(dir: &str) -> Option<PathBuf> {
 }
 
 /// Tail the newest session file forever, keeping `state` current. Spawned as a
-/// daemon thread by `serve::run`; exits only with the process.
+/// daemon thread by the app shell; exits only with the process.
 pub fn run_tailer(dir: String, state: SharedLive) {
     let mut tail: Option<(PathBuf, StintTail)> = None;
     let mut frames: Vec<TimedFrame> = Vec::new();
