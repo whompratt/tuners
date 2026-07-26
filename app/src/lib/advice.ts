@@ -19,8 +19,10 @@ export function isAccepted(
   );
 }
 
-export const isHold = (r: RecommendationView) =>
-  !!r.suggestion && (r.suggestion.includes("hold") || r.suggestion.includes("bracketed"));
+export const isHold = (r: RecommendationView) => {
+  const t = `${r.suggestion ?? ""} ${r.advice}`;
+  return t.includes("hold") || t.includes("bracketed");
+};
 
 /** The one next action: best-confidence actionable suggestion that is not a
  * hold and not already accepted; falls back to the top recommendation. */

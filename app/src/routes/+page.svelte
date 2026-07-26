@@ -78,7 +78,9 @@
     </div>
   {/if}
 
-  {#if !app.session || app.session.car == null}
+  {#if !app.booted}
+    <div class="hero" style="color:var(--muted)">…</div>
+  {:else if !app.session || app.session.car == null}
     <div class="hero">No project yet.</div>
     <div class="next-action">
       Set up your car first — pick it and note what the telemetry can't see (weight, compound, assists).

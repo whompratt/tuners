@@ -214,14 +214,25 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 .screen-cols > main { flex: 1; }
 
 /* --- setup family cards --- */
+/* Masonry-style columns: cards pack without row gaps and read top-to-bottom
+   in game-screen order; capped at 3 columns / 1200px so a maximized window
+   gets margin, not sprawl. */
 .fam-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 14px; align-items: start;
+  columns: 3 320px; column-gap: 14px; max-width: 1200px;
 }
 .fam-card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px 14px;
+  /* inline-block makes the card atomic in the column flow: bottom margins
+     stop leaking across column breaks (the top-of-column offset quirk). */
+  display: inline-block; width: 100%; vertical-align: top;
+  break-inside: avoid; margin-bottom: 14px;
 }
+.fam-row input[type="number"]::-webkit-inner-spin-button,
+.fam-row input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.pending-bar { max-width: 1200px; }
 .fam-card.priority { border-color: var(--accent); }
 .fam-card h3 {
   font-size: 13px; font-weight: 600; color: var(--accent);

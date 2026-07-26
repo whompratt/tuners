@@ -139,7 +139,9 @@
 </script>
 
 <div class="screen">
-  {#if !app.session || app.session.car == null}
+  {#if !app.booted}
+    <div class="hero" style="color:var(--muted)">…</div>
+  {:else if !app.session || app.session.car == null}
     <div class="hero">No project yet.</div>
     <div style="margin-top:8px;color:var(--muted)">
       <a href="/projects">Set up your project</a> first — then copy your tune in here.

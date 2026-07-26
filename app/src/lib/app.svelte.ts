@@ -34,6 +34,9 @@ import { alertDialog, confirmDialog } from "./ui/dialogs.svelte";
 import { save } from "@tauri-apps/plugin-dialog";
 
 export const app = $state({
+  /** Initial session/stints load finished — before this, "no project" is
+   * unknowable, not true, and screens must not claim it. */
+  booted: false,
   stints: [] as StintRow[],
   session: null as SessionView | null,
   live: null as LiveStateView | null,

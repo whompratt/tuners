@@ -23,6 +23,7 @@
       await loadStints(true);
       await loadSession();
       await loadPending();
+      app.booted = true;
       // Advice on launch feeds all three registers; recomputed on run close.
       loadAdvice();
     })();
