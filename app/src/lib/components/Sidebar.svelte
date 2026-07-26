@@ -53,7 +53,10 @@
           tabindex="0"
           onkeydown={(e) => e.key === "Enter" && show(s.file)}
         >
-          {s.file.split("/").pop()}<br />
+          <div class="s-name" title={s.file.split("/").pop()}>
+            {(s.file.split("/").pop() ?? "").replace(/^stint-/, "").replace(/\.ftel$/, "")}
+          </div>
+          <div class="s-meta">
           <span class="car">{carLabel(s)}</span> ·
           <span class="size">{(s.bytes / 1e6).toFixed(1)} MB</span>
           <span class="ab">
@@ -74,6 +77,7 @@
               title="delete this run"
               onclick={(e) => { e.stopPropagation(); deleteStint(s.file); }}>×</button>
           </span>
+          </div>
         </div>
       {/each}
       {#if split.earlier.length}

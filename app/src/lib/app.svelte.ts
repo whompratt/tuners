@@ -37,6 +37,10 @@ export const app = $state({
   /** Initial session/stints load finished — before this, "no project" is
    * unknowable, not true, and screens must not claim it. */
   booted: false,
+  /** Home starts on a landing gate each launch: the active project is named
+   * but not entered until the user says so. Engine-side the project stays
+   * active regardless (recording continuity). Session-lifetime only. */
+  entered: false,
   stints: [] as StintRow[],
   session: null as SessionView | null,
   live: null as LiveStateView | null,

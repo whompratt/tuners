@@ -20,20 +20,21 @@ body {
   display: flex; height: 100vh;
 }
 aside {
-  width: 320px; min-width: 240px; border-right: 1px solid var(--border);
-  padding: 16px; overflow-y: auto;
+  width: clamp(220px, 20vw, 320px); border-right: 1px solid var(--border);
+  padding: 16px; overflow-y: auto; flex: none;
 }
 aside h1 { font-size: 18px; color: var(--ink); margin-bottom: 12px; }
 aside h1 span { color: var(--muted); font-weight: normal; font-size: 13px; }
 .session {
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
-  margin-bottom: 8px; cursor: pointer; word-break: break-all; font-size: 14px;
-  position: relative;
+  margin-bottom: 8px; cursor: pointer; font-size: 14px;
 }
+.session .s-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session .s-meta { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .session:hover { border-color: var(--accent); }
 .session.active { border-color: var(--accent); background: var(--surface); }
 .session .size { color: var(--muted); font-size: 13px; }
-.ab { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
+.ab { margin-left: auto; display: flex; gap: 4px; }
 .ab button {
   background: none; border: 1px solid var(--border); border-radius: 4px;
   color: var(--muted); font: 600 12px system-ui; width: 24px; height: 22px;
@@ -290,3 +291,8 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 .drive-grid .temps div { font-size: 24px; padding: 8px 0; }
 .drive-grid .readout .trow { font-size: 26px; }
 .drive-grid .readout .trow .num { font-size: 30px; }
+
+/* Wide content scrolls inside its own container — panels never clip. */
+.table-scroll { overflow-x: auto; }
+.table-scroll .adv-table td { white-space: normal; }
+.table-scroll .adv-table td.num, .table-scroll .adv-table th { white-space: nowrap; }

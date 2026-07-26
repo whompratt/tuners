@@ -80,6 +80,21 @@
 
   {#if !app.booted}
     <div class="hero" style="color:var(--muted)">…</div>
+  {:else if !app.entered && app.session && app.session.car != null}
+    <div class="hero">
+      {app.session.facts.name ? `${app.session.facts.name} · ` : ""}{app.session.carName || `car #${app.session.car}`}
+    </div>
+    <div style="margin-top:6px;color:var(--muted)">
+      {app.session.revisions
+        ? `setup version ${app.session.revisions} — pick up where you left off`
+        : "no setup on file yet"}
+    </div>
+    <div class="next-action">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <Button go onclick={() => (app.entered = true)}>continue this project</Button>
+        <Button onclick={() => goto("/projects")}>switch project…</Button>
+      </div>
+    </div>
   {:else if !app.session || app.session.car == null}
     <div class="hero">No project yet.</div>
     <div class="next-action">

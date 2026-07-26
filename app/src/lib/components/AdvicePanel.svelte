@@ -30,7 +30,9 @@
   const sgn = (v: number | null) => `${N(v) > 0 ? "+" : ""}${N(v).toFixed(2)}s`;
   const dcol = (v: number | null) => (N(v) > 0.02 ? "#e66767" : N(v) < -0.02 ? "#199e70" : "var(--muted)");
   const fl = (v: number | null) => fmtLap(N(v));
-  const base = (p: string) => p.split("/").pop();
+  // Run identity is the stamp: strip the constant prefix/suffix for display.
+  const base = (p: string) =>
+    (p.split("/").pop() ?? p).replace(/^stint-/, "").replace(/\.ftel$/, "");
 
   async function refresh() {
     acceptNote = "";
@@ -102,6 +104,7 @@
       <span class="placeholder">{error}</span>
     {:else if a}
       {#if a.steps.length}
+        <div class="table-scroll">
         <table class="adv-table">
           <thead>
             <tr>
@@ -183,6 +186,7 @@
             {/each}
           </tbody>
         </table>
+        </div>
       {/if}
       {#if a.inProgress}
         <div style="margin-top:6px;font-size:13px;color:var(--muted)">
@@ -246,7 +250,7 @@
         </div>
         {#if a.landscapes[histSel]}
           {@const land = a.landscapes[histSel]}
-          <div style="margin-top:4px">
+          <div style="margin-top:4px" class="table-scroll">
             <table class="adv-table">
               <thead>
                 <tr><th>steps</th><th>change</th><th>Δ ideal</th><th>entry</th><th>exit</th><th>straights</th><th></th></tr>
