@@ -54,6 +54,8 @@ fn start(max_bundle_bytes: u64, daily_cap_bytes: u64, tag: &str) -> Server {
 }
 
 /// PUT with explicit content-length so tests can lie about it (413 path).
+/// Early rejects race the body write against the server's close — a TCP RST
+/// can eat the response — so an empty read retries on a fresh connection.
 fn put_raw(
     addr: SocketAddr,
     name: &str,
@@ -62,24 +64,28 @@ fn put_raw(
     content_length: u64,
     body: &[u8],
 ) -> (u16, String) {
-    let mut s = TcpStream::connect(addr).unwrap();
-    let mut req = format!(
-        "PUT /v1/bundle/{name} HTTP/1.1\r\nHost: t\r\nContent-Length: {content_length}\r\n"
-    );
-    if let Some(t) = token {
-        req += &format!("Authorization: Bearer {t}\r\n");
+    for _ in 0..3 {
+        let mut s = TcpStream::connect(addr).unwrap();
+        let mut req = format!(
+            "PUT /v1/bundle/{name} HTTP/1.1\r\nHost: t\r\nContent-Length: {content_length}\r\n"
+        );
+        if let Some(t) = token {
+            req += &format!("Authorization: Bearer {t}\r\n");
+        }
+        if let Some(h) = sha {
+            req += &format!("X-Bundle-SHA256: {h}\r\n");
+        }
+        req += "\r\n";
+        s.write_all(req.as_bytes()).unwrap();
+        let _ = s.write_all(body); // may hit a closed socket on early rejects
+        let mut resp = String::new();
+        let _ = s.read_to_string(&mut resp); // RST after a partial read is fine too
+        if let Some(status) = resp.split_whitespace().nth(1).and_then(|c| c.parse().ok()) {
+            let body = resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+            return (status, body);
+        }
     }
-    if let Some(h) = sha {
-        req += &format!("X-Bundle-SHA256: {h}\r\n");
-    }
-    req += "\r\n";
-    s.write_all(req.as_bytes()).unwrap();
-    let _ = s.write_all(body); // may hit a closed socket on early rejects
-    let mut resp = String::new();
-    s.read_to_string(&mut resp).unwrap();
-    let status: u16 = resp.split_whitespace().nth(1).unwrap().parse().unwrap();
-    let body = resp.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
-    (status, body)
+    panic!("no HTTP response after 3 attempts");
 }
 
 fn put(addr: SocketAddr, name: &str, token: Option<&str>, body: &[u8]) -> (u16, String) {
