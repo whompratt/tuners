@@ -1,6 +1,7 @@
 /target
 /sessions
 /tune-journal*.txt
+/tune-session*.txt
 
 # telemetry collection (plan 009): received bundles + credentials stay local
 /inbox
@@ -10,5 +11,6 @@
 /library
 /quarantine
 worker/node_modules
-worker/.wrangler
 worker/.dev.vars
+**/.wrangler/
+
