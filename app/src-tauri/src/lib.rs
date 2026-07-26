@@ -348,21 +348,21 @@ pub fn run() {
             builder.mount_events(app);
 
             // Single data root: TUNERS_DATA (dev) wins over app_data_dir.
+            // The process ANCHORS ITS CWD there and uses the same relative
+            // names as the CLI: journal entries store stint paths relative to
+            // the root ("sessions/x.ftel"), and the read guards reject
+            // absolute paths — both only hold when the engine runs from the
+            // root, exactly like `tuners serve` used to.
             let fallback = app.path().app_data_dir()?;
             std::fs::create_dir_all(&fallback).ok();
             tuners::util::set_data_root(fallback);
-            let root = tuners::util::data_root().to_path_buf();
-            let sessions_dir = tuners::util::data_path("sessions")
-                .to_string_lossy()
-                .into_owned();
-            let session_file = tuners::util::data_path("tune-session.txt")
-                .to_string_lossy()
-                .into_owned();
-            let journal_base = tuners::util::data_path("tune-journal.txt")
-                .to_string_lossy()
-                .into_owned();
-            let config = tuners::util::data_path(tuners::collect::CONFIG_PATH);
-            let outbox = tuners::util::data_path(tuners::collect::OUTBOX_DIR);
+            std::env::set_current_dir(tuners::util::data_root())?;
+            let root = PathBuf::from(".");
+            let sessions_dir = "sessions".to_string();
+            let session_file = "tune-session.txt".to_string();
+            let journal_base = "tune-journal.txt".to_string();
+            let config = PathBuf::from(tuners::collect::CONFIG_PATH);
+            let outbox = PathBuf::from(tuners::collect::OUTBOX_DIR);
             std::fs::create_dir_all(&sessions_dir).ok();
 
             let live: tuners::live::SharedLive = Default::default();
