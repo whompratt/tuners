@@ -154,6 +154,12 @@ fn advise(state: S) -> Result<api::AdviseView, api::ApiError> {
 
 #[tauri::command]
 #[specta::specta]
+fn effect_fields() -> Vec<api::EffectFieldView> {
+    api::effect_fields()
+}
+
+#[tauri::command]
+#[specta::specta]
 fn sharing(state: S) -> api::SharingView {
     api::sharing_view(&state.config, &state.outbox)
 }
@@ -246,6 +252,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             delete_stint,
             record_split,
             export_stint,
+            effect_fields,
         ])
         .events(tauri_specta::collect_events![
             LiveStateEvent,

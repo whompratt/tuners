@@ -27,6 +27,7 @@ export const commands = {
 	 *  save dialog frontend-side). Returns the bundle's canonical name.
 	 */
 	exportStint: (file: string, dest: string) => typedError<string, ApiError>(__TAURI_INVOKE("export_stint", { file, dest })),
+	effectFields: () => __TAURI_INVOKE<EffectFieldView[]>("effect_fields"),
 };
 
 /** Events */
@@ -105,6 +106,19 @@ export type CompareView = {
 	delta: (number | null)[],
 	unequalLaps: boolean,
 	carMismatch: boolean,
+};
+
+/**
+ *  One entry of the effect-field registry: stable key, display label, unit
+ *  hint ("" = plain number, "frac" = 0..1 shown as %), and the library noise
+ *  floor. The engine owns this list (`effects::FIELDS`) — the frontend must
+ *  never hand-copy it.
+ */
+export type EffectFieldView = {
+	key: string,
+	label: string,
+	unit: string,
+	floor: number | null,
 };
 
 export type ErrorKind = "badRequest" | "forbidden" | "notFound" | "conflict" | "internal";

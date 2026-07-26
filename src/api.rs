@@ -183,6 +183,31 @@ pub fn quality_view(q: Option<&crate::live::Quality>) -> Option<QualityView> {
     })
 }
 
+/// One entry of the effect-field registry: stable key, display label, unit
+/// hint ("" = plain number, "frac" = 0..1 shown as %), and the library noise
+/// floor. The engine owns this list (`effects::FIELDS`) — the frontend must
+/// never hand-copy it.
+#[derive(Serialize, Type, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectFieldView {
+    pub key: String,
+    pub label: String,
+    pub unit: String,
+    pub floor: f32,
+}
+
+pub fn effect_fields() -> Vec<EffectFieldView> {
+    crate::analysis::effects::FIELDS
+        .iter()
+        .map(|(key, label, unit)| EffectFieldView {
+            key: key.to_string(),
+            label: label.to_string(),
+            unit: unit.to_string(),
+            floor: crate::analysis::effects::noise_floor(key),
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------- sharing
 
 /// Telemetry-collection state (plan 009): consent flag, pseudonymous sender
