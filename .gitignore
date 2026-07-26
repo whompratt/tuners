@@ -5,6 +5,8 @@
 # telemetry collection (plan 009): received bundles + credentials stay local
 /inbox
 /receive-tokens.txt
+/outbox
+/tune-collect.txt
 worker/node_modules
 worker/.wrangler
 worker/.dev.vars

@@ -5,6 +5,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
+use std::time::Duration;
 
 pub fn run(
     port: u16,
@@ -33,6 +34,36 @@ pub fn run(
     } else {
         recorder.lock().unwrap().mode =
             crate::record::RecorderMode::External("disabled (--udp-port 0)".into());
+    }
+    {
+        // Drainer (plan 009 phase 2): uploads queued bundles only while
+        // telemetry is idle. Config is re-read every pass, so the dashboard
+        // toggle takes effect without a restart.
+        let live = live.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(60));
+                let cfg = crate::collect::CollectConfig::load(
+                    crate::collect::CONFIG_PATH.as_ref(),
+                );
+                if !cfg.ready() {
+                    continue;
+                }
+                let fresh = || {
+                    live.lock().unwrap().last_data.is_some_and(|t| {
+                        t.elapsed() < crate::collect::IDLE_BEFORE_DRAIN
+                    })
+                };
+                if fresh() {
+                    continue;
+                }
+                for line in
+                    crate::collect::drain(crate::collect::OUTBOX_DIR.as_ref(), &cfg, &fresh)
+                {
+                    println!("collect: {line}");
+                }
+            }
+        });
     }
     for stream in listener.incoming() {
         let dir = sessions_dir.clone();
@@ -130,6 +161,8 @@ fn handle(
             }
             out
         }
+        ("GET", "/api/collect") => ("200 OK", "application/json", collect_json()),
+        ("POST", "/api/collect") => collect_post(&form_params(&request_body)),
         ("GET", "/api/sessions") => (
             "200 OK",
             "application/json",
@@ -358,6 +391,62 @@ fn form_params(body: &str) -> Vec<(String, String)> {
 
 fn json_str(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Telemetry-collection state for the dashboard (plan 009): consent flag,
+/// pseudonymous sender id, and outbox depth.
+fn collect_json() -> String {
+    let cfg = crate::collect::CollectConfig::load(crate::collect::CONFIG_PATH.as_ref());
+    let outbox = Path::new(crate::collect::OUTBOX_DIR);
+    let rejected = std::fs::read_dir(outbox.join("rejected"))
+        .map(|rd| rd.flatten().count())
+        .unwrap_or(0);
+    format!(
+        "{{\"enabled\":{},\"endpoint\":{},\"sender\":{},\"queued\":{},\"rejected\":{rejected}}}",
+        cfg.enabled,
+        json_str(&cfg.endpoint),
+        if cfg.token.is_empty() {
+            "null".to_string()
+        } else {
+            json_str(&crate::collect::sender_id(&cfg.token))
+        },
+        crate::collect::queued(outbox).len(),
+    )
+}
+
+/// Toggle/configure collection. First enable mints the client token; the
+/// token itself never leaves the config file — the UI only ever sees the
+/// derived sender id. `discard=1` (with disable) empties the queue.
+fn collect_post(params: &[(String, String)]) -> (&'static str, &'static str, String) {
+    let get = |k: &str| params.iter().find(|(pk, _)| pk == k).map(|(_, v)| v.as_str());
+    let mut cfg = crate::collect::CollectConfig::load(crate::collect::CONFIG_PATH.as_ref());
+    match get("enabled") {
+        Some("1") => {
+            cfg.enabled = true;
+            if cfg.token.len() != 64 {
+                cfg.token = crate::collect::generate_token();
+            }
+            if let Some(e) = get("endpoint").filter(|e| !e.trim().is_empty()) {
+                cfg.endpoint = e.trim().to_string();
+            }
+            if cfg.endpoint.is_empty() {
+                cfg.endpoint = crate::collect::DEFAULT_ENDPOINT.to_string();
+            }
+        }
+        Some("0") => {
+            cfg.enabled = false;
+            if get("discard") == Some("1") {
+                for p in crate::collect::queued(crate::collect::OUTBOX_DIR.as_ref()) {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
+        _ => return ("400 Bad Request", "text/plain; charset=utf-8", "enabled=0|1 required".into()),
+    }
+    if let Err(e) = cfg.save(crate::collect::CONFIG_PATH.as_ref()) {
+        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+    }
+    ("200 OK", "application/json", collect_json())
 }
 
 /// The tuning session for the dashboard: car, facts, latest tune revision.

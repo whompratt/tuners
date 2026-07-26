@@ -197,6 +197,21 @@
             time. Start one whenever the car itself changes (upgrades/drivetrain), not just the tune.</span>
         </div>
         <div id="sess-list"></div>
+        <div id="collect-box" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+          <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+            <b>telemetry sharing</b>
+            <span id="collect-status" style="color:var(--muted)"></span>
+            <span style="flex:1"></span>
+            <button id="collect-toggle" class="btn"></button>
+          </div>
+          <div style="color:var(--muted);font-size:12px;margin-top:6px;max-width:640px">
+            When on, each finished stint is bundled and uploaded (only while telemetry is idle)
+            to help develop this tool: raw driving telemetry, setup values, and tune deltas.
+            No names, no free text — session names, descriptions, and journal notes are
+            stripped before anything leaves this machine. Off by default; turn it off any
+            time. Quote your sender id to have your data deleted.
+          </div>
+        </div>
       </div>
       <form id="session-form" style="display:none;margin-top:12px" onsubmit="return false">
         <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
@@ -1063,6 +1078,7 @@ $('sess-manage').onclick = async () => {
   const body = $('sess-body');
   if (body.style.display !== 'none') { body.style.display = 'none'; return; }
   await renderSessList();
+  await renderCollect();
   body.style.display = '';
 };
 async function renderSessList() {
@@ -1094,6 +1110,33 @@ async function renderSessList() {
     };
   }
 }
+// --- telemetry sharing (plan 009): consent toggle + queue status ---
+async function renderCollect() {
+  const d = await (await fetch('/api/collect')).json();
+  const bits = [];
+  if (d.enabled) {
+    bits.push(`on — sender ${d.sender}`);
+    bits.push(`${d.queued} bundle${d.queued === 1 ? '' : 's'} queued`);
+    if (d.rejected) bits.push(`${d.rejected} rejected (see outbox/rejected)`);
+  } else {
+    bits.push('off');
+    if (d.queued) bits.push(`${d.queued} still queued from before`);
+  }
+  $('collect-status').textContent = bits.join(' · ');
+  const btn = $('collect-toggle');
+  btn.textContent = d.enabled ? 'turn off' : 'turn on sharing';
+  btn.onclick = async () => {
+    const body = new URLSearchParams({ enabled: d.enabled ? '0' : '1' });
+    if (d.enabled && d.queued
+        && confirm(`${d.queued} bundle(s) are still queued.\n\nOK = delete them, Cancel = keep them (they upload if you re-enable).`)) {
+      body.set('discard', '1');
+    }
+    const r = await fetch('/api/collect', { method: 'POST', body });
+    if (!r.ok) { alert(await r.text()); return; }
+    await renderCollect();
+  };
+}
+
 $('sess-new-go').onclick = async () => {
   const body = new URLSearchParams();
   const n = $('sess-new-name').value.trim();

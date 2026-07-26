@@ -2,6 +2,7 @@ pub mod advise;
 pub mod analysis;
 pub mod bundle;
 pub mod capture;
+pub mod collect;
 pub mod cars;
 pub mod live;
 pub mod packet;

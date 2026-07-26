@@ -394,9 +394,17 @@ pub fn run_recorder(
                 Action::Close => {
                     writer = None;
                     last_closed_car = Some(open_car);
-                    let mut s = shared.lock().unwrap();
-                    s.mode = RecorderMode::Waiting;
-                    s.last_closed = s.file.take();
+                    let closed = {
+                        let mut s = shared.lock().unwrap();
+                        s.mode = RecorderMode::Waiting;
+                        s.last_closed = s.file.take();
+                        s.last_closed.clone()
+                    };
+                    // Finalization is the collection moment (plan 009): bundle
+                    // into the outbox on a worker thread, never inline.
+                    if let Some(path) = closed {
+                        crate::collect::maybe_enqueue(path, session_file.clone(), open_car);
+                    }
                 }
             }
         }
