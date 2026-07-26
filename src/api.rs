@@ -771,6 +771,56 @@ pub fn save_tune(
     })
 }
 
+/// One slider in the pending set: differs from the last DRIVEN revision.
+#[derive(Serialize, Type, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingChange {
+    pub key: String,
+    pub phrase: String,
+    pub from: Option<String>,
+    pub to: String,
+}
+
+/// The pending basket: tune edits saved since the last driven run, netted
+/// (the recorder's pending chain). None = the saved tune has been driven.
+#[derive(Serialize, Type, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingView {
+    /// The netted journal note the next run will be journaled under.
+    pub note: String,
+    pub changes: Vec<PendingChange>,
+}
+
+pub fn pending_view(
+    session_path: &Path,
+    recorder: &crate::record::SharedRecorder,
+) -> Option<PendingView> {
+    let (note, base_idx) = {
+        let r = recorder.lock().unwrap();
+        (r.pending_note.clone()?, r.pending_base_rev)
+    };
+    let s = crate::tuning::TuningSession::load(session_path);
+    let latest = s.latest()?.values.clone();
+    let base = base_idx.and_then(|i| s.revisions.get(i)).map(|r| &r.values);
+    let phrase = |k: &str| {
+        crate::tuning::FIELDS
+            .iter()
+            .find(|(key, _)| *key == k)
+            .map_or_else(|| k.to_string(), |(_, p)| p.to_string())
+    };
+    let changes = latest
+        .iter()
+        .filter(|(k, v)| base.and_then(|b| b.get(*k)) != Some(v))
+        .map(|(k, v)| PendingChange {
+            key: k.clone(),
+            phrase: phrase(k),
+            from: base.and_then(|b| b.get(k)).cloned(),
+            to: v.clone(),
+        })
+        .collect();
+    Some(PendingView { note, changes })
+}
+
 // -------------------------------------------------------------------- stints
 
 /// One recorded stint in the sessions directory.
@@ -1065,6 +1115,14 @@ pub enum OutcomeView {
 
 #[derive(Serialize, Type, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct StepFamilyView {
+    pub area: String,
+    /// Where this family's fingerprint is judged: "straights" | "entry" | "corners".
+    pub channel: String,
+}
+
+#[derive(Serialize, Type, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct RowAnchorView {
     pub vs_step: u32,
     pub areas: String,
@@ -1089,6 +1147,8 @@ pub struct StepView {
     /// Where the time moved vs the previous step: (entry, exit, straights).
     pub split: Option<(f32, f32, f32)>,
     pub anchor: Option<RowAnchorView>,
+    /// Families this step's note changed, each with its judged channel.
+    pub families: Vec<StepFamilyView>,
 }
 
 #[derive(Serialize, Type, Debug, Clone)]
@@ -1215,6 +1275,14 @@ pub fn advise_view(v: &crate::advise::AdviseView) -> AdviseView {
                     Err(e) => OutcomeView::NotComparable { error: e.clone() },
                 }),
                 split: s.split,
+                families: s
+                    .families
+                    .iter()
+                    .map(|f| StepFamilyView {
+                        area: f.area.to_string(),
+                        channel: f.channel.to_string(),
+                    })
+                    .collect(),
                 anchor: s.anchor.as_ref().map(|a| RowAnchorView {
                     vs_step: a.vs_step as u32,
                     areas: a.areas.clone(),

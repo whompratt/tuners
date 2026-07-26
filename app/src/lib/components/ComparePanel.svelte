@@ -119,10 +119,10 @@
       <div style="font-size:13px;color:var(--ink-2);margin-bottom:8px">cannot compare: {error}</div>
     {:else if cmpData}
       <div style="font-size:13px;color:var(--ink-2);margin-bottom:8px">
-        best lap: <span class="num">{word(cmpData.b.best - cmpData.a.best)}</span> · ideal (spliced):
+        best lap: <span class="num">{word(cmpData.b.best - cmpData.a.best)}</span> · optimal lap (spliced):
         <span class="num">{word(cmpData.b.ideal - cmpData.a.ideal)}</span>
         {#if cmpData.unequalLaps}
-          · <span style="color:var(--muted)">note: unequal lap counts bias the ideal toward the session with more laps</span>
+          · <span style="color:var(--muted)">note: unequal lap counts bias the optimal lap toward the run with more laps</span>
         {/if}
         {#if cmpData.carMismatch}
           · <span style="color:var(--muted)">note: different cars — this compares cars, not tunes</span>
@@ -145,7 +145,7 @@
         {#each [[A_COLOR, "A", cmpData.a], [B_COLOR, "B", cmpData.b]] as [c, tag, s] (tag)}
           <span>
             <span class="chip" style="background:{c}"></span>{tag}: {(s as typeof cmpData.a).file.split("/").pop()} —
-            best <span class="num">{fmtLap((s as typeof cmpData.a).best)}</span>, ideal
+            best <span class="num">{fmtLap((s as typeof cmpData.a).best)}</span>, optimal
             <span class="num">{fmtLap((s as typeof cmpData.a).ideal)}</span> ({(s as typeof cmpData.a).laps} laps)
           </span>
         {/each}

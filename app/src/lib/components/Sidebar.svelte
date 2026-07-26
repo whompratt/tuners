@@ -35,14 +35,14 @@
   <h1>tuners <span>FH6 tuning assistant</span></h1>
   {#if app.stints.length}
     <select id="car-filter" bind:value={app.carFilter}>
-      <option value="all">all cars ({app.stints.length} stints)</option>
+      <option value="all">all cars ({app.stints.length} runs)</option>
       {#each cars as [ord, name] (ord)}
         <option value={String(ord)}>{name}</option>
       {/each}
     </select>
     <div id="sessions">
       {#if !split.shown.length && !split.earlier.length}
-        <div class="placeholder">no stints for this car</div>
+        <div class="placeholder">no runs for this car</div>
       {/if}
       {#each split.shown as s (s.file)}
         <div
@@ -67,11 +67,11 @@
               onclick={(e) => { e.stopPropagation(); pick("b", s.file); }}>B</button>
             <button
               class="exp"
-              title="export telemetry bundle (raw stint + tune history, no free text)"
+              title="export telemetry bundle (raw run + setup history, no free text)"
               onclick={(e) => { e.stopPropagation(); exportBundle(s.file); }}>⇩</button>
             <button
               class="del"
-              title="delete this stint"
+              title="delete this run"
               onclick={(e) => { e.stopPropagation(); deleteStint(s.file); }}>×</button>
           </span>
         </div>
@@ -85,7 +85,7 @@
           tabindex="0"
           onkeydown={(e) => e.key === "Enter" && (app.showEarlierStints = true)}
         >
-          show {split.earlier.length} stint{split.earlier.length === 1 ? "" : "s"} from earlier sessions of this car
+          show {split.earlier.length} run{split.earlier.length === 1 ? "" : "s"} from earlier projects with this car
         </div>
       {:else if app.showEarlierStints && app.session && String(app.session.car) === app.carFilter}
         <div
@@ -96,12 +96,12 @@
           tabindex="0"
           onkeydown={(e) => e.key === "Enter" && (app.showEarlierStints = false)}
         >
-          hide earlier-session stints
+          hide earlier-project runs
         </div>
       {/if}
     </div>
   {:else}
-    <div class="placeholder">no stint recordings yet — drive with the app running</div>
+    <div class="placeholder">no recorded runs yet — drive with the app running</div>
   {/if}
   <label class="adv-toggle" title="expand expert detail (evidence, measurements) by default">
     <input type="checkbox" style="width:auto" checked={advanced.on} onchange={toggleAdvanced} />

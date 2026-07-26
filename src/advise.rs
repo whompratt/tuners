@@ -9,6 +9,15 @@ use crate::analysis::{self, effects, journal};
 use crate::tuning::TuningSession;
 use std::path::Path;
 
+/// A changed family on a step, with the road its fingerprint is judged on
+/// (attribution's channel: gearing = straights, brakes = entry, everything
+/// else the corner total) — feeds the frontend's consequence sentence
+/// without prose parsing.
+pub struct StepFamily {
+    pub area: &'static str,
+    pub channel: &'static str,
+}
+
 pub struct StepView {
     pub path: String,
     pub laps: usize,
@@ -29,6 +38,8 @@ pub struct StepView {
     /// is NOT the previous step (chained experiments make the neighbor
     /// comparison compound while a shared baseline is the clean A/B).
     pub anchor: Option<RowAnchor>,
+    /// Families this step's note changed, each with its judged channel.
+    pub families: Vec<StepFamily>,
 }
 
 /// Compact per-row anchor: comparison against the prior stint with the
@@ -796,6 +807,20 @@ pub fn advise(
             outcome,
             split,
             anchor: None,
+            families: {
+                let mut fams: Vec<journal::Family> = changes[i].iter().map(|c| c.family).collect();
+                fams.dedup();
+                fams.into_iter()
+                    .map(|f| StepFamily {
+                        area: journal::family_area(f),
+                        channel: match f {
+                            journal::Family::Gearing => "straights",
+                            journal::Family::Brakes => "entry",
+                            _ => "corners",
+                        },
+                    })
+                    .collect()
+            },
         });
     }
 

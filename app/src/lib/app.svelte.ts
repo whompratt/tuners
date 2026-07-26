@@ -4,9 +4,11 @@
 
 import {
   commands,
+  type AdviseView,
   type ApiError,
   type LapsView,
   type LiveStateView,
+  type PendingView,
   type QualityView,
   type SessionView,
   type StintRow,
@@ -47,9 +49,37 @@ export const app = $state({
   showEarlierStints: false,
   // bumped whenever unit prefs change so unit-dependent markup re-renders
   unitsTick: 0,
+  // Advice is app-wide state: Home renders it imperatively, Setup spatially,
+  // Analysis evidentially — one reconciled list, three registers.
+  advice: null as AdviseView | null,
+  adviceError: "",
+  adviceLoading: false,
+  // The pending basket: tune edits saved since the last driven run.
+  pending: null as PendingView | null,
 });
 
 export const errMsg = (e: ApiError): string => e.message;
+
+export async function loadAdvice() {
+  app.adviceLoading = true;
+  app.adviceError = "";
+  // Fresh session state first: accepted-value detection compares against the
+  // LATEST version, which an accept just changed.
+  await loadSession();
+  await loadPending();
+  const r = await commands.advise();
+  app.adviceLoading = false;
+  if (r.status === "error") {
+    app.advice = null;
+    app.adviceError = r.error.message;
+    return;
+  }
+  app.advice = r.data;
+}
+
+export async function loadPending() {
+  app.pending = await commands.pending();
+}
 
 export async function loadStints(resetFilter: boolean) {
   app.stints = await commands.stints();
@@ -94,7 +124,7 @@ export function pick(side: "a" | "b", file: string) {
 export async function deleteStint(file: string) {
   const name = file.split("/").pop()!;
   const ok = await confirmDialog({
-    title: "Delete stint",
+    title: "Delete run",
     body: `Delete ${name}?\n\nThis cannot be undone.`,
     verb: "Delete",
     cancel: "Keep",
@@ -106,7 +136,7 @@ export async function deleteStint(file: string) {
     // Journaled stint: the engine wants an explicit force. Advice survives
     // (the step is skipped, its note merged forward) but loses a measurement.
     const force = await confirmDialog({
-      title: "Journaled stint",
+      title: "Run is in the history",
       body: `${r.error.message}\n\nDelete anyway?`,
       verb: "Delete anyway",
       cancel: "Keep",

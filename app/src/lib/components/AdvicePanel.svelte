@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { app, loadSession, show } from "$lib/app.svelte";
+  import { app, loadAdvice, loadPending, show } from "$lib/app.svelte";
+  import { isAccepted } from "$lib/advice";
   import { advanced } from "$lib/advanced.svelte";
-  import { commands, type AdviseView } from "$lib/bindings";
+  import { commands } from "$lib/bindings";
   import { fmtLap } from "$lib/units";
   import { drawLandscape, landscapeLayout, type LandscapeData } from "$lib/charts/landscape";
   import { palette } from "$lib/charts/palette";
@@ -18,9 +19,9 @@
     low: "var(--muted)",
   };
 
-  let a: AdviseView | null = $state(null);
-  let error = $state("");
-  let loading = $state(false);
+  let a = $derived(app.advice);
+  let error = $derived(app.adviceError);
+  let loading = $derived(app.adviceLoading);
   let acceptNote = $state("");
   let histSel = $state(0);
 
@@ -31,48 +32,24 @@
   const fl = (v: number | null) => fmtLap(N(v));
   const base = (p: string) => p.split("/").pop();
 
-  async function loadAdvice() {
-    loading = true;
-    error = "";
+  async function refresh() {
     acceptNote = "";
-    // Fresh session state first: accepted-value detection below compares
-    // against the LATEST revision, which an accept just changed.
-    await loadSession();
-    const r = await commands.advise();
-    loading = false;
-    if (r.status === "error") {
-      a = null;
-      error = r.error.message;
-      return;
-    }
-    a = r.data;
     histSel = 0;
-  }
-
-  // A suggestion whose values already sit on the latest saved revision is
-  // accepted-but-undriven: show it as pending instead of re-acceptable
-  // (suggestions are judged against the last STINT's setup, so it still
-  // renders until that stint is driven).
-  function isAccepted(apply: [string, string][]): boolean {
-    const latest = app.session?.latest;
-    return (
-      !!apply.length &&
-      !!latest &&
-      apply.every(([k, v]) => latest[k] != null && Math.abs(parseFloat(latest[k]) - parseFloat(v)) < 1e-3)
-    );
+    await loadAdvice();
   }
 
   async function accept(apply: [string, string][]) {
     const r = await commands.saveTune(apply, true);
     if (r.status === "error") {
-      error = r.error.message;
+      acceptNote = ` · ${r.error.message}`;
       return;
     }
-    // Recompute against the new revision: the accepted suggestion comes
-    // back marked "saved", and no stale absolute can be accepted twice.
+    // Recompute against the new version: the accepted suggestion comes back
+    // marked "saved", and no stale absolute can be accepted twice.
     const note = r.data.note;
+    await loadPending();
     await loadAdvice();
-    if (note) acceptNote = ` · journaled: ${note} — attaches to the next stint`;
+    if (note) acceptNote = ` · recorded: ${note} — attaches to the next run`;
   }
 
   let asks = $derived.by(() =>
@@ -111,16 +88,16 @@
     <span style="color:var(--muted);font-size:13px">
       {#if a}
         {a.journal
-          ? `journal: ${a.journal}`
-          : "no journal yet — blind advice on the latest stint (the journal starts with your first tune change)"}{acceptNote}
+          ? `history: ${a.journal}`
+          : "no history yet — it starts with your first setup change"}{acceptNote}
       {/if}
     </span>
     <span style="flex:1"></span>
-    <button class="btn btn-go" onclick={loadAdvice}>get advice</button>
+    <button class="btn btn-go" onclick={refresh}>refresh advice</button>
   </div>
   <div style="margin-top:10px">
     {#if loading}
-      <span class="placeholder">analyzing all journaled stints…</span>
+      <span class="placeholder">analyzing all recorded runs…</span>
     {:else if error}
       <span class="placeholder">{error}</span>
     {:else if a}
@@ -128,7 +105,7 @@
         <table class="adv-table">
           <thead>
             <tr>
-              <th></th><th>stint</th><th>laps</th><th>best</th><th>ideal</th><th>balance</th><th>change</th>
+              <th></th><th>run</th><th>laps</th><th>best</th><th>optimal</th><th>balance</th><th>change</th>
               <th>pos F/R</th><th>outcome</th>
               <th title="corner-entry share of the delta">entry</th>
               <th title="corner-exit share of the delta">exit</th>
@@ -209,13 +186,13 @@
       {/if}
       {#if a.inProgress}
         <div style="margin-top:6px;font-size:13px;color:var(--muted)">
-          {base(a.inProgress)} is journaled but has no completed laps yet — its step joins the trajectory once a lap
+          {base(a.inProgress)} is in the history but has no completed laps yet — its step joins the trajectory once a lap
           completes
         </div>
       {/if}
       {#each a.missing as p (p)}
         <div style="margin-top:6px;font-size:13px;color:var(--muted)">
-          {base(p)} is journaled but its recording was deleted — skipped; its tune change merged into the next step
+          {base(p)} is in the history but its recording was deleted — skipped; its setup change merged into the next step
         </div>
       {/each}
       {#if a.anchor}
@@ -299,7 +276,7 @@
         advice for {base(a.adviceFor)}:
         {#if asks > 1}
           <span title="applying several suggested values at once cannot be separated afterwards — especially probes">
-            suggestions are alternatives — apply ONE per stint, drive, re-advise
+            suggestions are alternatives — apply ONE per run, drive, refresh
           </span>
         {/if}
       </div>
@@ -310,14 +287,14 @@
               <span class="adv-conf" style="color:{CONF_COLOR[r.confidence]}">[{r.confidence}]</span>
               {#if r.suggestion}<b>{r.suggestion}</b> — {r.advice}{:else}<b>{r.area}</b>: {r.advice}{/if}
               {#if r.apply.length}
-                {#if isAccepted(r.apply)}
+                {#if isAccepted(r.apply as [string, string][], app.session?.latest)}
                   <span
                     style="color:var(--muted);font-size:12px"
-                    title="this value is saved on the tune and journals against the next stint">saved — drive a stint</span>
+                    title="this value is saved on the setup and records against the next run">saved — drive a run</span>
                 {:else}
                   <button
                     class="btn"
-                    title="save this value onto the current tune — a partial save; accepts before the next stint net into one journal note"
+                    title="save this value onto the current setup — applies before the next run net into one history entry"
                     onclick={(e) => { e.preventDefault(); e.stopPropagation(); accept(r.apply); }}>apply</button>
                 {/if}
               {/if}
@@ -330,7 +307,7 @@
           </details>
         {/each}
       {:else}
-        <div class="adv-rec">no recommendations — nothing in this stint stood out</div>
+        <div class="adv-rec">no recommendations — nothing in this run stood out</div>
       {/if}
     {/if}
   </div>

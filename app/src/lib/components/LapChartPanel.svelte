@@ -64,7 +64,7 @@
         </span>
       {/each}
       {#if app.lapData.corroborated.length > 1}
-        <span style="color:var(--muted)">strip under chart: ideal-lap corroboration (green = a second lap agrees)</span>
+        <span style="color:var(--muted)">strip under chart: optimal-lap corroboration (green = a second lap agrees)</span>
       {/if}
     </div>
     <Chart height={320} {draw} {onmove} onleave={() => (hoverBin = null)}>

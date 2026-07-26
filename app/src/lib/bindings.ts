@@ -28,6 +28,11 @@ export const commands = {
 	 */
 	exportStint: (file: string, dest: string) => typedError<string, ApiError>(__TAURI_INVOKE("export_stint", { file, dest })),
 	effectFields: () => __TAURI_INVOKE<EffectFieldView[]>("effect_fields"),
+	pending: () => __TAURI_INVOKE<{
+	/**  The netted journal note the next run will be journaled under. */
+	note: string,
+	changes: PendingChange[],
+} | null>("pending"),
 };
 
 /** Events */
@@ -209,6 +214,24 @@ export type MeasurementView = {
 
 export type OutcomeView = ({ word: string; deltaS: number | null; unequalLaps: boolean }) & { error?: never } | ({ error: string }) & { deltaS?: never; unequalLaps?: never; word?: never };
 
+/**  One slider in the pending set: differs from the last DRIVEN revision. */
+export type PendingChange = {
+	key: string,
+	phrase: string,
+	from: string | null,
+	to: string,
+};
+
+/**
+ *  The pending basket: tune edits saved since the last driven run, netted
+ *  (the recorder's pending chain). None = the saved tune has been driven.
+ */
+export type PendingView = {
+	/**  The netted journal note the next run will be journaled under. */
+	note: string,
+	changes: PendingChange[],
+};
+
 /**
  *  Data-quality summary, emitted only when it changes; None until a
  *  comparable lap exists.
@@ -314,6 +337,12 @@ export type SharingView = {
 	rejected: number,
 };
 
+export type StepFamilyView = {
+	area: string,
+	/**  Where this family's fingerprint is judged: "straights" | "entry" | "corners". */
+	channel: string,
+};
+
 export type StepView = {
 	path: string,
 	laps: number,
@@ -328,6 +357,8 @@ export type StepView = {
 	/**  Where the time moved vs the previous step: (entry, exit, straights). */
 	split: [number | null, number | null, number | null] | null,
 	anchor: RowAnchorView | null,
+	/**  Families this step's note changed, each with its judged channel. */
+	families: StepFamilyView[],
 };
 
 /**  One recorded stint in the sessions directory. */

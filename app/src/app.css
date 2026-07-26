@@ -191,3 +191,91 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
   margin-top: 14px; font-size: 13px; color: var(--muted);
   display: flex; align-items: center; gap: 6px; cursor: pointer;
 }
+
+/* --- navigation rail (phase 3) --- */
+.rail {
+  width: 92px; flex: none; border-right: 1px solid var(--border);
+  padding: 16px 10px; display: flex; flex-direction: column; gap: 4px;
+}
+.rail-brand {
+  font-weight: 700; color: var(--ink); font-size: 16px;
+  padding: 0 8px 12px;
+}
+.rail a {
+  display: block; padding: 7px 8px; border-radius: var(--radius-sm);
+  color: var(--muted); text-decoration: none; font-size: 14px;
+}
+.rail a:hover { color: var(--ink); }
+.rail a.active { background: var(--surface); color: var(--ink); }
+
+/* --- screen scaffolding --- */
+.screen { flex: 1; padding: 16px 24px; overflow: auto; }
+.screen-cols { flex: 1; display: flex; min-width: 0; }
+.screen-cols > main { flex: 1; }
+
+/* --- setup family cards --- */
+.fam-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px; align-items: start;
+}
+.fam-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px;
+}
+.fam-card.priority { border-color: var(--accent); }
+.fam-card h3 {
+  font-size: 13px; font-weight: 600; color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.fam-card h3 .badge { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.fam-row {
+  display: flex; align-items: center; gap: 8px; padding: 2px 0;
+  font-size: 14px;
+}
+.fam-row .lbl { color: var(--muted); flex: 1; }
+.fam-row input {
+  width: 88px; text-align: right; background: var(--page); color: var(--ink);
+  border: 1px solid transparent; border-radius: 4px; padding: 3px 6px;
+  font: 14px var(--font-ui); font-variant-numeric: tabular-nums;
+}
+.fam-row input:hover { border-color: var(--border); }
+.fam-row input:focus { border-color: var(--accent); outline: none; }
+.fam-row input.dirty { border-color: var(--accent); }
+.fam-row .unit { color: var(--muted); font-size: 12px; width: 52px; }
+.fam-sub { margin-top: 8px; font-size: 13px; border-top: 1px solid var(--border); padding-top: 8px; }
+.fam-sub.muted { color: var(--muted); }
+.pending-bar {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 14px; font-size: 14px;
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+}
+
+/* --- home hero --- */
+.hero { font-size: 22px; color: var(--ink); line-height: 1.4; }
+.hero .ok { color: var(--ok); }
+.hero .bad { color: var(--danger); }
+.hero .meh { color: var(--muted); }
+.next-action {
+  margin-top: 14px; padding: 14px 16px; border: 1px solid var(--accent);
+  border-radius: var(--radius); background: var(--surface); font-size: 15px;
+}
+.banner {
+  border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 12px;
+  font-size: 13px; color: var(--ink-2);
+}
+
+/* --- drive screen big type --- */
+.drive-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 24px 32px; align-items: center; margin-top: 18px;
+}
+.drive-grid .readout .value { font-size: 72px; }
+.drive-grid .readout.minor .value { font-size: 44px; }
+.drive-grid .temps { grid-template-columns: repeat(2, 96px); }
+.drive-grid .temps div { font-size: 24px; padding: 8px 0; }
+.drive-grid .readout .trow { font-size: 26px; }
+.drive-grid .readout .trow .num { font-size: 30px; }

@@ -154,6 +154,12 @@ fn advise(state: S) -> Result<api::AdviseView, api::ApiError> {
 
 #[tauri::command]
 #[specta::specta]
+fn pending(state: S) -> Option<api::PendingView> {
+    api::pending_view(state.session_file.as_ref(), &state.recorder)
+}
+
+#[tauri::command]
+#[specta::specta]
 fn effect_fields() -> Vec<api::EffectFieldView> {
     api::effect_fields()
 }
@@ -253,6 +259,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             record_split,
             export_stint,
             effect_fields,
+            pending,
         ])
         .events(tauri_specta::collect_events![
             LiveStateEvent,
