@@ -1,5 +1,6 @@
 pub mod advise;
 pub mod analysis;
+pub mod bundle;
 pub mod capture;
 pub mod cars;
 pub mod live;

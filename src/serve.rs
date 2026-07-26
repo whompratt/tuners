@@ -87,6 +87,12 @@ fn handle(
         serve_sse(stream, live, recorder);
         return;
     }
+    // Binary response (the rest of the API is text) — handled outside the match.
+    if target.split('?').next() == Some("/api/export") {
+        let query = target.split_once('?').map(|(_, q)| q).unwrap_or("");
+        serve_export(stream, sessions_dir, query_param(query, "file"), session_file);
+        return;
+    }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let session_path = Path::new(session_file);
     let (status, content_type, body) = match (method, path) {
@@ -150,6 +156,42 @@ fn handle(
         body.len(),
     );
     let _ = stream.write_all(body.as_bytes());
+}
+
+/// The manual-export path (plan 009): build the stint's telemetry bundle and
+/// hand it to the browser as a download. The bundler self-verifies, so a 200
+/// here is a bundle that already round-tripped.
+fn serve_export(mut stream: TcpStream, sessions_dir: &str, file: Option<String>, session_file: &str) {
+    let result = (|| -> Result<(String, Vec<u8>), String> {
+        let file = file.ok_or("missing ?file= parameter")?;
+        if !file.ends_with(".ftel") || file.contains('/') || file.contains('\\') {
+            return Err("file must be a bare .ftel name from the sessions directory".into());
+        }
+        let session = crate::tuning::TuningSession::load(Path::new(session_file));
+        let journal_path = crate::tuning::journal_path_for(session.car, "tune-journal.txt");
+        let journal = std::fs::read_to_string(&journal_path).unwrap_or_default();
+        crate::bundle::build(&Path::new(sessions_dir).join(&file), &session, &journal)
+    })();
+    match result {
+        Ok((name, bytes)) => {
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\
+                 Content-Disposition: attachment; filename=\"{name}\"\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len(),
+            );
+            let _ = stream.write_all(&bytes);
+        }
+        Err(e) => {
+            let _ = write!(
+                stream,
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{e}",
+                e.len(),
+            );
+        }
+    }
 }
 
 /// SSE relay of the live session (plan 006 phase 4): a `state` event ~4x/s with

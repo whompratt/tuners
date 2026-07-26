@@ -425,6 +425,7 @@ function renderSessions() {
       `<span class="size">${(s.bytes / 1e6).toFixed(1)} MB</span>` +
       `<span class="ab"><button data-side="a" title="compare as A">A</button>` +
       `<button data-side="b" title="compare as B">B</button>` +
+      `<button class="exp" title="export telemetry bundle (raw stint + tune history, no free text)">⇩</button>` +
       `<button class="del" title="delete this stint">×</button></span>`;
     if (s.file === sel.a) el.querySelector('[data-side=a]').classList.add('on-a');
     if (s.file === sel.b) el.querySelector('[data-side=b]').classList.add('on-b');
@@ -433,6 +434,7 @@ function renderSessions() {
       btn.onclick = ev => { ev.stopPropagation(); pick(btn.dataset.side, s.file, btn); };
     });
     el.querySelector('.del').onclick = ev => { ev.stopPropagation(); deleteStint(s.file); };
+    el.querySelector('.exp').onclick = ev => { ev.stopPropagation(); exportBundle(s.file); };
     list.appendChild(el);
   }
   if (earlier.length) {
@@ -450,6 +452,19 @@ function renderSessions() {
     el.onclick = () => { showEarlierStints = false; renderSessions(); };
     list.appendChild(el);
   }
+}
+
+async function exportBundle(file) {
+  const name = file.split('/').pop();
+  const resp = await fetch(`/api/export?file=${encodeURIComponent(name)}`);
+  if (!resp.ok) { alert(`export failed: ${await resp.text()}`); return; }
+  const blob = await resp.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = ((resp.headers.get('content-disposition') || '').match(/filename="([^"]+)"/) || [])[1]
+    || 'bundle.tar.zst';
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 async function deleteStint(file) {

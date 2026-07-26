@@ -34,6 +34,10 @@ USAGE:
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
                     send synthetic telemetry (stand-in for the game); timescale
                     compresses in-game time for headless lap testing
+  tuners export   <stint-file> [--out .]
+                    write the stint's telemetry-collection bundle
+                    (bundle-<car>-<stamp>.tar.zst: raw recording + free-text-
+                    stripped session/journal) for manual sharing or upload
   tuners receive  [--port 8090] [--bind 127.0.0.1] [--root inbox]
                   [--tokens receive-tokens.txt] [--blocklist receive-blocklist.txt]
                   [--max-mb 64] [--daily-mb 512] [--global-mb 20480]
@@ -70,6 +74,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "serve" => cmd_serve(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "receive" => cmd_receive(&args[1..]),
+        "export" => cmd_export(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
             Ok(())
@@ -418,6 +423,36 @@ fn cmd_simulate(args: &[String]) -> Result<(), String> {
         }
     }
     simulate::run(&opts).map_err(|e| e.to_string())
+}
+
+fn cmd_export(args: &[String]) -> Result<(), String> {
+    let mut out_dir = ".".to_string();
+    let mut stint: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--out" => out_dir = value(a, it.next())?.clone(),
+            _ if stint.is_none() => stint = Some(a.clone()),
+            other => return Err(format!("unexpected argument '{other}' for export")),
+        }
+    }
+    let stint = stint.ok_or("usage: tuners export <stint-file> [--out dir]")?;
+    let session = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
+    let journal_path = tuners::tuning::journal_path_for(session.car, "tune-journal.txt");
+    let journal = std::fs::read_to_string(&journal_path).unwrap_or_default();
+    let raw_len = std::fs::metadata(&stint).map(|m| m.len()).unwrap_or(0);
+
+    let (name, bytes) = tuners::bundle::build(stint.as_ref(), &session, &journal)?;
+    let path = std::path::Path::new(&out_dir).join(&name);
+    std::fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    println!(
+        "{} ({:.1} MB from {:.1} MB raw, {:.1}x, self-verified; journal: {journal_path})",
+        path.display(),
+        bytes.len() as f64 / 1e6,
+        raw_len as f64 / 1e6,
+        raw_len as f64 / bytes.len() as f64,
+    );
+    Ok(())
 }
 
 fn cmd_receive(args: &[String]) -> Result<(), String> {
