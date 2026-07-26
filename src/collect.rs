@@ -42,7 +42,9 @@ impl CollectConfig {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let Some((k, v)) = line.split_once('=') else { continue };
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
             match (k.trim(), v.trim()) {
                 ("enabled", v) => cfg.enabled = v == "on" || v == "true" || v == "1",
                 ("endpoint", v) => cfg.endpoint = v.to_string(),
@@ -123,8 +125,7 @@ pub fn maybe_enqueue(stint_path: PathBuf, session_file: PathBuf, car: i32) {
             );
             return;
         }
-        let journal_path =
-            crate::tuning::journal_path_for(session.car, "tune-journal.txt");
+        let journal_path = crate::tuning::journal_path_for(session.car, "tune-journal.txt");
         let journal = std::fs::read_to_string(&journal_path).unwrap_or_default();
         match enqueue(OUTBOX_DIR.as_ref(), &stint_path, &session, &journal) {
             Ok(Some(p)) => println!("collect: queued {}", p.display()),
@@ -188,7 +189,11 @@ pub fn drain(
             log.push("drain paused: telemetry active".into());
             break;
         }
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         match upload(&cfg.endpoint, &cfg.token, &path) {
             Ok(code) if (200..300).contains(&code) => {
                 let _ = std::fs::remove_file(&path);
@@ -212,7 +217,9 @@ pub fn drain(
                 let rejected = outbox.join("rejected");
                 let _ = std::fs::create_dir_all(&rejected);
                 let _ = std::fs::rename(&path, rejected.join(&name));
-                log.push(format!("{name}: endpoint says {code} — moved to outbox/rejected"));
+                log.push(format!(
+                    "{name}: endpoint says {code} — moved to outbox/rejected"
+                ));
             }
             // Caps, server trouble, offline: everything waits for the next pass.
             Ok(code) => {
@@ -233,7 +240,10 @@ pub fn drain(
 fn sent_names(outbox: &Path) -> std::collections::BTreeSet<String> {
     std::fs::read_to_string(outbox.join("sent.txt"))
         .map(|t| {
-            t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
+            t.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect()
         })
         .unwrap_or_default()
 }
@@ -264,16 +274,16 @@ fn campaign_pairs(root: &Path) -> Vec<(PathBuf, PathBuf)> {
     let session = TuningSession::load(&active);
     if session.car.is_some() {
         let base = root.join("tune-journal.txt");
-        let journal =
-            crate::tuning::journal_path_for(session.car, &base.to_string_lossy());
+        let journal = crate::tuning::journal_path_for(session.car, &base.to_string_lossy());
         out.push((active, PathBuf::from(journal)));
     }
     let mut archived = Vec::new();
     if let Ok(rd) = std::fs::read_dir(root) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if let Some(id) =
-                name.strip_prefix("tune-session-").and_then(|n| n.strip_suffix(".txt"))
+            if let Some(id) = name
+                .strip_prefix("tune-session-")
+                .and_then(|n| n.strip_suffix(".txt"))
             {
                 archived.push((e.path(), root.join(format!("tune-journal-{id}.txt"))));
             }
@@ -291,7 +301,9 @@ pub fn history_plan(root: &Path, sessions_dir: &str, outbox: &Path) -> HistoryPl
     for (spath, jpath) in campaign_pairs(root) {
         let session = TuningSession::load(&spath);
         let Some(car) = session.car else { continue };
-        let Ok(jtext) = std::fs::read_to_string(&jpath) else { continue };
+        let Ok(jtext) = std::fs::read_to_string(&jpath) else {
+            continue;
+        };
         let mut used = false;
         for entry in crate::analysis::journal::parse_journal(&jtext) {
             let stint = root.join(&entry.path);
@@ -299,7 +311,9 @@ pub fn history_plan(root: &Path, sessions_dir: &str, outbox: &Path) -> HistoryPl
                 continue; // parked/resumed campaigns can list a stint twice
             }
             let Ok(md) = stint.metadata() else { continue }; // recording deleted
-            let Ok(name) = crate::bundle::bundle_name(car, &stint) else { continue };
+            let Ok(name) = crate::bundle::bundle_name(car, &stint) else {
+                continue;
+            };
             if sent.contains(&name) || outbox.join(&name).exists() {
                 plan.already += 1;
                 continue;
@@ -353,7 +367,11 @@ pub fn history_enqueue(plan: HistoryPlan, outbox: &Path) -> usize {
 fn upload(endpoint: &str, token: &str, path: &Path) -> Result<u16, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let sha = crate::util::sha256_hex(&bytes);
-    let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     let url = format!("{}/v1/bundle/{name}", endpoint.trim_end_matches('/'));
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
     let out = Command::new("curl")
@@ -377,7 +395,10 @@ fn upload(endpoint: &str, token: &str, path: &Path) -> Result<u16, String> {
         ])
         .output()
         .map_err(|e| format!("curl not runnable: {e}"))?;
-    let code = String::from_utf8_lossy(&out.stdout).trim().parse::<u16>().unwrap_or(0);
+    let code = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u16>()
+        .unwrap_or(0);
     if code == 0 {
         return Err(format!(
             "no response ({})",
@@ -415,7 +436,10 @@ mod tests {
         let (a, b) = (generate_token(), generate_token());
         for t in [&a, &b] {
             assert_eq!(t.len(), 64);
-            assert!(t.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+            assert!(
+                t.bytes()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+            );
         }
         assert_ne!(a, b);
         // Same derivation the endpoint uses (pinned in tests/receive.rs too).

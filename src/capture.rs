@@ -1,6 +1,6 @@
 //! UDP capture: receive Data Out packets, record them raw, show a live status line.
 
-use crate::packet::{self, TelemetryFrame, PACKET_LEN};
+use crate::packet::{self, PACKET_LEN, TelemetryFrame};
 use crate::stint::StintWriter;
 use crate::util;
 use std::collections::HashSet;
@@ -20,14 +20,18 @@ pub struct CaptureOpts {
 
 pub fn run(opts: &CaptureOpts) -> io::Result<PathBuf> {
     let socket = UdpSocket::bind(("0.0.0.0", opts.port)).map_err(|e| {
-        io::Error::new(e.kind(), format!("cannot listen on UDP port {}: {e}", opts.port))
+        io::Error::new(
+            e.kind(),
+            format!("cannot listen on UDP port {}: {e}", opts.port),
+        )
     })?;
     socket.set_read_timeout(Some(Duration::from_millis(500)))?;
 
     std::fs::create_dir_all(&opts.out_dir)?;
-    let path = opts
-        .out_dir
-        .join(format!("stint-{}.ftel", util::utc_stamp(unix_now().as_secs())));
+    let path = opts.out_dir.join(format!(
+        "stint-{}.ftel",
+        util::utc_stamp(unix_now().as_secs())
+    ));
     let mut writer = StintWriter::create(&path)?;
 
     println!("listening on 0.0.0.0:{} (udp)", opts.port);
@@ -65,7 +69,12 @@ pub fn run(opts: &CaptureOpts) -> io::Result<PathBuf> {
                     break;
                 }
             }
-            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
                 if writer.packets() == 0 {
                     print!(
                         "\r[waiting] no packets yet on port {} ({}s)  ",

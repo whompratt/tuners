@@ -6,7 +6,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use tuners::receive::{run_listener, ReceiveConfig};
+use tuners::receive::{ReceiveConfig, run_listener};
 use tuners::util::sha256_hex;
 
 struct Server {
@@ -98,8 +98,10 @@ fn stored_files(root: &Path) -> Vec<String> {
     let Ok(rd) = std::fs::read_dir(root.join("friend-1")) else {
         return Vec::new();
     };
-    let mut names: Vec<String> =
-        rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mut names: Vec<String> = rd
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
     names.sort();
     names
 }
@@ -110,23 +112,41 @@ fn upload_store_and_dedupe() {
     let body = b"pretend this is a tar.zst bundle";
     let hash16 = &sha256_hex(body)[..16];
 
-    let (status, resp) = put(srv.addr, "bundle-2793-20260725-191508.tar.zst", Some("secrettoken"), body);
+    let (status, resp) = put(
+        srv.addr,
+        "bundle-2793-20260725-191508.tar.zst",
+        Some("secrettoken"),
+        body,
+    );
     assert_eq!(status, 200, "{resp}");
     let expect_name = format!("bundle-2793-20260725-191508-{hash16}.tar.zst");
-    assert!(resp.contains(&format!("\"stored\":\"friend-1/{expect_name}\"")), "{resp}");
+    assert!(
+        resp.contains(&format!("\"stored\":\"friend-1/{expect_name}\"")),
+        "{resp}"
+    );
     assert!(resp.contains("\"duplicate\":false"), "{resp}");
     assert_eq!(stored_files(&srv.root), vec![expect_name.clone()]);
     let on_disk = std::fs::read(srv.root.join("friend-1").join(&expect_name)).unwrap();
     assert_eq!(on_disk, body);
 
     // Retrying the same upload is idempotent: acknowledged, not re-stored.
-    let (status, resp) = put(srv.addr, "bundle-2793-20260725-191508.tar.zst", Some("secrettoken"), body);
+    let (status, resp) = put(
+        srv.addr,
+        "bundle-2793-20260725-191508.tar.zst",
+        Some("secrettoken"),
+        body,
+    );
     assert_eq!(status, 200);
     assert!(resp.contains("\"duplicate\":true"), "{resp}");
     assert_eq!(stored_files(&srv.root).len(), 1);
 
     // Same stamp, different content (a re-cut stint) stores alongside.
-    let (status, _) = put(srv.addr, "bundle-2793-20260725-191508.tar.zst", Some("secrettoken"), b"different content");
+    let (status, _) = put(
+        srv.addr,
+        "bundle-2793-20260725-191508.tar.zst",
+        Some("secrettoken"),
+        b"different content",
+    );
     assert_eq!(status, 200);
     assert_eq!(stored_files(&srv.root).len(), 2);
 }
@@ -145,32 +165,70 @@ fn auth_is_required() {
 fn hash_mismatch_stores_nothing() {
     let srv = start(64 << 20, 512 << 20, "hash");
     let bad = "0".repeat(64);
-    let (status, _) = put_raw(srv.addr, "a.tar.zst", Some("secrettoken"), Some(&bad), 4, b"body");
+    let (status, _) = put_raw(
+        srv.addr,
+        "a.tar.zst",
+        Some("secrettoken"),
+        Some(&bad),
+        4,
+        b"body",
+    );
     assert_eq!(status, 422);
-    let (status, _) = put_raw(srv.addr, "a.tar.zst", Some("secrettoken"), Some("nothex"), 4, b"body");
+    let (status, _) = put_raw(
+        srv.addr,
+        "a.tar.zst",
+        Some("secrettoken"),
+        Some("nothex"),
+        4,
+        b"body",
+    );
     assert_eq!(status, 400);
     let (status, _) = put_raw(srv.addr, "a.tar.zst", Some("secrettoken"), None, 4, b"body");
     assert_eq!(status, 400);
     assert!(stored_files(&srv.root).is_empty());
     // No stray .part temp files either.
-    assert!(std::fs::read_dir(srv.root.join("friend-1"))
-        .map(|rd| rd.count() == 0)
-        .unwrap_or(true));
+    assert!(
+        std::fs::read_dir(srv.root.join("friend-1"))
+            .map(|rd| rd.count() == 0)
+            .unwrap_or(true)
+    );
 }
 
 #[test]
 fn size_and_daily_caps() {
     let srv = start(16, 40, "caps"); // 16-byte bundles, 40 bytes/day
     let sha = sha256_hex(b"");
-    let (status, _) = put_raw(srv.addr, "big.tar.zst", Some("secrettoken"), Some(&sha), 17, b"");
+    let (status, _) = put_raw(
+        srv.addr,
+        "big.tar.zst",
+        Some("secrettoken"),
+        Some(&sha),
+        17,
+        b"",
+    );
     assert_eq!(status, 413);
 
-    let (status, _) = put(srv.addr, "one.tar.zst", Some("secrettoken"), b"0123456789abcdef");
+    let (status, _) = put(
+        srv.addr,
+        "one.tar.zst",
+        Some("secrettoken"),
+        b"0123456789abcdef",
+    );
     assert_eq!(status, 200);
-    let (status, _) = put(srv.addr, "two.tar.zst", Some("secrettoken"), b"0123456789ABCDEF");
+    let (status, _) = put(
+        srv.addr,
+        "two.tar.zst",
+        Some("secrettoken"),
+        b"0123456789ABCDEF",
+    );
     assert_eq!(status, 200);
     // 32 of 40 daily bytes used — the next 16 must be refused.
-    let (status, resp) = put(srv.addr, "three.tar.zst", Some("secrettoken"), b"0123456789!@#$%^");
+    let (status, resp) = put(
+        srv.addr,
+        "three.tar.zst",
+        Some("secrettoken"),
+        b"0123456789!@#$%^",
+    );
     assert_eq!(status, 429, "{resp}");
     assert_eq!(stored_files(&srv.root).len(), 2);
 }
@@ -178,7 +236,12 @@ fn size_and_daily_caps() {
 #[test]
 fn hostile_names_rejected() {
     let srv = start(64 << 20, 512 << 20, "names");
-    for name in ["../../etc/passwd.tar.zst", "..%2Fescape.tar.zst", "plain.txt", ".hidden.tar.zst"] {
+    for name in [
+        "../../etc/passwd.tar.zst",
+        "..%2Fescape.tar.zst",
+        "plain.txt",
+        ".hidden.tar.zst",
+    ] {
         let (status, _) = put(srv.addr, name, Some("secrettoken"), b"x");
         assert_eq!(status, 400, "{name}");
     }
@@ -205,7 +268,12 @@ fn open_mode_client_tokens() {
     assert_eq!(status, 200);
     assert!(resp.contains("\"stored\":\"ffe054fe7ae0cb6d/y-"), "{resp}");
 
-    for bad in ["tooshort", &"z".repeat(64), &"a".repeat(63), &"a".repeat(65)] {
+    for bad in [
+        "tooshort",
+        &"z".repeat(64),
+        &"a".repeat(63),
+        &"a".repeat(65),
+    ] {
         let (status, _) = put(srv.addr, "z.tar.zst", Some(bad), body);
         assert_eq!(status, 401, "{bad}");
     }
@@ -236,11 +304,26 @@ fn global_storage_ceiling() {
     // a third from a fresh sender is refused — per-sender caps alone can't
     // bound cost when tokens are free to mint.
     let srv = start_mode(16, 512 << 20, 40, false, "", "global");
-    let (status, _) = put(srv.addr, "one.tar.zst", Some(&"a".repeat(64)), b"0123456789abcdef");
+    let (status, _) = put(
+        srv.addr,
+        "one.tar.zst",
+        Some(&"a".repeat(64)),
+        b"0123456789abcdef",
+    );
     assert_eq!(status, 200);
-    let (status, _) = put(srv.addr, "two.tar.zst", Some(&"c".repeat(64)), b"0123456789ABCDEF");
+    let (status, _) = put(
+        srv.addr,
+        "two.tar.zst",
+        Some(&"c".repeat(64)),
+        b"0123456789ABCDEF",
+    );
     assert_eq!(status, 200);
-    let (status, resp) = put(srv.addr, "three.tar.zst", Some(&"d".repeat(64)), b"0123456789!@#$%^");
+    let (status, resp) = put(
+        srv.addr,
+        "three.tar.zst",
+        Some(&"d".repeat(64)),
+        b"0123456789!@#$%^",
+    );
     assert_eq!(status, 507, "{resp}");
     assert!(resp.contains("storage is full"), "{resp}");
 }
@@ -249,14 +332,16 @@ fn global_storage_ceiling() {
 fn health_and_unknown_routes() {
     let srv = start(64 << 20, 512 << 20, "routes");
     let mut s = TcpStream::connect(srv.addr).unwrap();
-    s.write_all(b"GET /healthz HTTP/1.1\r\nHost: t\r\n\r\n").unwrap();
+    s.write_all(b"GET /healthz HTTP/1.1\r\nHost: t\r\n\r\n")
+        .unwrap();
     let _ = s.shutdown(std::net::Shutdown::Write);
     let mut resp = String::new();
     s.read_to_string(&mut resp).unwrap();
     assert!(resp.starts_with("HTTP/1.1 200"), "{resp}");
 
     let mut s = TcpStream::connect(srv.addr).unwrap();
-    s.write_all(b"GET /v1/bundle/a.tar.zst HTTP/1.1\r\nHost: t\r\n\r\n").unwrap();
+    s.write_all(b"GET /v1/bundle/a.tar.zst HTTP/1.1\r\nHost: t\r\n\r\n")
+        .unwrap();
     let _ = s.shutdown(std::net::Shutdown::Write);
     let mut resp = String::new();
     s.read_to_string(&mut resp).unwrap();

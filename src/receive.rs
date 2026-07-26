@@ -60,7 +60,11 @@ pub fn run(bind: &str, port: u16, cfg: ReceiveConfig) -> std::io::Result<()> {
         let senders = std::fs::read_to_string(&cfg.tokens_path)
             .map(|text| text.lines().filter(|l| token_line(l).is_some()).count())
             .unwrap_or(0);
-        format!("lockdown ({} issued token(s) in {})", senders, cfg.tokens_path.display())
+        format!(
+            "lockdown ({} issued token(s) in {})",
+            senders,
+            cfg.tokens_path.display()
+        )
     } else {
         "open (client-generated tokens, sender = sha256(token)[..16])".to_string()
     };
@@ -147,7 +151,10 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
             }
         }
         ("PUT", _) => ("404 Not Found", err_json("unknown path")),
-        _ => ("405 Method Not Allowed", err_json("PUT bundles to /v1/bundle/<name>.tar.zst")),
+        _ => (
+            "405 Method Not Allowed",
+            err_json("PUT bundles to /v1/bundle/<name>.tar.zst"),
+        ),
     };
     let _ = write!(
         stream,
@@ -160,8 +167,10 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
     // response", so a permanent 4xx looks transient to the drainer). Drain
     // exactly the unread remainder — zero on clean paths, and bounded by the
     // read timeout if the client stalls mid-body.
-    let mut drain_left =
-        content_length.unwrap_or(0).saturating_sub(body_consumed).min(cfg.max_bundle_bytes);
+    let mut drain_left = content_length
+        .unwrap_or(0)
+        .saturating_sub(body_consumed)
+        .min(cfg.max_bundle_bytes);
     let mut buf = [0u8; 64 * 1024];
     while drain_left > 0 {
         match reader.read(&mut buf[..(drain_left.min(64 * 1024) as usize)]) {
@@ -196,7 +205,10 @@ fn put_bundle(
     let claimed = claimed_sha
         .map(str::to_ascii_lowercase)
         .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        .ok_or(("400 Bad Request", err_json("X-Bundle-SHA256 header (64 hex) required")))?;
+        .ok_or((
+            "400 Bad Request",
+            err_json("X-Bundle-SHA256 header (64 hex) required"),
+        ))?;
     let len = content_length.ok_or(("411 Length Required", err_json("Content-Length required")))?;
     if len == 0 {
         return Err(("400 Bad Request", err_json("empty body")));
@@ -257,7 +269,10 @@ fn put_bundle(
         }
         let hex = hasher.finish_hex();
         if hex != claimed {
-            return Err(("422 Unprocessable Content", err_json("body does not match X-Bundle-SHA256")));
+            return Err((
+                "422 Unprocessable Content",
+                err_json("body does not match X-Bundle-SHA256"),
+            ));
         }
         let final_name = format!("{stem}-{}.tar.zst", &hex[..16]);
         let dest = sender_dir.join(&final_name);
@@ -299,7 +314,10 @@ fn authenticate(cfg: &ReceiveConfig, token: &str) -> Result<String, Reply> {
             .ok_or(("401 Unauthorized", err_json("unknown token")));
     }
     let token = token.to_ascii_lowercase();
-    if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    if token.len() != 64
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     {
         return Err((
             "401 Unauthorized",
@@ -373,7 +391,10 @@ fn sender_for_token(tokens_path: &Path, presented: &str) -> Option<String> {
 
 fn constant_time_eq(a: &str, b: &str) -> bool {
     a.len() == b.len()
-        && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
 }
 
 /// The stem of a safe `<stem>.tar.zst` client name: no separators, so a
@@ -414,7 +435,9 @@ fn recent_bytes(sender_dir: &Path) -> u64 {
 pub fn issue_token(tokens_path: &Path, sender: &str) -> Result<String, String> {
     let ok_id = !sender.is_empty()
         && sender.len() <= 32
-        && sender.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && sender
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !sender.starts_with('-');
     if !ok_id {
         return Err("sender id must be 1-32 chars of [a-z0-9-], not starting with '-'".into());

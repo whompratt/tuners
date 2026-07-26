@@ -31,7 +31,11 @@ pub struct StintTail {
 
 impl StintTail {
     pub fn open(path: &Path) -> std::io::Result<Self> {
-        Ok(Self { file: File::open(path)?, buf: Vec::new(), magic_ok: false })
+        Ok(Self {
+            file: File::open(path)?,
+            buf: Vec::new(),
+            magic_ok: false,
+        })
     }
 
     /// Read whatever the file has appended since the last poll and return the
@@ -193,7 +197,10 @@ pub fn run_tailer(dir: String, state: SharedLive) {
                 tail = Some((path.clone(), t));
             }
             let mut s = state.lock().unwrap();
-            *s = LiveState { file: newest, ..LiveState::default() };
+            *s = LiveState {
+                file: newest,
+                ..LiveState::default()
+            };
         }
 
         if let Some((_, t)) = &mut tail {
@@ -201,7 +208,10 @@ pub fn run_tailer(dir: String, state: SharedLive) {
                 Ok(records) if !records.is_empty() => {
                     for (recv_us, payload) in &records {
                         if let Ok(frame) = packet::decode(payload) {
-                            frames.push(TimedFrame { recv_us: *recv_us, frame });
+                            frames.push(TimedFrame {
+                                recv_us: *recv_us,
+                                frame,
+                            });
                         }
                     }
                     let mut s = state.lock().unwrap();
@@ -322,9 +332,16 @@ mod tests {
         assert!(compute_quality(&[]).is_none());
 
         let q = compute_quality(&synth_session(3)).unwrap();
-        assert_eq!(q.laps, 3, "flying laps only (out lap and partial tail dropped)");
+        assert_eq!(
+            q.laps, 3,
+            "flying laps only (out lap and partial tail dropped)"
+        );
         assert!(!q.standing_only);
-        assert!(q.confidence > 0.99, "identical laps corroborate fully: {}", q.confidence);
+        assert!(
+            q.confidence > 0.99,
+            "identical laps corroborate fully: {}",
+            q.confidence
+        );
         assert_eq!(q.band, Band::Good);
         assert!(q.spread_frac < 1e-3);
         assert!((q.best_lap_s - 10.0).abs() < 1e-3);
@@ -339,6 +356,10 @@ mod tests {
 
         let q = compute_quality(&synth_session(2)).unwrap();
         assert_eq!(q.laps, 2);
-        assert_eq!(q.band, Band::Good, "two agreeing laps corroborate each other");
+        assert_eq!(
+            q.band,
+            Band::Good,
+            "two agreeing laps corroborate each other"
+        );
     }
 }

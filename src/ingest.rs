@@ -21,10 +21,18 @@ pub struct IngestReport {
     pub quarantined: Vec<(String, String)>,
 }
 
-pub fn ingest_dir(inbox: &Path, library: &Path, quarantine: &Path) -> std::io::Result<IngestReport> {
+pub fn ingest_dir(
+    inbox: &Path,
+    library: &Path,
+    quarantine: &Path,
+) -> std::io::Result<IngestReport> {
     let mut report = IngestReport::default();
     for (sender, path) in discover(inbox)? {
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         let label = format!("{sender}/{name}");
         let bytes = std::fs::read(&path)?;
 
@@ -35,7 +43,13 @@ pub fn ingest_dir(inbox: &Path, library: &Path, quarantine: &Path) -> std::io::R
             } else {
                 // Same name, different content: manual exports have no hash
                 // suffix, so a re-cut stint can collide. A human decides.
-                park(quarantine, &sender, &name, &bytes, "name collision with different content")?;
+                park(
+                    quarantine,
+                    &sender,
+                    &name,
+                    &bytes,
+                    "name collision with different content",
+                )?;
                 report.quarantined.push((label, "name collision".into()));
             }
             continue;
@@ -98,7 +112,10 @@ fn park(
     let dir = quarantine.join(sender);
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join(name), bytes)?;
-    std::fs::write(dir.join(format!("{name}.reason.txt")), format!("{reason}\n"))
+    std::fs::write(
+        dir.join(format!("{name}.reason.txt")),
+        format!("{reason}\n"),
+    )
 }
 
 /// Strict-mode checks beyond `bundle::open`'s structural verification.
@@ -116,22 +133,26 @@ fn validate(b: &crate::bundle::Bundle) -> Result<(), String> {
 
     // Every record and every payload must decode with the real parsers.
     let mut packets = 0u64;
-    let mut reader =
-        crate::stint::StintReader::open_bytes(&b.stint).map_err(|e| e.to_string())?;
-    while let Some((_us, payload)) =
-        reader.next_packet().map_err(|e| format!("stint record {packets}: {e}"))?
+    let mut reader = crate::stint::StintReader::open_bytes(&b.stint).map_err(|e| e.to_string())?;
+    while let Some((_us, payload)) = reader
+        .next_packet()
+        .map_err(|e| format!("stint record {packets}: {e}"))?
     {
-        crate::packet::decode(&payload)
-            .map_err(|e| format!("stint packet {packets}: {e:?}"))?;
+        crate::packet::decode(&payload).map_err(|e| format!("stint packet {packets}: {e:?}"))?;
         packets += 1;
     }
     if packets != claimed_packets {
-        return Err(format!("stint has {packets} packets, manifest claims {claimed_packets}"));
+        return Err(format!(
+            "stint has {packets} packets, manifest claims {claimed_packets}"
+        ));
     }
 
     let session = crate::tuning::TuningSession::parse(&b.session_txt);
     if session.car != Some(car) {
-        return Err(format!("session car {:?} != manifest car {car}", session.car));
+        return Err(format!(
+            "session car {:?} != manifest car {car}",
+            session.car
+        ));
     }
     // The free-text strip must hold: the export filters are idempotent, so a
     // compliant member is a fixed point. Anything else smuggled text.
@@ -160,8 +181,10 @@ mod tests {
         std::fs::write(dir.join("rejected/bad.tar.zst"), b"x").unwrap();
         std::fs::write(dir.join("hand.tar.zst"), b"x").unwrap();
         let found = discover(&dir).unwrap();
-        let labels: Vec<String> =
-            found.iter().map(|(s, p)| format!("{s}/{}", p.file_name().unwrap().to_string_lossy())).collect();
+        let labels: Vec<String> = found
+            .iter()
+            .map(|(s, p)| format!("{s}/{}", p.file_name().unwrap().to_string_lossy()))
+            .collect();
         assert_eq!(labels, vec!["abc123/b1.tar.zst", "local/hand.tar.zst"]);
         let _ = std::fs::remove_dir_all(&dir);
     }

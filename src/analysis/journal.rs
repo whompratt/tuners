@@ -109,7 +109,9 @@ pub fn parse_change(note: &str) -> Option<Change> {
 /// All parseable clauses of a (possibly compound) note — "front arb -1;
 /// final drive +0.28" yields the arb change even though attribution refuses it.
 pub fn parse_clauses(note: &str) -> Vec<Change> {
-    note.split(';').filter_map(|c| parse_clause(c.trim())).collect()
+    note.split(';')
+        .filter_map(|c| parse_clause(c.trim()))
+        .collect()
 }
 
 fn parse_clause(note: &str) -> Option<Change> {
@@ -117,7 +119,11 @@ fn parse_clause(note: &str) -> Option<Change> {
     let number = |t: &str| {
         t.split_whitespace()
             .map(|tok| tok.trim_end_matches([',', ')', ':']))
-            .find_map(|tok| tok.parse::<f32>().ok().map(|v| (v, tok.starts_with(['+', '-']))))
+            .find_map(|tok| {
+                tok.parse::<f32>()
+                    .ok()
+                    .map(|v| (v, tok.starts_with(['+', '-'])))
+            })
     };
     if t.contains("final drive") || t.contains("gear") {
         let num = number(&t);
@@ -131,13 +137,23 @@ fn parse_clause(note: &str) -> Option<Change> {
             return None;
         };
         let magnitude = num.map(|(v, _)| if softer { -v.abs() } else { v.abs() });
-        return Some(Change { family: Family::Gearing, softer, magnitude });
+        return Some(Change {
+            family: Family::Gearing,
+            softer,
+            magnitude,
+        });
     }
     // "softer" here = less: less lock / less downforce.
     let less_more = |t: &str| {
-        if ["less", "reduc", "lower", "remov"].iter().any(|k| t.contains(k)) {
+        if ["less", "reduc", "lower", "remov"]
+            .iter()
+            .any(|k| t.contains(k))
+        {
             Some(true)
-        } else if ["more", "add", "increas", "rais"].iter().any(|k| t.contains(k)) {
+        } else if ["more", "add", "increas", "rais"]
+            .iter()
+            .any(|k| t.contains(k))
+        {
             Some(false)
         } else if let Some((v, true)) = number(t) {
             Some(v < 0.0)
@@ -146,35 +162,63 @@ fn parse_clause(note: &str) -> Option<Change> {
         }
     };
     if t.contains("diff") && (t.contains("accel") || t.contains("decel")) {
-        let family = if t.contains("decel") { Family::DiffDecel } else { Family::DiffAccel };
+        let family = if t.contains("decel") {
+            Family::DiffDecel
+        } else {
+            Family::DiffAccel
+        };
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
-        return Some(Change { family, softer, magnitude });
+        return Some(Change {
+            family,
+            softer,
+            magnitude,
+        });
     }
     if t.contains("brake") {
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
-        return Some(Change { family: Family::Brakes, softer, magnitude });
+        return Some(Change {
+            family: Family::Brakes,
+            softer,
+            magnitude,
+        });
     }
     if ["rebound", "bump", "damping"].iter().any(|k| t.contains(k)) {
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
-        return Some(Change { family: Family::Damping, softer, magnitude });
+        return Some(Change {
+            family: Family::Damping,
+            softer,
+            magnitude,
+        });
     }
     if t.contains("ride height") {
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
-        return Some(Change { family: Family::RideHeight, softer, magnitude });
+        return Some(Change {
+            family: Family::RideHeight,
+            softer,
+            magnitude,
+        });
     }
     if t.contains("pressure") {
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
-        return Some(Change { family: Family::TirePressure, softer, magnitude });
+        return Some(Change {
+            family: Family::TirePressure,
+            softer,
+            magnitude,
+        });
     }
     if ["camber", "toe", "caster"].iter().any(|k| t.contains(k)) {
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
-        return Some(Change { family: Family::Alignment, softer, magnitude });
+        return Some(Change {
+            family: Family::Alignment,
+            softer,
+            magnitude,
+        });
     }
     let front = t.contains("front");
     let rear = t.contains("rear");
@@ -185,7 +229,11 @@ fn parse_clause(note: &str) -> Option<Change> {
         let softer = less_more(&t)?;
         let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
         return Some(Change {
-            family: if front { Family::FrontAero } else { Family::RearAero },
+            family: if front {
+                Family::FrontAero
+            } else {
+                Family::RearAero
+            },
             softer,
             magnitude,
         });
@@ -202,7 +250,11 @@ fn parse_clause(note: &str) -> Option<Change> {
     let number = t
         .split_whitespace()
         .map(|tok| tok.trim_end_matches([',', ')', ':']))
-        .find_map(|tok| tok.parse::<f32>().ok().map(|v| (v, tok.starts_with(['+', '-']))));
+        .find_map(|tok| {
+            tok.parse::<f32>()
+                .ok()
+                .map(|v| (v, tok.starts_with(['+', '-'])))
+        });
     let softer = if t.contains("soft") {
         true
     } else if t.contains("stiff") {
@@ -214,7 +266,11 @@ fn parse_clause(note: &str) -> Option<Change> {
     };
     let magnitude = number.map(|(v, _)| if softer { -v.abs() } else { v.abs() });
     Some(Change {
-        family: if front { Family::FrontRoll } else { Family::RearRoll },
+        family: if front {
+            Family::FrontRoll
+        } else {
+            Family::RearRoll
+        },
         softer,
         magnitude,
     })
@@ -352,8 +408,9 @@ pub fn reconcile(
                     r.advice
                         .push_str(&format!(" (go {:+.1} slider units from here)", -m / 2.0));
                 }
-                r.evidence
-                    .push(format!("last step in this direction lost {d:.2}s of ideal lap"));
+                r.evidence.push(format!(
+                    "last step in this direction lost {d:.2}s of ideal lap"
+                ));
                 r.confidence = Confidence::High;
                 // The advice now points the other way; implied must follow it
                 // (limit checks and future reconciliation read the direction),
@@ -483,13 +540,17 @@ pub fn history_revert(
     attributed: Option<&str>,
     weak: bool,
 ) -> Option<Recommendation> {
-    let Outcome::Worsened(d) = outcome else { return None };
+    let Outcome::Worsened(d) = outcome else {
+        return None;
+    };
     if weak {
         // No corroboration: asking for data is the advice, not a revert.
-        let mut evidence =
-            vec![format!("provisional: {d:.2}s slower ideal, measured against a single flying lap")];
+        let mut evidence = vec![format!(
+            "provisional: {d:.2}s slower ideal, measured against a single flying lap"
+        )];
         evidence.extend(attributed.map(String::from));
-        return Some(Recommendation { apply: Vec::new(),
+        return Some(Recommendation {
+            apply: Vec::new(),
             area: family_area(change.family),
             advice: format!(
                 "corroborate: re-run this setup for more laps before reacting. \
@@ -511,7 +572,8 @@ pub fn history_revert(
         evidence.push(ev.to_string());
         confidence = Confidence::Medium;
     }
-    Some(Recommendation { apply: Vec::new(),
+    Some(Recommendation {
+        apply: Vec::new(),
         area: family_area(change.family),
         advice: format!("revert: the last change (\"{note}\") measurably cost lap time"),
         evidence,
@@ -548,11 +610,19 @@ mod tests {
     fn change_notes_parse_family_and_direction() {
         assert_eq!(
             parse_change("front arb softer"),
-            Some(Change { family: Family::FrontRoll, softer: true, magnitude: None })
+            Some(Change {
+                family: Family::FrontRoll,
+                softer: true,
+                magnitude: None
+            })
         );
         assert_eq!(
             parse_change("Stiffened rear springs a bit"),
-            Some(Change { family: Family::RearRoll, softer: false, magnitude: None })
+            Some(Change {
+                family: Family::RearRoll,
+                softer: false,
+                magnitude: None
+            })
         );
         assert_eq!(parse_change("baseline"), None);
         assert_eq!(parse_change("softer springs"), None, "front/rear ambiguous");
@@ -562,9 +632,15 @@ mod tests {
     #[test]
     fn v2_notes_carry_signed_magnitudes() {
         let c = parse_change("front arb -2").unwrap();
-        assert_eq!((c.family, c.softer, c.magnitude), (Family::FrontRoll, true, Some(-2.0)));
+        assert_eq!(
+            (c.family, c.softer, c.magnitude),
+            (Family::FrontRoll, true, Some(-2.0))
+        );
         let c = parse_change("rear springs +1.5").unwrap();
-        assert_eq!((c.family, c.softer, c.magnitude), (Family::RearRoll, false, Some(1.5)));
+        assert_eq!(
+            (c.family, c.softer, c.magnitude),
+            (Family::RearRoll, false, Some(1.5))
+        );
         // Direction word wins and signs the unsigned number.
         let c = parse_change("softened front arb by 2").unwrap();
         assert_eq!((c.softer, c.magnitude), (true, Some(-2.0)));
@@ -578,11 +654,20 @@ mod tests {
     #[test]
     fn aero_and_diff_notes_parse() {
         let c = parse_change("front aero +20").unwrap();
-        assert_eq!((c.family, c.softer, c.magnitude), (Family::FrontAero, false, Some(20.0)));
+        assert_eq!(
+            (c.family, c.softer, c.magnitude),
+            (Family::FrontAero, false, Some(20.0))
+        );
         let c = parse_change("reduced rear wing").unwrap();
-        assert_eq!((c.family, c.softer, c.magnitude), (Family::RearAero, true, None));
+        assert_eq!(
+            (c.family, c.softer, c.magnitude),
+            (Family::RearAero, true, None)
+        );
         let c = parse_change("rear diff accel -15").unwrap();
-        assert_eq!((c.family, c.softer, c.magnitude), (Family::DiffAccel, true, Some(-15.0)));
+        assert_eq!(
+            (c.family, c.softer, c.magnitude),
+            (Family::DiffAccel, true, Some(-15.0))
+        );
         let c = parse_change("more diff accel lock").unwrap();
         assert_eq!((c.family, c.softer), (Family::DiffAccel, false));
         assert_eq!(parse_change("aero changes"), None, "no direction, no end");
@@ -619,15 +704,32 @@ mod tests {
         assert_eq!(pos[0], (Some(0.0), Some(0.0)));
         assert_eq!(pos[2], (Some(-4.0), Some(0.0)));
         assert_eq!(pos[3], (Some(-4.0), Some(1.0)));
-        assert_eq!(pos[4], (None, Some(1.0)), "front unknown after direction-only step");
+        assert_eq!(
+            pos[4],
+            (None, Some(1.0)),
+            "front unknown after direction-only step"
+        );
     }
 
     #[test]
     fn append_seeds_baseline_only_on_empty_journal() {
-        let lines = append_lines("# comments only\n", Some("sessions/a.ftel"), "sessions/b.ftel", "front arb -2");
-        assert_eq!(lines, "sessions/a.ftel | baseline\nsessions/b.ftel | front arb -2\n");
+        let lines = append_lines(
+            "# comments only\n",
+            Some("sessions/a.ftel"),
+            "sessions/b.ftel",
+            "front arb -2",
+        );
+        assert_eq!(
+            lines,
+            "sessions/a.ftel | baseline\nsessions/b.ftel | front arb -2\n"
+        );
 
-        let lines = append_lines("sessions/a.ftel | baseline\n", Some("sessions/b.ftel"), "sessions/c.ftel", "note | with pipe");
+        let lines = append_lines(
+            "sessions/a.ftel | baseline\n",
+            Some("sessions/b.ftel"),
+            "sessions/c.ftel",
+            "note | with pipe",
+        );
         assert_eq!(lines, "sessions/c.ftel | note   with pipe\n");
 
         let lines = append_lines("", None, "sessions/b.ftel", "front arb -2");
@@ -639,13 +741,21 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: true, magnitude: Some(-2.0) },
+            Change {
+                family: Family::FrontRoll,
+                softer: true,
+                magnitude: Some(-2.0),
+            },
             Outcome::Worsened(0.3),
             "front arb -2",
             None,
             false,
         );
-        assert!(recs[0].advice.contains("go +1.0 slider units from here"), "{}", recs[0].advice);
+        assert!(
+            recs[0].advice.contains("go +1.0 slider units from here"),
+            "{}",
+            recs[0].advice
+        );
         // The implied change follows the rewritten advice: flipped direction,
         // half the measured magnitude — resolvable to a concrete target value.
         let implied = recs[0].implied.unwrap();
@@ -664,7 +774,10 @@ mod tests {
         assert_eq!(clauses[0].magnitude, Some(-1.0));
         assert_eq!(clauses[1].family, Family::Gearing);
         assert_eq!(clauses[1].magnitude, Some(0.28));
-        assert!(!clauses[1].softer, "positive final drive delta = shorter gearing");
+        assert!(
+            !clauses[1].softer,
+            "positive final drive delta = shorter gearing"
+        );
 
         let pos = track_positions(&[vec![], parse_clauses(note)]);
         assert_eq!(pos[1], (Some(-1.0), Some(0.0)));
@@ -678,13 +791,18 @@ mod tests {
     }
 
     fn balance_rec() -> Recommendation {
-        Recommendation { apply: Vec::new(),
+        Recommendation {
+            apply: Vec::new(),
             area: "balance",
             advice: "reduce front roll stiffness".into(),
             evidence: vec!["understeer +0.3".into()],
             confidence: Confidence::High,
             suggestion: None,
-            implied: Some(Change { family: Family::FrontRoll, softer: true, magnitude: None }),
+            implied: Some(Change {
+                family: Family::FrontRoll,
+                softer: true,
+                magnitude: None,
+            }),
         }
     }
 
@@ -693,13 +811,21 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: true, magnitude: None },
+            Change {
+                family: Family::FrontRoll,
+                softer: true,
+                magnitude: None,
+            },
             Outcome::Worsened(0.3),
             "front arb softer",
             None,
             false,
         );
-        assert!(recs[0].advice.contains("step back halfway"), "{}", recs[0].advice);
+        assert!(
+            recs[0].advice.contains("step back halfway"),
+            "{}",
+            recs[0].advice
+        );
         assert_eq!(recs[0].confidence, Confidence::High);
     }
 
@@ -708,7 +834,11 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: true, magnitude: None },
+            Change {
+                family: Family::FrontRoll,
+                softer: true,
+                magnitude: None,
+            },
             Outcome::Improved(-1.29),
             "front arb softer",
             None,
@@ -725,7 +855,11 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: false, magnitude: None },
+            Change {
+                family: Family::FrontRoll,
+                softer: false,
+                magnitude: None,
+            },
             Outcome::Improved(-0.42),
             "front arb stiffer",
             None,
@@ -740,7 +874,11 @@ mod tests {
         let mut recs = vec![balance_rec()];
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: false, magnitude: None },
+            Change {
+                family: Family::FrontRoll,
+                softer: false,
+                magnitude: None,
+            },
             Outcome::Worsened(0.5),
             "front arb stiffer",
             None,
@@ -748,7 +886,12 @@ mod tests {
         );
         assert!(recs[0].advice.contains("reduce front roll stiffness"));
         assert_eq!(recs[0].confidence, Confidence::High);
-        assert!(recs[0].evidence.iter().any(|e| e.contains("moved against this advice and lost")));
+        assert!(
+            recs[0]
+                .evidence
+                .iter()
+                .any(|e| e.contains("moved against this advice and lost"))
+        );
     }
 
     /// The McLaren diff A/B: max diff lock measured WORSE but the driver adapted
@@ -758,13 +901,29 @@ mod tests {
     #[test]
     fn worsened_step_with_no_matching_rec_gets_history_revert() {
         let mut recs = vec![balance_rec()];
-        let change = Change { family: Family::DiffAccel, softer: false, magnitude: Some(71.0) };
+        let change = Change {
+            family: Family::DiffAccel,
+            softer: false,
+            magnitude: Some(71.0),
+        };
         let outcome = Outcome::Worsened(0.25);
-        assert!(!reconcile(&mut recs, change, outcome, "front diff accel +71", Some("attr"), false));
-        let rec = history_revert(change, outcome, "front diff accel +71", Some("attr"), false).unwrap();
+        assert!(!reconcile(
+            &mut recs,
+            change,
+            outcome,
+            "front diff accel +71",
+            Some("attr"),
+            false
+        ));
+        let rec =
+            history_revert(change, outcome, "front diff accel +71", Some("attr"), false).unwrap();
         assert_eq!(rec.area, "differential");
         assert!(rec.advice.contains("revert:"), "{}", rec.advice);
-        assert_eq!(rec.confidence, Confidence::Medium, "attributed caps at Medium");
+        assert_eq!(
+            rec.confidence,
+            Confidence::Medium,
+            "attributed caps at Medium"
+        );
         let implied = rec.implied.unwrap();
         assert!(implied.softer, "revert of a stiffer step points softer");
         assert_eq!(implied.magnitude, Some(-71.0));
@@ -783,26 +942,50 @@ mod tests {
     /// recs untouched apart from a hedge line.
     #[test]
     fn single_lap_outcome_asks_for_data_not_reverts() {
-        let change = Change { family: Family::DiffAccel, softer: true, magnitude: Some(-71.0) };
-        let rec = history_revert(change, Outcome::Worsened(0.69), "front diff accel -71", None, true)
-            .unwrap();
+        let change = Change {
+            family: Family::DiffAccel,
+            softer: true,
+            magnitude: Some(-71.0),
+        };
+        let rec = history_revert(
+            change,
+            Outcome::Worsened(0.69),
+            "front diff accel -71",
+            None,
+            true,
+        )
+        .unwrap();
         assert!(rec.advice.contains("re-run this setup"), "{}", rec.advice);
         assert_eq!(rec.confidence, Confidence::Low);
-        assert!(rec.implied.is_none(), "no directional implication from weak data");
+        assert!(
+            rec.implied.is_none(),
+            "no directional implication from weak data"
+        );
 
         let mut recs = vec![balance_rec()];
         let before = (recs[0].advice.clone(), recs[0].confidence);
         reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: true, magnitude: None },
+            Change {
+                family: Family::FrontRoll,
+                softer: true,
+                magnitude: None,
+            },
             Outcome::Worsened(0.5),
             "front arb softer",
             None,
             true,
         );
-        assert_eq!((recs[0].advice.clone(), recs[0].confidence), before, "advice untouched");
+        assert_eq!(
+            (recs[0].advice.clone(), recs[0].confidence),
+            before,
+            "advice untouched"
+        );
         assert!(
-            recs[0].evidence.iter().any(|e| e.contains("single flying lap")),
+            recs[0]
+                .evidence
+                .iter()
+                .any(|e| e.contains("single flying lap")),
             "{:?}",
             recs[0].evidence
         );
@@ -817,7 +1000,10 @@ mod tests {
         let b = parse_clauses("front diff accel -71; rear diff accel -40");
         assert!(is_reverse(&a, &b));
         let partial = parse_clauses("front diff accel -71; rear diff accel -20");
-        assert!(!is_reverse(&a, &partial), "different magnitude is not a revert");
+        assert!(
+            !is_reverse(&a, &partial),
+            "different magnitude is not a revert"
+        );
         let short = parse_clauses("front diff accel -71");
         assert!(!is_reverse(&a, &short), "missing clause is not a revert");
 
@@ -834,7 +1020,11 @@ mod tests {
         let mut recs = vec![balance_rec()];
         let matched = reconcile(
             &mut recs,
-            Change { family: Family::FrontRoll, softer: true, magnitude: None },
+            Change {
+                family: Family::FrontRoll,
+                softer: true,
+                magnitude: None,
+            },
             Outcome::Improved(-0.2),
             "front arb softer",
             None,
@@ -849,7 +1039,11 @@ mod tests {
         let before = recs[0].advice.clone();
         reconcile(
             &mut recs,
-            Change { family: Family::RearRoll, softer: false, magnitude: None },
+            Change {
+                family: Family::RearRoll,
+                softer: false,
+                magnitude: None,
+            },
             Outcome::Worsened(0.3),
             "rear arb stiffer",
             None,

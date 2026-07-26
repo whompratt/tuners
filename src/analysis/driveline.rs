@@ -53,7 +53,11 @@ pub struct DrivelineFit {
 impl DrivelineFit {
     /// Speed (m/s) at which `redline` rpm arrives in top gear.
     pub fn redline_speed(&self, redline: f32) -> f32 {
-        if self.k_top > 0.0 { redline / self.k_top } else { 0.0 }
+        if self.k_top > 0.0 {
+            redline / self.k_top
+        } else {
+            0.0
+        }
     }
 
     /// Multiplier for the final drive that puts `redline` exactly at the
@@ -82,7 +86,10 @@ pub fn fit(frames: &[TimedFrame]) -> Option<DrivelineFit> {
 
     for i in DIFF_HALF_WINDOW..n - DIFF_HALF_WINDOW {
         let f = &frames[i].frame;
-        let (lo, hi) = (&frames[i - DIFF_HALF_WINDOW].frame, &frames[i + DIFF_HALF_WINDOW].frame);
+        let (lo, hi) = (
+            &frames[i - DIFF_HALF_WINDOW].frame,
+            &frames[i + DIFF_HALF_WINDOW].frame,
+        );
         let dt = hi.current_race_time - lo.current_race_time;
         // Splice/pause gaps poison differences; a clean window spans ~0.17s.
         let clean_window = dt > 0.0 && dt < 0.5;
@@ -91,8 +98,8 @@ pub fn fit(frames: &[TimedFrame]) -> Option<DrivelineFit> {
         match (&mut run, flat_out && clean_window) {
             (None, true) => run = Some((f.speed, 0.0)),
             (Some((_, len)), true) => {
-                *len += f.speed * (f.current_race_time - frames[i - 1].frame.current_race_time)
-                    .clamp(0.0, 0.1);
+                *len += f.speed
+                    * (f.current_race_time - frames[i - 1].frame.current_race_time).clamp(0.0, 0.1);
             }
             (Some(r), false) => {
                 if r.1 > best_run.1 {
@@ -135,7 +142,11 @@ pub fn fit(frames: &[TimedFrame]) -> Option<DrivelineFit> {
             continue;
         }
         let ds: f32 = (hi.current_race_time - lo.current_race_time) * f.speed;
-        let grade = if ds > 1.0 { (hi.position[1] - lo.position[1]) / ds } else { 0.0 };
+        let grade = if ds > 1.0 {
+            (hi.position[1] - lo.position[1]) / ds
+        } else {
+            0.0
+        };
         let y = (dvdt + G * grade.clamp(-0.3, 0.3)) as f64;
         let x1 = (f.power / f.speed) as f64;
         let x2 = -((f.speed * f.speed) as f64);
@@ -226,12 +237,23 @@ mod tests {
             f.current_engine_rpm = 80.0 * v;
             f.engine_max_rpm = 8000.0;
             f.current_race_time = i as f32 * dt;
-            f.norm_suspension_travel =
-                crate::packet::Corners { fl: 0.4, fr: 0.4, rl: 0.4, rr: 0.4 };
-            frames.push(crate::analysis::TimedFrame { recv_us: 0, frame: f });
+            f.norm_suspension_travel = crate::packet::Corners {
+                fl: 0.4,
+                fr: 0.4,
+                rl: 0.4,
+                rr: 0.4,
+            };
+            frames.push(crate::analysis::TimedFrame {
+                recv_us: 0,
+                frame: f,
+            });
         }
         let fit = fit(&frames).expect("fit");
-        assert!((fit.alpha - alpha).abs() / alpha < 0.05, "alpha {}", fit.alpha);
+        assert!(
+            (fit.alpha - alpha).abs() / alpha < 0.05,
+            "alpha {}",
+            fit.alpha
+        );
         assert!((fit.beta - beta).abs() / beta < 0.05, "beta {}", fit.beta);
         let vmax_true = (alpha * power / beta).cbrt();
         assert!(
@@ -243,6 +265,9 @@ mod tests {
         // Redline 8000 at K=80 -> 100 m/s; if the track reaches vmax_true
         // (~87 m/s), the final drive should lengthen by ~13%.
         let scale = fit.final_drive_scale(8000.0).unwrap();
-        assert!((scale - 100.0 / fit.vmax_track).abs() < 0.02, "scale {scale}");
+        assert!(
+            (scale - 100.0 / fit.vmax_track).abs() < 0.02,
+            "scale {scale}"
+        );
     }
 }

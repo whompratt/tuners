@@ -4,8 +4,8 @@
 //! in; rules on top of these metrics wait for deliberate calibration A/Bs,
 //! like damping did.
 
-use super::metrics::BandBalance;
 use super::TimedFrame;
+use super::metrics::BandBalance;
 
 /// |lateral accel| (m/s²) that opens a corner event — matches the cornering
 /// threshold used by the whole-stint balance metrics.
@@ -190,7 +190,12 @@ mod tests {
                     current_race_time: i as f32 * 0.1,
                     acceleration: [lat, 0.0, 0.0],
                     speed,
-                    tire_slip_angle: Corners { fl: front, fr: front, rl: rear, rr: rear },
+                    tire_slip_angle: Corners {
+                        fl: front,
+                        fr: front,
+                        rl: rear,
+                        rr: rear,
+                    },
                     ..Default::default()
                 },
             })

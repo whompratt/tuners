@@ -107,7 +107,10 @@ impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DecodeError::TooShort { len } => {
-                write!(f, "packet too short: {len} bytes, need at least {DECODED_LEN}")
+                write!(
+                    f,
+                    "packet too short: {len} bytes, need at least {DECODED_LEN}"
+                )
             }
         }
     }
@@ -148,7 +151,12 @@ impl Cursor<'_> {
         [self.f32(), self.f32(), self.f32()]
     }
     fn corners_f32(&mut self) -> Corners<f32> {
-        Corners { fl: self.f32(), fr: self.f32(), rl: self.f32(), rr: self.f32() }
+        Corners {
+            fl: self.f32(),
+            fr: self.f32(),
+            rl: self.f32(),
+            rr: self.f32(),
+        }
     }
     fn corners_bool_i32(&mut self) -> Corners<bool> {
         Corners {
@@ -264,7 +272,9 @@ impl Enc {
 /// Build a wire packet from a frame. Used by `simulate` and tests; the game itself is
 /// of course the only real producer.
 pub fn encode(f: &TelemetryFrame) -> [u8; PACKET_LEN] {
-    let mut e = Enc { buf: Vec::with_capacity(PACKET_LEN) };
+    let mut e = Enc {
+        buf: Vec::with_capacity(PACKET_LEN),
+    };
     e.i32(f.is_race_on as i32);
     e.u32(f.timestamp_ms);
     e.f32(f.engine_max_rpm);
@@ -361,7 +371,10 @@ mod tests {
             car_ordinal: 0x0102_0304,
             car_group: 0x1122_3344,
             speed: 1.0,
-            tire_temp: Corners { fl: 2.0, ..Default::default() },
+            tire_temp: Corners {
+                fl: 2.0,
+                ..Default::default()
+            },
             lap_number: 0xBEEF,
             gear: 7,
             steer: -5,
@@ -381,10 +394,7 @@ mod tests {
 
     #[test]
     fn rejects_short_packet() {
-        assert_eq!(
-            decode(&[0u8; 100]),
-            Err(DecodeError::TooShort { len: 100 })
-        );
+        assert_eq!(decode(&[0u8; 100]), Err(DecodeError::TooShort { len: 100 }));
     }
 
     /// A real 324-byte datagram decodes even though only 323 bytes are documented.

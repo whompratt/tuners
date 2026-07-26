@@ -1,7 +1,7 @@
 //! A/B session comparison over distance-binned profiles: which tune is faster,
 //! where on the road, and what changed in behaviour — on clean bins only.
 
-use super::profile::{StintProfile, BIN_METERS};
+use super::profile::{BIN_METERS, StintProfile};
 use crate::util::format_lap_time;
 use std::fmt::Write;
 
@@ -84,7 +84,11 @@ pub fn render(a: &StintProfile, b: &StintProfile, cmp: &Comparison) -> String {
             out,
             "{name}: {} lap(s){} | best {} | ideal {} ({} span(s) from lap(s) {})",
             p.laps.len(),
-            if p.standing_start_only { " (standing starts)" } else { "" },
+            if p.standing_start_only {
+                " (standing starts)"
+            } else {
+                ""
+            },
             format_lap_time(p.best_lap_time_s),
             format_lap_time(p.composite.time_s),
             p.composite.span_count(),
@@ -157,7 +161,7 @@ pub fn render(a: &StintProfile, b: &StintProfile, cmp: &Comparison) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::profile::{build_composite, BinStats, LapProfile};
+    use crate::analysis::profile::{BinStats, LapProfile, build_composite};
 
     fn uniform_profile(n_bins: usize, bin_time: f32) -> StintProfile {
         let lap = LapProfile {
@@ -165,7 +169,12 @@ mod tests {
             time_s: bin_time * n_bins as f32,
             standing_start: false,
             bins: vec![
-                BinStats { time_s: bin_time, speed_avg: 50.0, samples: 10, ..Default::default() };
+                BinStats {
+                    time_s: bin_time,
+                    speed_avg: 50.0,
+                    samples: 10,
+                    ..Default::default()
+                };
                 n_bins
             ],
         };

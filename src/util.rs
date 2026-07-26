@@ -21,20 +21,36 @@ pub fn set_display_units(u: DisplayUnits) {
 
 /// Canonical °F -> display value.
 pub fn temp_val(f: f32) -> f32 {
-    if DISPLAY_UNITS.with(|c| c.get()).temp_c { (f - 32.0) / 1.8 } else { f }
+    if DISPLAY_UNITS.with(|c| c.get()).temp_c {
+        (f - 32.0) / 1.8
+    } else {
+        f
+    }
 }
 
 pub fn temp_unit() -> &'static str {
-    if DISPLAY_UNITS.with(|c| c.get()).temp_c { "°C" } else { "°F" }
+    if DISPLAY_UNITS.with(|c| c.get()).temp_c {
+        "°C"
+    } else {
+        "°F"
+    }
 }
 
 /// Canonical m/s -> display value.
 pub fn speed_val(mps: f32) -> f32 {
-    if DISPLAY_UNITS.with(|c| c.get()).speed_kmh { mps * 3.6 } else { mps * MPS_TO_MPH }
+    if DISPLAY_UNITS.with(|c| c.get()).speed_kmh {
+        mps * 3.6
+    } else {
+        mps * MPS_TO_MPH
+    }
 }
 
 pub fn speed_unit() -> &'static str {
-    if DISPLAY_UNITS.with(|c| c.get()).speed_kmh { "km/h" } else { "mph" }
+    if DISPLAY_UNITS.with(|c| c.get()).speed_kmh {
+        "km/h"
+    } else {
+        "mph"
+    }
 }
 
 /// Format Unix seconds as a UTC `YYYYMMDD-HHMMSS` stamp (for session filenames).
@@ -136,12 +152,20 @@ impl Sha256 {
     fn compress(&mut self, block: &[u8; 64]) {
         let mut w = [0u32; 64];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]);
+            w[i] = u32::from_be_bytes([
+                block[4 * i],
+                block[4 * i + 1],
+                block[4 * i + 2],
+                block[4 * i + 3],
+            ]);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
             let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
         }
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.state;
         for i in 0..64 {

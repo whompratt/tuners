@@ -5,7 +5,7 @@
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use tuners::collect::{self, CollectConfig};
-use tuners::receive::{run_listener, ReceiveConfig};
+use tuners::receive::{ReceiveConfig, run_listener};
 use tuners::tuning::{Revision, TuningSession};
 
 fn temp_dir(tag: &str) -> PathBuf {
@@ -33,7 +33,10 @@ fn start_receiver(dir: &Path) -> (String, PathBuf) {
 }
 
 fn fixture_session() -> TuningSession {
-    let mut s = TuningSession { car: Some(4165), ..Default::default() };
+    let mut s = TuningSession {
+        car: Some(4165),
+        ..Default::default()
+    };
     s.facts.insert("front_weight_pct".into(), "46".into());
     s.revisions.push(Revision {
         stamp: "20260719-224500".into(),
@@ -43,7 +46,10 @@ fn fixture_session() -> TuningSession {
 }
 
 fn fixture_stint() -> &'static Path {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/real-01.ftel"))
+    Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/real-01.ftel"
+    ))
 }
 
 #[test]
@@ -52,15 +58,26 @@ fn enqueue_then_drain_uploads_and_clears() {
     let outbox = dir.join("outbox");
     let (endpoint, root) = start_receiver(&dir);
     let token = "c".repeat(64);
-    let cfg = CollectConfig { enabled: true, endpoint, token: token.clone() };
+    let cfg = CollectConfig {
+        enabled: true,
+        endpoint,
+        token: token.clone(),
+    };
     assert!(cfg.ready());
 
     let queued = collect::enqueue(&outbox, fixture_stint(), &fixture_session(), "")
         .unwrap()
         .expect("first enqueue stores");
-    assert_eq!(queued.file_name().unwrap().to_str().unwrap(), "bundle-4165-real-01.tar.zst");
+    assert_eq!(
+        queued.file_name().unwrap().to_str().unwrap(),
+        "bundle-4165-real-01.tar.zst"
+    );
     // Idempotent: the same stint doesn't queue twice.
-    assert!(collect::enqueue(&outbox, fixture_stint(), &fixture_session(), "").unwrap().is_none());
+    assert!(
+        collect::enqueue(&outbox, fixture_stint(), &fixture_session(), "")
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(collect::queued(&outbox).len(), 1);
 
     // Telemetry fresh -> the drainer must not touch the network.
@@ -71,7 +88,10 @@ fn enqueue_then_drain_uploads_and_clears() {
     // Idle -> uploads, deletes locally, and the receiver holds a bundle that
     // reopens cleanly under the derived sender namespace.
     let log = collect::drain(&outbox, &cfg, &|| false);
-    assert_eq!(log, vec!["uploaded bundle-4165-real-01.tar.zst".to_string()]);
+    assert_eq!(
+        log,
+        vec!["uploaded bundle-4165-real-01.tar.zst".to_string()]
+    );
     assert!(collect::queued(&outbox).is_empty());
     let sender_dir = root.join(collect::sender_id(&token));
     let stored: Vec<_> = std::fs::read_dir(&sender_dir).unwrap().flatten().collect();
@@ -97,7 +117,11 @@ fn history_plan_is_per_campaign_and_idempotent() {
     let sessions = root.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
     let outbox = root.join("outbox");
-    for name in ["stint-20260101-000001.ftel", "stint-20260102-000002.ftel", "orphan.ftel"] {
+    for name in [
+        "stint-20260101-000001.ftel",
+        "stint-20260102-000002.ftel",
+        "orphan.ftel",
+    ] {
         std::fs::copy(fixture_stint(), sessions.join(name)).unwrap();
     }
 
@@ -133,7 +157,11 @@ fn history_plan_is_per_campaign_and_idempotent() {
 
     // A ledger entry excludes the already-shared stint from the next plan.
     std::fs::create_dir_all(&outbox).unwrap();
-    std::fs::write(outbox.join("sent.txt"), "bundle-4165-20260101-000001.tar.zst\n").unwrap();
+    std::fs::write(
+        outbox.join("sent.txt"),
+        "bundle-4165-20260101-000001.tar.zst\n",
+    )
+    .unwrap();
     let plan = collect::history_plan(&root, "sessions", &outbox);
     assert_eq!(plan.items.len(), 1, "{plan:?}");
     assert_eq!(plan.already, 1);
@@ -162,12 +190,20 @@ fn permanent_rejection_parks_the_bundle() {
     let (endpoint, root) = start_receiver(&dir);
     // 'z'*64 is not hex: open mode answers 401 — a permanent rejection, so
     // the bundle parks in outbox/rejected instead of retrying forever.
-    let cfg = CollectConfig { enabled: true, endpoint, token: "z".repeat(64) };
+    let cfg = CollectConfig {
+        enabled: true,
+        endpoint,
+        token: "z".repeat(64),
+    };
     collect::enqueue(&outbox, fixture_stint(), &fixture_session(), "").unwrap();
 
     let log = collect::drain(&outbox, &cfg, &|| false);
     assert_eq!(log.len(), 1);
-    assert!(log[0].contains("401") && log[0].contains("rejected"), "{}", log[0]);
+    assert!(
+        log[0].contains("401") && log[0].contains("rejected"),
+        "{}",
+        log[0]
+    );
     assert!(collect::queued(&outbox).is_empty());
     assert!(outbox.join("rejected/bundle-4165-real-01.tar.zst").exists());
     assert!(!root.join("inbox").exists() || std::fs::read_dir(&root).unwrap().count() == 0);
@@ -187,6 +223,10 @@ fn network_failure_leaves_the_queue_alone() {
     let log = collect::drain(&outbox, &cfg, &|| false);
     assert_eq!(log.len(), 1);
     assert!(log[0].contains("will retry later"), "{}", log[0]);
-    assert_eq!(collect::queued(&outbox).len(), 1, "bundle must survive offline drains");
+    assert_eq!(
+        collect::queued(&outbox).len(),
+        1,
+        "bundle must survive offline drains"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

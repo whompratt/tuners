@@ -228,7 +228,9 @@ pub fn display_value(key: &str, canon: &str, facts: &BTreeMap<String, String>) -
         "weight" => "mass",
         _ => return canon.to_string(),
     };
-    let Ok(v) = canon.parse::<f32>() else { return canon.to_string() };
+    let Ok(v) = canon.parse::<f32>() else {
+        return canon.to_string();
+    };
     let pref = facts.get(&format!("unit_{dim}")).map(String::as_str);
     // (factor canonical -> display, decimals, label); default = canonical unit.
     let (k, dp, label) = match (dim, pref) {
@@ -279,7 +281,9 @@ impl TuningSession {
                 });
                 continue;
             }
-            let Some((key, value)) = line.split_once('=') else { continue };
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
             let (key, value) = (key.trim(), value.trim());
             match &mut current {
                 Some(rev) => {
@@ -379,8 +383,16 @@ mod tests {
         facts.insert("limit_bad".to_string(), "65..1".to_string());
         assert_eq!(limit_of(&facts, "arb_f"), Some((1.0, 65.0)));
         assert_eq!(limit_of(&facts, "bad"), None, "inverted range rejected");
-        assert_eq!(limit_of(&facts, "arb_r"), Some((1.0, 65.0)), "universal fallback");
-        assert_eq!(limit_of(&facts, "springs_f"), None, "car-specific, not recorded");
+        assert_eq!(
+            limit_of(&facts, "arb_r"),
+            Some((1.0, 65.0)),
+            "universal fallback"
+        );
+        assert_eq!(
+            limit_of(&facts, "springs_f"),
+            None,
+            "car-specific, not recorded"
+        );
         assert_eq!(limit_of(&facts, "brake_pressure"), Some((0.0, 200.0)));
         // A recorded fact overrides the universal range.
         facts.insert("limit_arb_f".to_string(), "5..40".to_string());
@@ -388,23 +400,34 @@ mod tests {
 
         let lim = (1.0, 65.0);
         assert!(pinned(1.0, lim, true, "arb_f"), "at min, advising softer");
-        assert!(!pinned(1.0, lim, false, "arb_f"), "at min, stiffer has headroom");
+        assert!(
+            !pinned(1.0, lim, false, "arb_f"),
+            "at min, stiffer has headroom"
+        );
         assert!(pinned(65.0, lim, false, "arb_f"));
         assert!(!pinned(30.0, lim, true, "arb_f"));
     }
 
-
     fn rev(stamp: &str, pairs: &[(&str, &str)]) -> Revision {
         Revision {
             stamp: stamp.into(),
-            values: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            values: pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         }
     }
 
     #[test]
     fn journal_path_is_per_car_when_session_has_one() {
-        assert_eq!(journal_path_for(Some(1314), "tune-journal.txt"), "tune-journal-1314.txt");
-        assert_eq!(journal_path_for(None, "tune-journal.txt"), "tune-journal.txt");
+        assert_eq!(
+            journal_path_for(Some(1314), "tune-journal.txt"),
+            "tune-journal-1314.txt"
+        );
+        assert_eq!(
+            journal_path_for(None, "tune-journal.txt"),
+            "tune-journal.txt"
+        );
         assert_eq!(journal_path_for(Some(7), "logs/journal"), "logs/journal-7");
     }
 
@@ -416,8 +439,10 @@ mod tests {
         };
         s.facts.insert("front_weight_pct".into(), "42.5".into());
         s.facts.insert("abs".into(), "on".into());
-        s.revisions.push(rev("20260719-224500", &[("arb_f", "24"), ("arb_r", "30")]));
-        s.revisions.push(rev("20260719-231000", &[("arb_f", "22"), ("arb_r", "30")]));
+        s.revisions
+            .push(rev("20260719-224500", &[("arb_f", "24"), ("arb_r", "30")]));
+        s.revisions
+            .push(rev("20260719-231000", &[("arb_f", "22"), ("arb_r", "30")]));
 
         let parsed = TuningSession::parse(&s.render());
         assert_eq!(parsed.car, Some(2352));
@@ -440,13 +465,24 @@ mod tests {
     #[test]
     fn multi_field_and_non_numeric_changes_are_recorded_honestly() {
         let a = rev("t1", &[("arb_f", "24"), ("aero_r", "180")]);
-        let b = rev("t2", &[("arb_f", "26"), ("aero_r", "200"), ("tire_pressure_f", "28.5")]);
+        let b = rev(
+            "t2",
+            &[
+                ("arb_f", "26"),
+                ("aero_r", "200"),
+                ("tire_pressure_f", "28.5"),
+            ],
+        );
         let note = diff_note(&a, &b);
         assert!(note.contains("front arb +2"), "{note}");
         assert!(note.contains("rear aero +20 lb"), "{note}");
         assert!(note.contains("front tire pressure = 28.5"), "{note}");
         // Compound steps are deliberately unattributable to one family.
-        assert_eq!(crate::analysis::journal::parse_change(&note), None, "{note}");
+        assert_eq!(
+            crate::analysis::journal::parse_change(&note),
+            None,
+            "{note}"
+        );
     }
 
     #[test]

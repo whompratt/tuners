@@ -18,7 +18,11 @@ fn real_fixture_decodes_cleanly() {
         assert!(frame.is_race_on);
         assert_eq!(frame.car_ordinal, 4165);
         assert_eq!(frame.drivetrain_type, 2);
-        assert!(frame.speed >= 0.0 && frame.speed < 150.0, "speed {} m/s", frame.speed);
+        assert!(
+            frame.speed >= 0.0 && frame.speed < 150.0,
+            "speed {} m/s",
+            frame.speed
+        );
         assert!(frame.current_engine_rpm <= frame.engine_max_rpm + 500.0);
         packets += 1;
     }

@@ -8,8 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub fn run(path: &Path) -> Result<(), String> {
-    let mut reader =
-        StintReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut reader = StintReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
 
     let mut packets: u64 = 0;
     let mut errors: u64 = 0;
@@ -68,11 +67,19 @@ pub fn run(path: &Path) -> Result<(), String> {
         gears.insert(f.gear);
         cars.insert(
             f.car_ordinal,
-            (f.car_class, f.car_performance_index, f.drivetrain_type, f.num_cylinders),
+            (
+                f.car_class,
+                f.car_performance_index,
+                f.drivetrain_type,
+                f.num_cylinders,
+            ),
         );
     }
 
-    println!("{}: {packets} packets, {errors} decode errors", path.display());
+    println!(
+        "{}: {packets} packets, {errors} decode errors",
+        path.display()
+    );
     if let (Some(first), Some(last)) = (first, last) {
         let game_span_ms = last.timestamp_ms.wrapping_sub(first.timestamp_ms);
         let wall_span_us = last_recv_us.saturating_sub(first_recv_us);

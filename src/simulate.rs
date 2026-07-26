@@ -70,7 +70,12 @@ pub fn synth_frame(t: f32) -> TelemetryFrame {
         yaw: (t / 8.0).sin(),
         norm_suspension_travel: corner_wave(0.0, 0.5, 0.12),
         tire_slip_ratio: corner_wave(1.0, 0.0, 0.3),
-        wheel_rotation_speed: Corners { fl: wheel_speed, fr: wheel_speed, rl: wheel_speed * 1.02, rr: wheel_speed * 1.02 },
+        wheel_rotation_speed: Corners {
+            fl: wheel_speed,
+            fr: wheel_speed,
+            rl: wheel_speed * 1.02,
+            rr: wheel_speed * 1.02,
+        },
         surface_rumble: corner_wave(2.0, 0.1, 0.1),
         tire_slip_angle: corner_wave(3.0, 0.0, 0.4),
         tire_combined_slip: corner_wave(4.0, 0.2, 0.25),

@@ -58,9 +58,7 @@ pub fn bundle_name(car: i32, stint_path: &Path) -> Result<String, String> {
     let stamp = file_name
         .strip_suffix(".ftel")
         .map(|s| s.strip_prefix("stint-").unwrap_or(s))
-        .filter(|s| {
-            !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        })
+        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
         .ok_or_else(|| format!("{file_name}: expected <name>.ftel with a plain-ascii stem"))?;
     Ok(format!("bundle-{car}-{stamp}.tar.zst"))
 }
@@ -85,11 +83,17 @@ pub fn build(
     // corrupt stint is caught at the sender, where the original still exists.
     let mut reader = crate::stint::StintReader::open(stint_path).map_err(|e| e.to_string())?;
     let mut packets = 0u64;
-    while reader.next_packet().map_err(|e| format!("{name}: {e}"))?.is_some() {
+    while reader
+        .next_packet()
+        .map_err(|e| format!("{name}: {e}"))?
+        .is_some()
+    {
         packets += 1;
     }
     if packets == 0 {
-        return Err(format!("{name}: no packets — refusing to bundle an empty stint"));
+        return Err(format!(
+            "{name}: no packets — refusing to bundle an empty stint"
+        ));
     }
     let stint = std::fs::read(stint_path).map_err(|e| e.to_string())?;
 
@@ -108,7 +112,11 @@ pub fn build(
     manifest.insert("sha256_journal".into(), sha256_hex(journal_txt.as_bytes()));
 
     let mut tar = Vec::new();
-    tar_append(&mut tar, "manifest.json", render_manifest(&manifest).as_bytes());
+    tar_append(
+        &mut tar,
+        "manifest.json",
+        render_manifest(&manifest).as_bytes(),
+    );
     tar_append(&mut tar, "stint.ftel", &stint);
     tar_append(&mut tar, "session.txt", session_txt.as_bytes());
     tar_append(&mut tar, "journal.txt", journal_txt.as_bytes());
@@ -162,7 +170,9 @@ pub fn open(bytes: &[u8]) -> Result<Bundle, String> {
         ("session.txt", "sha256_session"),
         ("journal.txt", "sha256_journal"),
     ] {
-        let claimed = manifest.get(key).ok_or_else(|| format!("manifest missing {key}"))?;
+        let claimed = manifest
+            .get(key)
+            .ok_or_else(|| format!("manifest missing {key}"))?;
         if *claimed != sha256_hex(&members[member]) {
             return Err(format!("{member}: hash mismatch vs manifest"));
         }
@@ -181,15 +191,24 @@ pub fn open(bytes: &[u8]) -> Result<Bundle, String> {
 
 /// Structured facts the dashboard records; everything else a user may have
 /// typed into facts is dropped. Allowlist, per the plan: keys in, not text out.
-const FACT_ALLOWLIST: &[&str] =
-    &["front_weight_pct", "weight", "tire_compound", "abs", "tcs", "stability"];
+const FACT_ALLOWLIST: &[&str] = &[
+    "front_weight_pct",
+    "weight",
+    "tire_compound",
+    "abs",
+    "tcs",
+    "stability",
+];
 
 /// The session minus free text: `name`/`description` and unrecognized fact
 /// keys go; allowlisted facts, unit prefs, slider limits, and tune revisions
 /// (known fields only) stay.
 pub fn export_session(s: &TuningSession) -> TuningSession {
     let known_field = |k: &str| tuning::FIELDS.iter().any(|(f, _)| *f == k);
-    let mut out = TuningSession { car: s.car, ..Default::default() };
+    let mut out = TuningSession {
+        car: s.car,
+        ..Default::default()
+    };
     for (k, v) in &s.facts {
         let keep = FACT_ALLOWLIST.contains(&k.as_str())
             || k.starts_with("unit_")
@@ -207,7 +226,10 @@ pub fn export_session(s: &TuningSession) -> TuningSession {
             .collect();
         // Values must be numeric — a slider value can't smuggle text.
         values.retain(|_, v| v.parse::<f32>().is_ok());
-        out.revisions.push(tuning::Revision { stamp: rev.stamp.clone(), values });
+        out.revisions.push(tuning::Revision {
+            stamp: rev.stamp.clone(),
+            values,
+        });
     }
     out
 }
@@ -238,11 +260,16 @@ pub fn export_journal(text: &str, car: i32) -> String {
             None => (line, ""),
         };
         if path.is_empty()
-            || !path.bytes().all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
+            || !path
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
         {
             continue;
         }
-        let kept: Vec<String> = note.split(';').filter_map(|c| strict_clause(c.trim())).collect();
+        let kept: Vec<String> = note
+            .split(';')
+            .filter_map(|c| strict_clause(c.trim()))
+            .collect();
         if kept.is_empty() {
             out.push_str(path);
             out.push('\n');
@@ -276,9 +303,7 @@ fn strict_clause(clause: &str) -> Option<String> {
     let toks: Vec<&str> = rest.split_whitespace().collect();
     match toks.as_slice() {
         // "front arb -2" / "rear aero +20 lb" (unit must be the field's own)
-        [delta] if delta.starts_with(['+', '-']) && num(delta) => {
-            Some(format!("{phrase} {delta}"))
-        }
+        [delta] if delta.starts_with(['+', '-']) && num(delta) => Some(format!("{phrase} {delta}")),
         [delta, unit]
             if delta.starts_with(['+', '-'])
                 && num(delta)
@@ -304,8 +329,10 @@ pub mod raw {
 #[doc(hidden)]
 pub fn render_manifest(m: &BTreeMap<String, String>) -> String {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let fields: Vec<String> =
-        m.iter().map(|(k, v)| format!("\"{}\":\"{}\"", esc(k), esc(v))).collect();
+    let fields: Vec<String> = m
+        .iter()
+        .map(|(k, v)| format!("\"{}\":\"{}\"", esc(k), esc(v)))
+        .collect();
     format!("{{{}}}\n", fields.join(","))
 }
 
@@ -430,14 +457,20 @@ mod tests {
     fn manifest_roundtrip() {
         let mut m = BTreeMap::new();
         m.insert("car".to_string(), "2793".to_string());
-        m.insert("note".to_string(), "with \"quotes\" and \\slash".to_string());
+        m.insert(
+            "note".to_string(),
+            "with \"quotes\" and \\slash".to_string(),
+        );
         assert_eq!(parse_manifest(&render_manifest(&m)).unwrap(), m);
     }
 
     #[test]
     fn strict_clauses_admit_only_machine_grammar() {
         // The exact shapes diff_note generates survive, re-rendered.
-        assert_eq!(strict_clause("front arb -2").as_deref(), Some("front arb -2"));
+        assert_eq!(
+            strict_clause("front arb -2").as_deref(),
+            Some("front arb -2")
+        );
         assert_eq!(
             strict_clause("front springs -28 lb/in").as_deref(),
             Some("front springs -28 lb/in")
@@ -497,10 +530,16 @@ sessions/stint-20260725-121955.ftel
 
     #[test]
     fn session_filter_is_allowlist() {
-        let mut s = TuningSession { car: Some(2793), ..Default::default() };
+        let mut s = TuningSession {
+            car: Some(2793),
+            ..Default::default()
+        };
         for (k, v) in [
             ("name", "rwd build"),
-            ("description", "no aero, testing snap oversteer near my house"),
+            (
+                "description",
+                "no aero, testing snap oversteer near my house",
+            ),
             ("front_weight_pct", "41.5"),
             ("tire_compound", "semi-slick"),
             ("unit_pressure", "bar"),
@@ -521,14 +560,32 @@ sessions/stint-20260725-121955.ftel
         });
         let out = export_session(&s);
         let text = out.render();
-        for absent in ["rwd build", "snap oversteer", "call dave", "free text", "not a number"] {
+        for absent in [
+            "rwd build",
+            "snap oversteer",
+            "call dave",
+            "free text",
+            "not a number",
+        ] {
             assert!(!text.contains(absent), "leaked: {absent}\n{text}");
         }
-        assert_eq!(out.facts.get("front_weight_pct").map(String::as_str), Some("41.5"));
-        assert_eq!(out.facts.get("unit_pressure").map(String::as_str), Some("bar"));
-        assert_eq!(out.facts.get("limit_springs_f").map(String::as_str), Some("100..800"));
+        assert_eq!(
+            out.facts.get("front_weight_pct").map(String::as_str),
+            Some("41.5")
+        );
+        assert_eq!(
+            out.facts.get("unit_pressure").map(String::as_str),
+            Some("bar")
+        );
+        assert_eq!(
+            out.facts.get("limit_springs_f").map(String::as_str),
+            Some("100..800")
+        );
         assert!(!out.facts.contains_key("limit_bogus"));
-        assert_eq!(out.revisions[0].values.get("arb_f").map(String::as_str), Some("24"));
+        assert_eq!(
+            out.revisions[0].values.get("arb_f").map(String::as_str),
+            Some("24")
+        );
         assert_eq!(out.revisions[0].values.len(), 1);
     }
 }

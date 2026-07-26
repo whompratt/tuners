@@ -8,7 +8,7 @@
 //! into the corner and can never be combined with a clean lap's exit, which would
 //! fabricate a physically impossible lap (docs/plans/003-comparison.md).
 
-use super::{driving_segments, split_laps, LapSlice, TimedFrame};
+use super::{LapSlice, TimedFrame, driving_segments, split_laps};
 use std::collections::BTreeSet;
 
 pub const BIN_METERS: f32 = 10.0;
@@ -123,11 +123,7 @@ pub struct Composite {
 impl Composite {
     /// Number of contiguous same-source spans the composite is stitched from.
     pub fn span_count(&self) -> usize {
-        1 + self
-            .source
-            .windows(2)
-            .filter(|w| w[0] != w[1])
-            .count()
+        1 + self.source.windows(2).filter(|w| w[0] != w[1]).count()
     }
 
     pub fn source_laps(&self) -> BTreeSet<usize> {
@@ -215,7 +211,8 @@ impl StintProfile {
             let cb = &self.composite.bins[b];
             let src = self.composite.source[b];
             *ok = self.laps.iter().enumerate().any(|(li, lap)| {
-                li != src && (lap.bins[b].speed_avg - cb.speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
+                li != src
+                    && (lap.bins[b].speed_avg - cb.speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
             });
             time_total += cb.time_s;
             if *ok {
@@ -224,7 +221,11 @@ impl StintProfile {
         }
         Corroboration {
             corroborated,
-            score: if time_total > 0.0 { time_ok / time_total } else { 0.0 },
+            score: if time_total > 0.0 {
+                time_ok / time_total
+            } else {
+                0.0
+            },
         }
     }
 }
@@ -309,7 +310,10 @@ mod tests {
         speeds[10..13].fill(60.0);
         speeds[13..19].fill(30.0);
         let overshoot = lap_from_speeds(2, &speeds);
-        assert!(overshoot.time_s > clean.time_s, "overshoot is slower overall");
+        assert!(
+            overshoot.time_s > clean.time_s,
+            "overshoot is slower overall"
+        );
 
         let laps = vec![clean.clone(), overshoot];
         let c = build_composite(&laps, 50);
@@ -318,7 +322,10 @@ mod tests {
             "no span of the overshoot lap is net-faster, so none may be taken: {:?}",
             c.source
         );
-        assert!((c.time_s - clean.time_s).abs() < 1e-4, "ideal == the clean lap");
+        assert!(
+            (c.time_s - clean.time_s).abs() < 1e-4,
+            "ideal == the clean lap"
+        );
     }
 
     /// A genuine sustained gain (higher speed, no compensating loss) IS adopted,
@@ -425,7 +432,10 @@ mod tests {
             lap_from_speeds(3, &b),
         ]);
         let c = p.corroboration();
-        assert!((20..30).all(|i| !c.corroborated[i]), "struggle bins unconfirmed");
+        assert!(
+            (20..30).all(|i| !c.corroborated[i]),
+            "struggle bins unconfirmed"
+        );
         assert!((0..20).chain(30..50).all(|i| c.corroborated[i]));
         // 10 of 50 equal-time bins unconfirmed -> score ~0.8
         assert!((c.score - 0.8).abs() < 0.02, "score {}", c.score);
@@ -435,7 +445,10 @@ mod tests {
     /// score two clean laps established.
     #[test]
     fn mistake_lap_does_not_lower_score() {
-        let clean = vec![lap_from_speeds(1, &[50.0; 50]), lap_from_speeds(2, &[50.2; 50])];
+        let clean = vec![
+            lap_from_speeds(1, &[50.0; 50]),
+            lap_from_speeds(2, &[50.2; 50]),
+        ];
         let before = profile_of(clean.clone()).corroboration().score;
 
         let mut wild = [50.0f32; 50];

@@ -1,7 +1,7 @@
 //! Per-stint metric computation. All thresholds are named constants so tuning them
 //! later is a one-line change with tests to catch regressions.
 
-use super::{stint_seconds, TimedFrame};
+use super::{TimedFrame, stint_seconds};
 use crate::packet::Corners;
 
 /// |normalized slip| above this = the tire has lost grip (per the packet spec).
@@ -379,9 +379,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             }
             // Opposite lock: steering against the corner's lateral G.
             let steer = f.steer as f32;
-            if steer.abs() >= STEER_DEADBAND
-                && (steer > 0.0) != (f.acceleration[0] > 0.0)
-            {
+            if steer.abs() >= STEER_DEADBAND && (steer > 0.0) != (f.acceleration[0] > 0.0) {
                 cs_frames += 1;
                 cs_run += 1;
                 if cs_run == COUNTERSTEER_MIN_RUN {
@@ -463,14 +461,25 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 flutter_samples += 1;
             }
         }
-        flutter_prev = Some((f.gear, f.accel, f.current_engine_rpm, wheel_avg, f.current_race_time));
+        flutter_prev = Some((
+            f.gear,
+            f.accel,
+            f.current_engine_rpm,
+            wheel_avg,
+            f.current_race_time,
+        ));
     }
 
     let frac = |count: usize| count as f32 / n as f32;
     // Gear stats count grounded frames only, so their fractions are over the
     // grounded sample count — a jump-heavy stint must not dilute limiter time.
     let gfrac = |count: usize| count as f32 / grounded.max(1) as f32;
-    let corners_from = |vals: [f32; 4]| Corners { fl: vals[0], fr: vals[1], rl: vals[2], rr: vals[3] };
+    let corners_from = |vals: [f32; 4]| Corners {
+        fl: vals[0],
+        fr: vals[1],
+        rl: vals[2],
+        rr: vals[3],
+    };
 
     let mut gear_counts = [0usize; MAX_REAL_GEAR as usize + 1];
     let mut gear_max_rpm = [0.0f32; MAX_REAL_GEAR as usize + 1];
@@ -516,8 +525,13 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     // ceilings are consistent shift points (the Ferrari rides to 97.5% in
     // every gear), and correcting by <3% moves no threshold meaningfully
     // while it would quietly shift calibrated behavior.
-    let limiter_detected = ceiling > 0.0 && gears_at_ceiling >= 3 && ceiling < 0.97 * reported_redline;
-    let effective_redline = if limiter_detected { ceiling } else { reported_redline };
+    let limiter_detected =
+        ceiling > 0.0 && gears_at_ceiling >= 3 && ceiling < 0.97 * reported_redline;
+    let effective_redline = if limiter_detected {
+        ceiling
+    } else {
+        reported_redline
+    };
     let limiter = gear_frames
         .iter()
         .filter(|(_, rpm)| effective_redline > 0.0 && *rpm >= LIMITER * effective_redline)
@@ -542,10 +556,22 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         num_cylinders: first.num_cylinders,
         redline: first.engine_max_rpm,
         tire_temp: Corners {
-            fl: TempStats { avg: temp_sum[0] / n as f32, max: temp_max[0] },
-            fr: TempStats { avg: temp_sum[1] / n as f32, max: temp_max[1] },
-            rl: TempStats { avg: temp_sum[2] / n as f32, max: temp_max[2] },
-            rr: TempStats { avg: temp_sum[3] / n as f32, max: temp_max[3] },
+            fl: TempStats {
+                avg: temp_sum[0] / n as f32,
+                max: temp_max[0],
+            },
+            fr: TempStats {
+                avg: temp_sum[1] / n as f32,
+                max: temp_max[1],
+            },
+            rl: TempStats {
+                avg: temp_sum[2] / n as f32,
+                max: temp_max[2],
+            },
+            rr: TempStats {
+                avg: temp_sum[3] / n as f32,
+                max: temp_max[3],
+            },
         },
         slip_frac: corners_from(std::array::from_fn(|i| frac(slip_count[i]))),
         understeer_index: (cornering > 0)
@@ -576,8 +602,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         balance_on_brake: band_balance(bands[4]),
         corners: super::corners::summarize(frames),
         driveline: super::driveline::fit(frames),
-        wheelspin_frac: (throttle_samples > 0)
-            .then(|| wheelspin as f32 / throttle_samples as f32),
+        wheelspin_frac: (throttle_samples > 0).then(|| wheelspin as f32 / throttle_samples as f32),
         lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),
         suspension: {
             let duration = stint_seconds(frames).max(0.1);
@@ -587,7 +612,12 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 topped_frac: susp_topped[i] as f32 / n as f32,
                 reversals_per_sec: osc_reversals[i] as f32 / duration,
             };
-            Corners { fl: stats(0), fr: stats(1), rl: stats(2), rr: stats(3) }
+            Corners {
+                fl: stats(0),
+                fr: stats(1),
+                rl: stats(2),
+                rr: stats(3),
+            }
         },
         gears: GearStats {
             time_frac,
@@ -611,7 +641,6 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,7 +654,10 @@ mod tests {
                 frame.is_race_on = true;
                 frame.timestamp_ms = i as u32 * 100;
                 frame.current_race_time = i as f32 * 0.1;
-                TimedFrame { recv_us: i as u64 * 100_000, frame }
+                TimedFrame {
+                    recv_us: i as u64 * 100_000,
+                    frame,
+                }
             })
             .collect()
     }
@@ -656,7 +688,12 @@ mod tests {
         let frames: Vec<TelemetryFrame> = (0..10)
             .map(|_| TelemetryFrame {
                 acceleration: [6.0, 0.0, 0.0], // cornering
-                tire_slip_angle: Corners { fl: 0.8, fr: 0.8, rl: 0.4, rr: 0.4 },
+                tire_slip_angle: Corners {
+                    fl: 0.8,
+                    fr: 0.8,
+                    rl: 0.4,
+                    rr: 0.4,
+                },
                 ..Default::default()
             })
             .collect();
@@ -670,7 +707,12 @@ mod tests {
 
     /// Default frames have zero suspension travel = airborne, which excludes
     /// them from gear stats; grounded travel for tests that need revs counted.
-    const GROUNDED: Corners<f32> = Corners { fl: 0.5, fr: 0.5, rl: 0.5, rr: 0.5 };
+    const GROUNDED: Corners<f32> = Corners {
+        fl: 0.5,
+        fr: 0.5,
+        rl: 0.5,
+        rr: 0.5,
+    };
 
     #[test]
     fn upshift_rpm_recorded_across_shift_sentinel() {
@@ -706,7 +748,12 @@ mod tests {
             ..Default::default()
         };
         let flying = |gear, rpm| TelemetryFrame {
-            norm_suspension_travel: Corners { fl: 0.03, fr: 0.03, rl: 0.03, rr: 0.03 },
+            norm_suspension_travel: Corners {
+                fl: 0.03,
+                fr: 0.03,
+                rl: 0.03,
+                rr: 0.03,
+            },
             ..planted(gear, rpm)
         };
         for _ in 0..20 {
@@ -724,9 +771,15 @@ mod tests {
         }
         let m = stint_metrics(&timed(frames));
         assert_eq!(m.jumps, 1);
-        assert_eq!(m.gears.limiter_frac, 0.0, "airborne limiter time must not count");
+        assert_eq!(
+            m.gears.limiter_frac, 0.0,
+            "airborne limiter time must not count"
+        );
         assert_eq!(m.gears.top_gear, 4);
-        assert_eq!(m.gears.top_gear_max_rpm, 5000.0, "mid-air rpm must not count");
+        assert_eq!(
+            m.gears.top_gear_max_rpm, 5000.0,
+            "mid-air rpm must not count"
+        );
         assert_eq!(m.gears.upshifts, 0, "mid-air upshift must not count");
         assert_eq!(m.gears.avg_upshift_rpm, None);
         // Fractions are over the 40 grounded samples, not all 46.
@@ -785,25 +838,55 @@ mod tests {
     #[test]
     fn jump_landing_bottoming_is_excluded() {
         let mut frames = Vec::new();
-        let cruise = Corners { fl: 0.5, fr: 0.5, rl: 0.5, rr: 0.5 };
-        let airborne = Corners { fl: 0.03, fr: 0.03, rl: 0.03, rr: 0.03 };
-        let landing = Corners { fl: 0.99, fr: 0.99, rl: 0.5, rr: 0.5 };
+        let cruise = Corners {
+            fl: 0.5,
+            fr: 0.5,
+            rl: 0.5,
+            rr: 0.5,
+        };
+        let airborne = Corners {
+            fl: 0.03,
+            fr: 0.03,
+            rl: 0.03,
+            rr: 0.03,
+        };
+        let landing = Corners {
+            fl: 0.99,
+            fr: 0.99,
+            rl: 0.5,
+            rr: 0.5,
+        };
         for _ in 0..20 {
-            frames.push(TelemetryFrame { norm_suspension_travel: cruise, ..Default::default() });
+            frames.push(TelemetryFrame {
+                norm_suspension_travel: cruise,
+                ..Default::default()
+            });
         }
         for _ in 0..5 {
-            frames.push(TelemetryFrame { norm_suspension_travel: airborne, ..Default::default() });
+            frames.push(TelemetryFrame {
+                norm_suspension_travel: airborne,
+                ..Default::default()
+            });
         }
         for _ in 0..3 {
-            frames.push(TelemetryFrame { norm_suspension_travel: landing, ..Default::default() });
+            frames.push(TelemetryFrame {
+                norm_suspension_travel: landing,
+                ..Default::default()
+            });
         }
         for _ in 0..20 {
-            frames.push(TelemetryFrame { norm_suspension_travel: cruise, ..Default::default() });
+            frames.push(TelemetryFrame {
+                norm_suspension_travel: cruise,
+                ..Default::default()
+            });
         }
         // timed() spaces frames 0.1s apart: 5 airborne frames = 0.5s > 0.15s min.
         let m = stint_metrics(&timed(frames));
         assert_eq!(m.jumps, 1);
-        assert_eq!(m.landing_bottomed_excluded, 6, "3 frames x 2 bottomed wheels");
+        assert_eq!(
+            m.landing_bottomed_excluded, 6,
+            "3 frames x 2 bottomed wheels"
+        );
         assert_eq!(m.suspension.fl.bottomed_frac, 0.0, "landing must not count");
     }
 
@@ -811,7 +894,12 @@ mod tests {
     fn surface_classified_from_rumble() {
         let dirt: Vec<TelemetryFrame> = (0..10)
             .map(|_| TelemetryFrame {
-                surface_rumble: Corners { fl: 0.15, fr: 0.12, rl: 0.14, rr: 0.13 },
+                surface_rumble: Corners {
+                    fl: 0.15,
+                    fr: 0.12,
+                    rl: 0.14,
+                    rr: 0.13,
+                },
                 ..Default::default()
             })
             .collect();

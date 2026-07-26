@@ -1,7 +1,7 @@
 //! Text rendering of stint metrics. Observations only — no advice.
 
-use super::metrics::{stint_metrics, StintMetrics};
-use super::{classify_gaps, driving_segments, split_laps, GapKind, LapSlice, Stint};
+use super::metrics::{StintMetrics, stint_metrics};
+use super::{GapKind, LapSlice, Stint, classify_gaps, driving_segments, split_laps};
 use crate::packet::{class_name, drivetrain_name};
 use crate::util::{format_lap_time, speed_unit, speed_val, temp_unit, temp_val};
 use std::fmt::Write;
@@ -14,7 +14,12 @@ pub fn full_session_report(path: &Path) -> Result<String, String> {
     let session = Stint::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut out = String::new();
     if session.decode_errors > 0 {
-        writeln!(out, "warning: {} packets failed to decode", session.decode_errors).unwrap();
+        writeln!(
+            out,
+            "warning: {} packets failed to decode",
+            session.decode_errors
+        )
+        .unwrap();
     }
     let segments = driving_segments(&session.frames, 5.0);
     if segments.is_empty() {
@@ -26,7 +31,10 @@ pub fn full_session_report(path: &Path) -> Result<String, String> {
     writeln!(out, "{}: {} stint(s)\n", path.display(), segments.len()).unwrap();
     for gap in classify_gaps(&session.frames) {
         match gap.kind {
-            GapKind::Rewind { race_t_before, race_t_after } => writeln!(
+            GapKind::Rewind {
+                race_t_before,
+                race_t_after,
+            } => writeln!(
                 out,
                 "note: rewind on lap {} (race clock {:.1}s -> {:.1}s) — superseded \
                  driving erased, the kept retry counts",
@@ -54,7 +62,11 @@ pub fn full_session_report(path: &Path) -> Result<String, String> {
 pub fn render_recommendations(recs: &[super::recommend::Recommendation]) -> String {
     let mut out = String::new();
     if recs.is_empty() {
-        writeln!(out, "no recommendations — nothing in this session stood out").unwrap();
+        writeln!(
+            out,
+            "no recommendations — nothing in this session stood out"
+        )
+        .unwrap();
         return out;
     }
     for r in recs {
@@ -95,7 +107,8 @@ pub fn render_laps(laps: &[LapSlice]) -> String {
         };
         let extras = [
             m.wheelspin_frac.map(|w| format!("spin {:.1}%", w * 100.0)),
-            m.lockup_frac.map(|l| format!("brake-slip {:.1}%", l * 100.0)),
+            m.lockup_frac
+                .map(|l| format!("brake-slip {:.1}%", l * 100.0)),
             m.understeer_index.map(|i| format!("balance {i:+.2}")),
         ]
         .into_iter()
@@ -143,8 +156,24 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     let t = &m.tire_temp;
     let tv = temp_val;
     writeln!(out, "\n  tires ({} avg/max)", temp_unit()).unwrap();
-    writeln!(out, "    FL {:>5.0}/{:<5.0}  FR {:>5.0}/{:<5.0}", tv(t.fl.avg), tv(t.fl.max), tv(t.fr.avg), tv(t.fr.max)).unwrap();
-    writeln!(out, "    RL {:>5.0}/{:<5.0}  RR {:>5.0}/{:<5.0}", tv(t.rl.avg), tv(t.rl.max), tv(t.rr.avg), tv(t.rr.max)).unwrap();
+    writeln!(
+        out,
+        "    FL {:>5.0}/{:<5.0}  FR {:>5.0}/{:<5.0}",
+        tv(t.fl.avg),
+        tv(t.fl.max),
+        tv(t.fr.avg),
+        tv(t.fr.max)
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "    RL {:>5.0}/{:<5.0}  RR {:>5.0}/{:<5.0}",
+        tv(t.rl.avg),
+        tv(t.rl.max),
+        tv(t.rr.avg),
+        tv(t.rr.max)
+    )
+    .unwrap();
     let front = (t.fl.avg + t.fr.avg) / 2.0;
     let rear = (t.rl.avg + t.rr.avg) / 2.0;
     let left = (t.fl.avg + t.rl.avg) / 2.0;
@@ -154,7 +183,11 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     writeln!(
         out,
         "    front {} {:.0}{tu} vs rear | {} side {:.0}{tu} hotter",
-        if front >= rear { "hotter by" } else { "cooler by" },
+        if front >= rear {
+            "hotter by"
+        } else {
+            "cooler by"
+        },
         dt(front, rear),
         if left >= right { "left" } else { "right" },
         dt(left, right),
@@ -167,7 +200,10 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     writeln!(
         out,
         "    time over 100% slip: FL {} FR {} RL {} RR {}",
-        pct(s.fl), pct(s.fr), pct(s.rl), pct(s.rr),
+        pct(s.fl),
+        pct(s.fr),
+        pct(s.rl),
+        pct(s.rr),
     )
     .unwrap();
     if let Some(w) = m.wheelspin_frac {
@@ -177,13 +213,23 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         // With ABS on, sustained slip at the limit is normal threshold braking.
         writeln!(out, "    braking at/over slip limit: {}", pct(l)).unwrap();
     }
-    match (m.understeer_index, m.cornering_front_slip, m.cornering_rear_slip) {
+    match (
+        m.understeer_index,
+        m.cornering_front_slip,
+        m.cornering_rear_slip,
+    ) {
         (Some(idx), Some(front), Some(rear)) => writeln!(
             out,
             "    balance while cornering ({} of stint): {} {:+.2} \
              (front at {:.0}% of grip limit, rear {:.0}%)",
             pct(m.cornering_frac),
-            if idx > 0.05 { "understeer" } else if idx < -0.05 { "oversteer" } else { "neutral" },
+            if idx > 0.05 {
+                "understeer"
+            } else if idx < -0.05 {
+                "oversteer"
+            } else {
+                "neutral"
+            },
             idx,
             front * 100.0,
             rear * 100.0,
@@ -336,7 +382,9 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         .unwrap();
     }
     if let Some(d) = &m.driveline {
-        let scale = d.final_drive_scale(m.gears.effective_redline).unwrap_or(1.0);
+        let scale = d
+            .final_drive_scale(m.gears.effective_redline)
+            .unwrap_or(1.0);
         writeln!(
             out,
             "    drag model: flat-out top speed {:.0} {su} (longest run here reaches \

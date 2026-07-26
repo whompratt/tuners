@@ -91,7 +91,10 @@ impl Cutter {
         let mut out = Vec::new();
 
         if self.raw_failsafe {
-            out.push(Action::Write { recv_us, payload: payload.to_vec() });
+            out.push(Action::Write {
+                recv_us,
+                payload: payload.to_vec(),
+            });
             return out;
         }
 
@@ -134,7 +137,10 @@ impl Cutter {
                 }
                 self.flush(&mut out); // gap frames belong before this one
             }
-            out.push(Action::Write { recv_us, payload: payload.to_vec() });
+            out.push(Action::Write {
+                recv_us,
+                payload: payload.to_vec(),
+            });
             return out;
         }
 
@@ -247,8 +253,10 @@ fn journal_note(
         && let Some(car) = car
     {
         let name = crate::cars::car_name(car).unwrap_or("unknown car");
-        lines = format!("# {name} (ordinal {car})
-{lines}");
+        lines = format!(
+            "# {name} (ordinal {car})
+{lines}"
+        );
     }
     let write = std::fs::OpenOptions::new()
         .create(true)
@@ -289,7 +297,10 @@ pub fn run_recorder(
     socket
         .set_read_timeout(Some(Duration::from_millis(250)))
         .expect("set_read_timeout");
-    println!("recording automatically from udp {port} into {}", out_dir.display());
+    println!(
+        "recording automatically from udp {port} into {}",
+        out_dir.display()
+    );
 
     let mut cutter = Cutter::default();
     let mut writer: Option<StintWriter> = None;
@@ -360,16 +371,14 @@ pub fn run_recorder(
                                 // Baseline seed must survive serve restarts: with no
                                 // (matching) stint closed in this process, fall back
                                 // to the newest on-disk stint of the session car.
-                                let baseline = last_closed
-                                    .filter(|_| baseline_ok)
-                                    .or_else(|| {
-                                        crate::advise::latest_stint_for_car(
-                                            &out_dir.to_string_lossy(),
-                                            session.car,
-                                        )
-                                        .map(PathBuf::from)
-                                        .filter(|p| p != &path)
-                                    });
+                                let baseline = last_closed.filter(|_| baseline_ok).or_else(|| {
+                                    crate::advise::latest_stint_for_car(
+                                        &out_dir.to_string_lossy(),
+                                        session.car,
+                                    )
+                                    .map(PathBuf::from)
+                                    .filter(|p| p != &path)
+                                });
                                 journal_note(
                                     Path::new(&journal),
                                     baseline.as_deref(),
@@ -469,7 +478,10 @@ mod tests {
         assert_eq!(k[0], "open");
         assert_eq!(*k.last().unwrap(), "write");
         let writes = k.iter().filter(|s| **s == "write").count();
-        assert!((30..=32).contains(&writes), "prelude ~30s of frames, got {writes}");
+        assert!(
+            (30..=32).contains(&writes),
+            "prelude ~30s of frames, got {writes}"
+        );
     }
 
     #[test]
@@ -557,7 +569,9 @@ mod tests {
             if k.contains(&"open") {
                 opened = true;
                 // everything buffered so far is flushed raw
-                assert!(k.iter().filter(|s| **s == "write").count() as u32 >= UNDECODABLE_FAILSAFE_RUN);
+                assert!(
+                    k.iter().filter(|s| **s == "write").count() as u32 >= UNDECODABLE_FAILSAFE_RUN
+                );
             }
         }
         assert!(opened, "failsafe must open a raw recording");

@@ -105,14 +105,18 @@ pub fn split_delta(baseline: &StintProfile, bin_delta_s: &[f32]) -> Attribution 
         a.corners += 1;
     }
     a.corner_delta_s = a.entry_delta_s + a.exit_delta_s;
-    a.corner_share = if t_total > 0.0 { t_corner / t_total } else { 0.0 };
+    a.corner_share = if t_total > 0.0 {
+        t_corner / t_total
+    } else {
+        0.0
+    };
     a
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::profile::{build_composite, BinStats, LapProfile};
+    use crate::analysis::profile::{BinStats, LapProfile, build_composite};
 
     fn profile_with(bins_spec: &[(f32, f32)]) -> StintProfile {
         let bins: Vec<BinStats> = bins_spec
@@ -156,8 +160,16 @@ mod tests {
         let mut delta = vec![0.03f32; 10]; // corners: lost time
         delta.extend(vec![-0.01f32; 10]); // straights: gained time
         let a = split_delta(&baseline, &delta);
-        assert!((a.corner_delta_s - 0.3).abs() < 1e-4, "{}", a.corner_delta_s);
-        assert!((a.straight_delta_s + 0.1).abs() < 1e-4, "{}", a.straight_delta_s);
+        assert!(
+            (a.corner_delta_s - 0.3).abs() < 1e-4,
+            "{}",
+            a.corner_delta_s
+        );
+        assert!(
+            (a.straight_delta_s + 0.1).abs() < 1e-4,
+            "{}",
+            a.straight_delta_s
+        );
         // Corners are slow bins: they dominate lap time here.
         assert!(a.corner_share > 0.6, "{}", a.corner_share);
         assert_eq!(a.corners, 1);
