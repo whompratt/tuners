@@ -1,7 +1,11 @@
 <script lang="ts">
   import { app, loadSession, show } from "$lib/app.svelte";
+  import { advanced } from "$lib/advanced.svelte";
   import { commands, type AdviseView } from "$lib/bindings";
   import { fmtLap } from "$lib/units";
+  import { drawLandscape, landscapeLayout, type LandscapeData } from "$lib/charts/landscape";
+  import { palette } from "$lib/charts/palette";
+  import Chart from "$lib/ui/Chart.svelte";
 
   const OUTCOME_COLOR: Record<string, string> = {
     improved: "#199e70",
@@ -19,7 +23,6 @@
   let loading = $state(false);
   let acceptNote = $state("");
   let histSel = $state(0);
-  let histCanvas: HTMLCanvasElement | undefined = $state();
 
   // f32 crosses IPC as `number | null` (NaN honesty) — formatters tolerate it.
   const N = (v: number | null | undefined) => v ?? 0;
@@ -79,83 +82,28 @@
   // The selected family's measured landscape: tried values vs cumulative
   // delta (valley shape: down = faster), fitted curve, estimated optimum,
   // and the raw measurements behind it.
-  function drawHistory() {
-    if (!a || !histCanvas) return;
-    const l = a.landscapes[histSel];
-    if (!l) return;
-    const cv = histCanvas,
-      ctx = cv.getContext("2d")!;
-    const W = cv.clientWidth,
-      H = 170,
-      dpr = window.devicePixelRatio || 1;
-    cv.width = W * dpr;
-    cv.height = H * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, W, H);
-    ctx.font = "11px system-ui";
-    if (l.nodes.length < 2) {
-      ctx.fillStyle = "#8b8b90";
-      ctx.fillText("not enough mapped values to chart — drive more single-change stints", 10, 24);
-      return;
-    }
-    const xs = l.nodes.map((nd) => N(nd[0])),
-      ys = l.nodes.map((nd) => N(nd[1]));
-    const x0 = Math.min(...xs),
-      x1 = Math.max(...xs);
-    const y0 = Math.min(...ys, 0),
-      y1 = Math.max(...ys, 0);
-    const padX = (x1 - x0) * 0.08 || 1,
-      padY = (y1 - y0) * 0.18 || 0.05;
-    const X = (v: number) => 40 + ((v - (x0 - padX)) / (x1 + padX - (x0 - padX))) * (W - 55);
-    const Y = (v: number) => 12 + ((y1 + padY - v) / (y1 + padY - (y0 - padY))) * (H - 44);
-    ctx.strokeStyle = "rgba(139,139,144,.35)";
-    ctx.beginPath(); ctx.moveTo(40, Y(0)); ctx.lineTo(W - 8, Y(0)); ctx.stroke();
-    ctx.fillStyle = "#8b8b90";
-    ctx.fillText("0", 28, Y(0) + 3);
-    if (l.fit) {
-      const [fa, fb, fc] = [N(l.fit[0]), N(l.fit[1]), N(l.fit[2])];
-      ctx.strokeStyle = "rgba(57,135,229,.55)";
-      ctx.beginPath();
-      for (let i = 0; i <= 60; i++) {
-        const x = x0 - padX + (i / 60) * (x1 + padX - (x0 - padX));
-        const y = fa * x * x + fb * x + fc;
-        if (i) ctx.lineTo(X(x), Y(y));
-        else ctx.moveTo(X(x), Y(y));
-      }
-      ctx.stroke();
-    }
-    if (l.vertex != null) {
-      const vx = N(l.vertex);
-      ctx.strokeStyle = "rgba(25,158,112,.7)";
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath(); ctx.moveTo(X(vx), 12); ctx.lineTo(X(vx), H - 30); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = "#199e70";
-      ctx.fillText(`optimum ≈ ${l.vertex}`, Math.min(X(vx) + 5, W - 90), 22);
-    }
-    for (const nd of l.nodes) {
-      const v = N(nd[0]), cum = N(nd[1]);
-      ctx.fillStyle = "#3987e5";
-      ctx.beginPath(); ctx.arc(X(v), Y(cum), 3.5, 0, 7); ctx.fill();
-      ctx.fillStyle = "#c9c9ce";
-      ctx.fillText(`${v}`, X(v) - 8, H - 14);
-      ctx.fillStyle = "#8b8b90";
-      ctx.fillText(sgn(cum), Math.min(X(v) + 6, W - 45), Y(cum) - 6);
-    }
-  }
+  let histData = $derived.by((): LandscapeData | null => {
+    const l = a?.landscapes[histSel];
+    if (!l) return null;
+    return {
+      nodes: l.nodes.map((nd) => [N(nd[0]), N(nd[1])] as [number, number]),
+      fit: l.fit ? [N(l.fit[0]), N(l.fit[1]), N(l.fit[2])] : null,
+      vertex: l.vertex,
+    };
+  });
+  let histDraw = $derived.by(() => {
+    const data = histData;
+    return (ctx: CanvasRenderingContext2D, cssW: number) => {
+      if (!data) return;
+      drawLandscape(ctx, landscapeLayout(data, cssW), data, palette());
+    };
+  });
 
   function jump(path: string) {
     show(path);
   }
 
-  $effect(() => {
-    void histSel;
-    void a;
-    drawHistory();
-  });
 </script>
-
-<svelte:window onresize={drawHistory} />
 
 <div class="panel">
   <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
@@ -316,10 +264,9 @@
             {/each}
           </select>
         </div>
-        <canvas
-          bind:this={histCanvas}
-          style="width:100%;max-width:720px;height:170px;display:block;margin-top:6px"
-        ></canvas>
+        <div style="max-width:720px;margin-top:6px">
+          <Chart height={170} draw={histDraw} />
+        </div>
         {#if a.landscapes[histSel]}
           {@const land = a.landscapes[histSel]}
           <div style="margin-top:4px">
@@ -358,7 +305,7 @@
       </div>
       {#if a.recommendations.length}
         {#each a.recommendations as r (r.area + r.advice)}
-          <details class="adv-rec">
+          <details class="adv-rec" open={advanced.on}>
             <summary style="cursor:pointer">
               <span class="adv-conf" style="color:{CONF_COLOR[r.confidence]}">[{r.confidence}]</span>
               {#if r.suggestion}<b>{r.suggestion}</b> — {r.advice}{:else}<b>{r.area}</b>: {r.advice}{/if}

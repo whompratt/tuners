@@ -6,7 +6,7 @@
     UNITS, UNIT_DIMS, UNIT_PRESETS, UNIVERSAL_LIMITS,
     limToCanon, limToDisp, toCanon, toDisp, unitLabel, unitOf, unitPrefs,
   } from "$lib/units";
-  import { ask, message } from "@tauri-apps/plugin-dialog";
+  import { alertDialog, confirmDialog } from "$lib/ui/dialogs.svelte";
 
   let sessionFormOpen = $state(false);
   let tuneFormOpen = $state(false);
@@ -131,7 +131,7 @@
     }
     const r = await commands.updateSession(false, ssCarManual || ssCar, facts);
     if (r.status === "error") {
-      await message(r.error.message, { kind: "error" });
+      await alertDialog("Save failed", r.error.message);
       return;
     }
     sessionFormOpen = false;
@@ -241,18 +241,24 @@
       if (
         d.enabled &&
         d.queued &&
-        (await ask(`${d.queued} bundle(s) are still queued.\n\nYes = delete them, No = keep them (they upload if you re-enable).`, { title: "telemetry sharing" }))
+        (await confirmDialog({
+          title: "Telemetry sharing",
+          body: `${d.queued} bundle(s) are still queued.\n\nDelete them, or keep them? Kept bundles upload if you re-enable.`,
+          verb: "Delete queued",
+          cancel: "Keep queued",
+          danger: true,
+        }))
       ) {
         discard = true;
       }
       const r = await commands.setSharing(!d.enabled, null, discard);
       if (r.status === "error") {
-        await message(r.error.message, { kind: "error" });
+        await alertDialog("Save failed", r.error.message);
         return;
       }
       await renderSharing();
     } catch (e) {
-      await message(`telemetry sharing toggle failed: ${e}`, { kind: "error" });
+      await alertDialog("Telemetry sharing", `toggle failed: ${e}`);
     }
   }
 
@@ -263,7 +269,7 @@
       if (p.already) skipped.push(`${p.already} already shared/queued`);
       if (p.unjournaled) skipped.push(`${p.unjournaled} without tune history`);
       if (!p.stints) {
-        await message(`Nothing new to share${skipped.length ? ` — skipped: ${skipped.join(", ")}` : ""}.`);
+        await alertDialog("Share existing recordings", `Nothing new to share${skipped.length ? ` — skipped: ${skipped.join(", ")}` : ""}.`);
         return;
       }
       const msg =
@@ -274,10 +280,10 @@
         ` — names, descriptions, and journal notes are stripped. Uploads happen in the` +
         ` background while telemetry is idle.` +
         (skipped.length ? `\n\n(Skipped: ${skipped.join(", ")}.)` : "");
-      if (!(await ask(msg, { title: "share existing recordings" }))) return;
+      if (!(await confirmDialog({ title: "Share existing recordings", body: msg, verb: "Share", cancel: "Cancel" }))) return;
       const r = await commands.shareHistory();
       if (r.status === "error") {
-        await message(r.error.message, { kind: "error" });
+        await alertDialog("Save failed", r.error.message);
         return;
       }
       sharingOverride = `bundling ${r.data} recording(s) in the background…`;
@@ -286,14 +292,14 @@
         renderSharing();
       }, 4000);
     } catch (e) {
-      await message(`share existing recordings failed: ${e}`, { kind: "error" });
+      await alertDialog("Share existing recordings", `failed: ${e}`);
     }
   }
 
   async function resumeSession(id: string) {
     const r = await commands.resumeSession(id);
     if (r.status === "error") {
-      await message(r.error.message, { kind: "error" });
+      await alertDialog("Resume failed", r.error.message);
       return;
     }
     await loadSession();
@@ -303,7 +309,7 @@
   async function newSession() {
     const r = await commands.newSession(null, newName.trim() || null, null);
     if (r.status === "error") {
-      await message(r.error.message, { kind: "error" });
+      await alertDialog("New session failed", r.error.message);
       return;
     }
     newName = "";

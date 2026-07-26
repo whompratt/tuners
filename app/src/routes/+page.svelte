@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { events } from "$lib/bindings";
   import { app, loadSession, loadStints } from "$lib/app.svelte";
+  import { initAdvanced } from "$lib/advanced.svelte";
+  import DialogHost from "$lib/ui/DialogHost.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import SessionPanel from "$lib/components/SessionPanel.svelte";
   import LivePanel from "$lib/components/LivePanel.svelte";
@@ -10,6 +12,7 @@
   import LapChartPanel from "$lib/components/LapChartPanel.svelte";
 
   onMount(() => {
+    initAdvanced();
     (async () => {
       await loadStints(true);
       await loadSession();
@@ -27,6 +30,7 @@
   });
 </script>
 
+<DialogHost />
 <Sidebar />
 <main id="top">
   <SessionPanel />

@@ -6,6 +6,12 @@
   --grid: #2c2c2a; --baseline: #383835;
   --border: rgba(255,255,255,0.10);
   --accent: #c98500;
+  /* semantic colors (previously hardcoded per-site) */
+  --ok: #199e70; --danger: #e66767; --info: #3987e5;
+  /* shape + type scale */
+  --radius: 8px; --radius-sm: 6px;
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, Consolas, monospace;
 }
 * { box-sizing: border-box; margin: 0; }
 body {
@@ -164,3 +170,24 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 #q-tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
 #live-quality:hover #q-tip { display: block; }
 
+
+/* --- primitives (phase 2) --- */
+.dlg-backdrop {
+  position: fixed; inset: 0; z-index: 10;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.dlg {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px 20px; max-width: 460px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+}
+.dlg h3 { font-size: 15px; color: var(--ink); margin-bottom: 8px; }
+.dlg-body { font-size: 14px; color: var(--ink-2); white-space: pre-line; }
+.dlg-actions { margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { border-color: var(--danger); color: var(--ink); background: rgba(230,103,103,0.15); }
+.adv-toggle {
+  margin-top: 14px; font-size: 13px; color: var(--muted);
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+}

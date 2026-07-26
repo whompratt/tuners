@@ -28,7 +28,7 @@ const sanitizeLaps = (v: LapsView): Laps => ({
   laps: v.laps.map((l) => ({ lap: l.lap, time: num(l.time), standing: l.standing, speeds: l.speeds.map(num) })),
 });
 import { UNIT_DIMS, unitPrefs } from "./units";
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { alertDialog, confirmDialog } from "./ui/dialogs.svelte";
 import { save } from "@tauri-apps/plugin-dialog";
 
 export const app = $state({
@@ -93,16 +93,30 @@ export function pick(side: "a" | "b", file: string) {
 
 export async function deleteStint(file: string) {
   const name = file.split("/").pop()!;
-  if (!(await ask(`Delete ${name}?\n\nThis cannot be undone.`, { title: "Delete stint", kind: "warning" }))) return;
+  const ok = await confirmDialog({
+    title: "Delete stint",
+    body: `Delete ${name}?\n\nThis cannot be undone.`,
+    verb: "Delete",
+    cancel: "Keep",
+    danger: true,
+  });
+  if (!ok) return;
   let r = await commands.deleteStint(name, false);
   if (r.status === "error" && r.error.kind === "conflict") {
     // Journaled stint: the engine wants an explicit force. Advice survives
     // (the step is skipped, its note merged forward) but loses a measurement.
-    if (!(await ask(`${r.error.message}\n\nDelete anyway?`, { title: "Delete stint", kind: "warning" }))) return;
+    const force = await confirmDialog({
+      title: "Journaled stint",
+      body: `${r.error.message}\n\nDelete anyway?`,
+      verb: "Delete anyway",
+      cancel: "Keep",
+      danger: true,
+    });
+    if (!force) return;
     r = await commands.deleteStint(name, true);
   }
   if (r.status === "error") {
-    await message(`cannot delete: ${r.error.message}`, { kind: "error" });
+    await alertDialog("Delete failed", r.error.message);
     return;
   }
   if (app.selA === file) app.selA = null;
@@ -121,5 +135,5 @@ export async function exportBundle(file: string) {
   const dest = await save({ defaultPath: name.replace(/\.ftel$/, ".tar.zst") });
   if (!dest) return;
   const r = await commands.exportStint(name, dest);
-  if (r.status === "error") await message(`export failed: ${r.error.message}`, { kind: "error" });
+  if (r.status === "error") await alertDialog("Export failed", r.error.message);
 }

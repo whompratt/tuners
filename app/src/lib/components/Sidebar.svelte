@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app, show, pick, deleteStint, exportBundle } from "$lib/app.svelte";
+  import { advanced, toggleAdvanced } from "$lib/advanced.svelte";
 
   const carLabel = (s: { carName: string; car: number }) => s.carName || `car #${s.car}`;
 
@@ -102,4 +103,8 @@
   {:else}
     <div class="placeholder">no stint recordings yet — drive with the app running</div>
   {/if}
+  <label class="adv-toggle" title="expand expert detail (evidence, measurements) by default">
+    <input type="checkbox" style="width:auto" checked={advanced.on} onchange={toggleAdvanced} />
+    advanced mode
+  </label>
 </aside>
