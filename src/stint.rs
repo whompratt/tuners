@@ -42,8 +42,8 @@ impl StintWriter {
     }
 }
 
-pub struct StintReader {
-    reader: BufReader<File>,
+pub struct StintReader<R: Read = BufReader<File>> {
+    reader: R,
 }
 
 impl StintReader {
@@ -59,7 +59,22 @@ impl StintReader {
         }
         Ok(Self { reader })
     }
+}
 
+impl<'a> StintReader<&'a [u8]> {
+    /// Read an in-memory recording (bundle ingest validates without touching disk).
+    pub fn open_bytes(bytes: &'a [u8]) -> io::Result<Self> {
+        match bytes.strip_prefix(MAGIC.as_slice()) {
+            Some(rest) => Ok(Self { reader: rest }),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "not a tuners session file (bad magic)",
+            )),
+        }
+    }
+}
+
+impl<R: Read> StintReader<R> {
     /// Returns (receive micros, payload), or None at clean end-of-file.
     pub fn next_packet(&mut self) -> io::Result<Option<(u64, Vec<u8>)>> {
         let mut header = [0u8; 12];

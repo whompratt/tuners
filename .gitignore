@@ -7,6 +7,8 @@
 /receive-tokens.txt
 /outbox
 /tune-collect.txt
+/library
+/quarantine
 worker/node_modules
 worker/.wrangler
 worker/.dev.vars

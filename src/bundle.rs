@@ -282,7 +282,16 @@ fn strict_clause(clause: &str) -> Option<String> {
     }
 }
 
-fn render_manifest(m: &BTreeMap<String, String>) -> String {
+/// Test-only access to the raw writers, so integration tests can hand-craft
+/// hostile bundles (correct hashes, smuggled content) that `build` refuses
+/// to produce.
+#[doc(hidden)]
+pub mod raw {
+    pub use super::{render_manifest, tar_append};
+}
+
+#[doc(hidden)]
+pub fn render_manifest(m: &BTreeMap<String, String>) -> String {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let fields: Vec<String> =
         m.iter().map(|(k, v)| format!("\"{}\":\"{}\"", esc(k), esc(v))).collect();
@@ -341,7 +350,8 @@ fn json_string(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<Strin
 }
 
 /// Minimal ustar writer: enough for flat files with short names.
-fn tar_append(out: &mut Vec<u8>, name: &str, data: &[u8]) {
+#[doc(hidden)]
+pub fn tar_append(out: &mut Vec<u8>, name: &str, data: &[u8]) {
     let mut header = [0u8; 512];
     header[..name.len()].copy_from_slice(name.as_bytes());
     header[100..108].copy_from_slice(b"0000644\0");

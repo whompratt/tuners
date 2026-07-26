@@ -38,6 +38,10 @@ USAGE:
                     write the stint's telemetry-collection bundle
                     (bundle-<car>-<stamp>.tar.zst: raw recording + free-text-
                     stripped session/journal) for manual sharing or upload
+  tuners ingest   <dir> [--library library] [--quarantine quarantine]
+                    strict-validate received bundles (rclone-synced inbox or
+                    hand-delivered exports) and file survivors per sender;
+                    failures are quarantined with a written reason
   tuners receive  [--port 8090] [--bind 127.0.0.1] [--root inbox]
                   [--tokens receive-tokens.txt] [--blocklist receive-blocklist.txt]
                   [--max-mb 64] [--daily-mb 512] [--global-mb 20480]
@@ -75,6 +79,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "simulate" => cmd_simulate(&args[1..]),
         "receive" => cmd_receive(&args[1..]),
         "export" => cmd_export(&args[1..]),
+        "ingest" => cmd_ingest(&args[1..]),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
             Ok(())
@@ -451,6 +456,41 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
         bytes.len() as f64 / 1e6,
         raw_len as f64 / 1e6,
         raw_len as f64 / bytes.len() as f64,
+    );
+    Ok(())
+}
+
+fn cmd_ingest(args: &[String]) -> Result<(), String> {
+    let mut library = "library".to_string();
+    let mut quarantine = "quarantine".to_string();
+    let mut inbox: Option<String> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--library" => library = value(a, it.next())?.clone(),
+            "--quarantine" => quarantine = value(a, it.next())?.clone(),
+            _ if inbox.is_none() => inbox = Some(a.clone()),
+            other => return Err(format!("unexpected argument '{other}' for ingest")),
+        }
+    }
+    let inbox = inbox.ok_or("usage: tuners ingest <dir> [--library dir] [--quarantine dir]")?;
+    let report = tuners::ingest::ingest_dir(
+        inbox.as_ref(),
+        library.as_ref(),
+        quarantine.as_ref(),
+    )
+    .map_err(|e| e.to_string())?;
+    for name in &report.ingested {
+        println!("ingested  {name}");
+    }
+    for (name, reason) in &report.quarantined {
+        println!("QUARANTINED {name}: {reason}");
+    }
+    println!(
+        "{} ingested, {} already known, {} quarantined",
+        report.ingested.len(),
+        report.skipped,
+        report.quarantined.len(),
     );
     Ok(())
 }

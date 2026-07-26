@@ -3,6 +3,7 @@ pub mod analysis;
 pub mod bundle;
 pub mod capture;
 pub mod collect;
+pub mod ingest;
 pub mod cars;
 pub mod live;
 pub mod packet;
