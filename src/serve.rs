@@ -163,6 +163,48 @@ fn handle(
         }
         ("GET", "/api/sharing") => ("200 OK", "application/json", collect_json()),
         ("POST", "/api/sharing") => collect_post(&form_params(&request_body)),
+        ("GET", "/api/sharing/history") => {
+            let p = crate::collect::history_plan(
+                Path::new("."),
+                sessions_dir,
+                crate::collect::OUTBOX_DIR.as_ref(),
+            );
+            (
+                "200 OK",
+                "application/json",
+                format!(
+                    "{{\"campaigns\":{},\"stints\":{},\"mb\":{:.1},\"unjournaled\":{},\"already\":{}}}",
+                    p.campaigns,
+                    p.items.len(),
+                    p.bytes as f64 / 1e6,
+                    p.unjournaled,
+                    p.already,
+                ),
+            )
+        }
+        ("POST", "/api/sharing/history") => {
+            // Server-side consent guard: historic sharing is a separate
+            // deliberate act, and never possible while sharing is off.
+            let cfg = crate::collect::CollectConfig::load(crate::collect::CONFIG_PATH.as_ref());
+            if !cfg.ready() {
+                (
+                    "403 Forbidden",
+                    "text/plain; charset=utf-8",
+                    "turn on telemetry sharing first".into(),
+                )
+            } else {
+                let plan = crate::collect::history_plan(
+                    Path::new("."),
+                    sessions_dir,
+                    crate::collect::OUTBOX_DIR.as_ref(),
+                );
+                let n = plan.items.len();
+                std::thread::spawn(move || {
+                    crate::collect::history_enqueue(plan, crate::collect::OUTBOX_DIR.as_ref());
+                });
+                ("200 OK", "application/json", format!("{{\"ok\":true,\"queuing\":{n}}}"))
+            }
+        }
         ("GET", "/api/sessions") => (
             "200 OK",
             "application/json",

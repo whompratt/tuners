@@ -192,6 +192,18 @@ pub fn drain(
         match upload(&cfg.endpoint, &cfg.token, &path) {
             Ok(code) if (200..300).contains(&code) => {
                 let _ = std::fs::remove_file(&path);
+                // Ledger of shared bundles: keeps "share existing recordings"
+                // idempotent (uploaded bundles leave the outbox, so the file
+                // system alone can't remember them).
+                let _ = std::fs::create_dir_all(outbox);
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(outbox.join("sent.txt"))
+                {
+                    use std::io::Write as _;
+                    let _ = writeln!(f, "{name}");
+                }
                 log.push(format!("uploaded {name}"));
             }
             // Permanent rejections: retrying forever would spin — park them
@@ -214,6 +226,127 @@ pub fn drain(
         }
     }
     log
+}
+
+/// Bundle names confirmed uploaded (the drainer's ledger): uploaded bundles
+/// leave the outbox, so the filesystem alone can't remember them.
+fn sent_names(outbox: &Path) -> std::collections::BTreeSet<String> {
+    std::fs::read_to_string(outbox.join("sent.txt"))
+        .map(|t| {
+            t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What "share existing recordings" would do (plan 009 addendum): historic
+/// stints are shared per CAMPAIGN — each journaled stint pairs with its own
+/// campaign's session + journal, so archived campaigns ship with honest
+/// context instead of the active session's. Unjournaled recordings have no
+/// campaign to interpret them with and are only counted.
+#[derive(Debug, Default)]
+pub struct HistoryPlan {
+    /// (stint, session file, journal file) per bundle to build.
+    pub items: Vec<(PathBuf, PathBuf, PathBuf)>,
+    pub campaigns: usize,
+    /// Raw bytes of the recordings to be bundled (pre-compression).
+    pub bytes: u64,
+    pub unjournaled: usize,
+    /// Skipped because already queued or already confirmed uploaded.
+    pub already: usize,
+}
+
+/// Campaign pairs under `root`: the active session + its car's journal, plus
+/// every archived pair (tune-session-<id>.txt / tune-journal-<id>.txt —
+/// covers both the stamped and the legacy car-switch naming).
+fn campaign_pairs(root: &Path) -> Vec<(PathBuf, PathBuf)> {
+    let mut out = Vec::new();
+    let active = root.join("tune-session.txt");
+    let session = TuningSession::load(&active);
+    if session.car.is_some() {
+        let base = root.join("tune-journal.txt");
+        let journal =
+            crate::tuning::journal_path_for(session.car, &base.to_string_lossy());
+        out.push((active, PathBuf::from(journal)));
+    }
+    let mut archived = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(root) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(id) =
+                name.strip_prefix("tune-session-").and_then(|n| n.strip_suffix(".txt"))
+            {
+                archived.push((e.path(), root.join(format!("tune-journal-{id}.txt"))));
+            }
+        }
+    }
+    archived.sort();
+    out.extend(archived);
+    out
+}
+
+pub fn history_plan(root: &Path, sessions_dir: &str, outbox: &Path) -> HistoryPlan {
+    let sent = sent_names(outbox);
+    let mut plan = HistoryPlan::default();
+    let mut seen: std::collections::BTreeSet<PathBuf> = Default::default();
+    for (spath, jpath) in campaign_pairs(root) {
+        let session = TuningSession::load(&spath);
+        let Some(car) = session.car else { continue };
+        let Ok(jtext) = std::fs::read_to_string(&jpath) else { continue };
+        let mut used = false;
+        for entry in crate::analysis::journal::parse_journal(&jtext) {
+            let stint = root.join(&entry.path);
+            if !seen.insert(stint.clone()) {
+                continue; // parked/resumed campaigns can list a stint twice
+            }
+            let Ok(md) = stint.metadata() else { continue }; // recording deleted
+            let Ok(name) = crate::bundle::bundle_name(car, &stint) else { continue };
+            if sent.contains(&name) || outbox.join(&name).exists() {
+                plan.already += 1;
+                continue;
+            }
+            plan.bytes += md.len();
+            plan.items.push((stint, spath.clone(), jpath.clone()));
+            used = true;
+        }
+        if used {
+            plan.campaigns += 1;
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir(root.join(sessions_dir)) {
+        plan.unjournaled = rd
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "ftel"))
+            .filter(|e| !seen.contains(&e.path()))
+            .count();
+    }
+    plan
+}
+
+/// Bundle each planned stint into the outbox (worker-thread work: bundling
+/// re-decodes every packet). Returns how many were queued; the drainer
+/// uploads them on its usual idle-gated schedule.
+pub fn history_enqueue(plan: HistoryPlan, outbox: &Path) -> usize {
+    let mut cache: std::collections::BTreeMap<PathBuf, (TuningSession, String)> =
+        Default::default();
+    let mut queued = 0;
+    for (stint, spath, jpath) in plan.items {
+        let (session, journal) = cache.entry(spath.clone()).or_insert_with(|| {
+            (
+                TuningSession::load(&spath),
+                std::fs::read_to_string(&jpath).unwrap_or_default(),
+            )
+        });
+        match enqueue(outbox, &stint, session, journal) {
+            Ok(Some(p)) => {
+                println!("collect: queued {}", p.display());
+                queued += 1;
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("collect: {} not bundled: {e}", stint.display()),
+        }
+    }
+    println!("collect: history backfill queued {queued} bundle(s)");
+    queued
 }
 
 /// PUT one bundle via curl; returns the HTTP status code.

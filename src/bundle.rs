@@ -46,6 +46,25 @@ pub struct Bundle {
     pub journal_txt: String,
 }
 
+/// The bundle file name a recording will get: recordings are
+/// stint-<stamp>.ftel and the stamp names the bundle; other .ftel stems
+/// (fixtures) pass through as-is — charset-fenced because the name lands in
+/// the upload URL.
+pub fn bundle_name(car: i32, stint_path: &Path) -> Result<String, String> {
+    let file_name = stint_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("bad stint path")?;
+    let stamp = file_name
+        .strip_suffix(".ftel")
+        .map(|s| s.strip_prefix("stint-").unwrap_or(s))
+        .filter(|s| {
+            !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+        .ok_or_else(|| format!("{file_name}: expected <name>.ftel with a plain-ascii stem"))?;
+    Ok(format!("bundle-{car}-{stamp}.tar.zst"))
+}
+
 /// Build the bundle for one recording. Returns (file name, bytes).
 pub fn build(
     stint_path: &Path,
@@ -55,30 +74,22 @@ pub fn build(
     let car = session
         .car
         .ok_or("session has no car — export needs an active tuning session")?;
-    let file_name = stint_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or("bad stint path")?;
-    // Recordings are stint-<stamp>.ftel; the stamp names the bundle. Other
-    // .ftel stems (fixtures) pass through as-is — charset-fenced because the
-    // stamp lands in the upload URL.
-    let stamp = file_name
-        .strip_suffix(".ftel")
-        .map(|s| s.strip_prefix("stint-").unwrap_or(s))
-        .filter(|s| {
-            !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        })
-        .ok_or_else(|| format!("{file_name}: expected <name>.ftel with a plain-ascii stem"))?;
+    let name = bundle_name(car, stint_path)?;
+    let stamp = name
+        .strip_prefix(&format!("bundle-{car}-"))
+        .and_then(|s| s.strip_suffix(".tar.zst"))
+        .unwrap_or_default()
+        .to_string();
 
     // The recording must decode end-to-end before it ships: a truncated or
     // corrupt stint is caught at the sender, where the original still exists.
     let mut reader = crate::stint::StintReader::open(stint_path).map_err(|e| e.to_string())?;
     let mut packets = 0u64;
-    while reader.next_packet().map_err(|e| format!("{file_name}: {e}"))?.is_some() {
+    while reader.next_packet().map_err(|e| format!("{name}: {e}"))?.is_some() {
         packets += 1;
     }
     if packets == 0 {
-        return Err(format!("{file_name}: no packets — refusing to bundle an empty stint"));
+        return Err(format!("{name}: no packets — refusing to bundle an empty stint"));
     }
     let stint = std::fs::read(stint_path).map_err(|e| e.to_string())?;
 
@@ -111,7 +122,7 @@ pub fn build(
         return Err("self-verify failed: bundle does not round-trip (not exported)".into());
     }
 
-    Ok((format!("bundle-{car}-{stamp}.tar.zst"), bytes))
+    Ok((name, bytes))
 }
 
 /// Decompress, parse, and hash-verify a bundle. Strict: unknown members,

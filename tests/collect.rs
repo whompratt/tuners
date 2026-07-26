@@ -82,7 +82,77 @@ fn enqueue_then_drain_uploads_and_clears() {
     // Draining an empty outbox is a no-op; re-uploading the same content
     // would dedupe server-side anyway.
     assert!(collect::drain(&outbox, &cfg, &|| false).is_empty());
+
+    // The upload landed in the sent ledger — history backfill's memory.
+    let sent = std::fs::read_to_string(outbox.join("sent.txt")).unwrap();
+    assert_eq!(sent.trim(), "bundle-4165-real-01.tar.zst");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Historic sharing: journaled stints pair with their own campaign's context,
+/// dedupe against the ledger/outbox, and unjournaled recordings only count.
+#[test]
+fn history_plan_is_per_campaign_and_idempotent() {
+    let root = temp_dir("history");
+    let sessions = root.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let outbox = root.join("outbox");
+    for name in ["stint-20260101-000001.ftel", "stint-20260102-000002.ftel", "orphan.ftel"] {
+        std::fs::copy(fixture_stint(), sessions.join(name)).unwrap();
+    }
+
+    // Active campaign (car 4165) journals the first stint...
+    std::fs::write(
+        root.join("tune-session.txt"),
+        "# tuners tuning session\ncar = 4165\n\n[tune t1]\narb_f = 24\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tune-journal-4165.txt"),
+        "# ordinal 4165\nsessions/stint-20260101-000001.ftel | front arb -2\n",
+    )
+    .unwrap();
+    // ...an archived campaign (car 9999) journals the second.
+    std::fs::write(
+        root.join("tune-session-9999-20260101-120000.txt"),
+        "# tuners tuning session\ncar = 9999\n\n[tune t1]\narb_r = 30\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tune-journal-9999-20260101-120000.txt"),
+        "# ordinal 9999\nsessions/stint-20260102-000002.ftel | rear arb +1\n# parked 20260102-000100\n",
+    )
+    .unwrap();
+
+    let plan = collect::history_plan(&root, "sessions", &outbox);
+    assert_eq!(plan.items.len(), 2, "{plan:?}");
+    assert_eq!(plan.campaigns, 2);
+    assert_eq!(plan.unjournaled, 1, "orphan.ftel has no campaign");
+    assert_eq!(plan.already, 0);
+    assert!(plan.bytes > 0);
+
+    // A ledger entry excludes the already-shared stint from the next plan.
+    std::fs::create_dir_all(&outbox).unwrap();
+    std::fs::write(outbox.join("sent.txt"), "bundle-4165-20260101-000001.tar.zst\n").unwrap();
+    let plan = collect::history_plan(&root, "sessions", &outbox);
+    assert_eq!(plan.items.len(), 1, "{plan:?}");
+    assert_eq!(plan.already, 1);
+
+    // Enqueue builds the remaining bundle with ITS campaign's car + journal.
+    assert_eq!(collect::history_enqueue(plan, &outbox), 1);
+    let queued = collect::queued(&outbox);
+    assert_eq!(queued.len(), 1);
+    let name = queued[0].file_name().unwrap().to_str().unwrap().to_string();
+    assert_eq!(name, "bundle-9999-20260102-000002.tar.zst");
+    let b = tuners::bundle::open(&std::fs::read(&queued[0]).unwrap()).unwrap();
+    assert_eq!(b.manifest.get("car").map(String::as_str), Some("9999"));
+    assert!(b.journal_txt.contains("rear arb +1"), "{}", b.journal_txt);
+
+    // Re-planning now sees everything as shared or queued: fully idempotent.
+    let plan = collect::history_plan(&root, "sessions", &outbox);
+    assert!(plan.items.is_empty(), "{plan:?}");
+    assert_eq!(plan.already, 2);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

@@ -202,6 +202,8 @@
             <b>telemetry sharing</b>
             <span id="collect-status" style="color:var(--muted)"></span>
             <span style="flex:1"></span>
+            <button id="collect-history" class="btn" disabled
+              title="turn on sharing first">share existing recordings…</button>
             <button id="collect-toggle" class="btn">sharing…</button>
           </div>
           <div style="color:var(--muted);font-size:12px;margin-top:6px;max-width:640px">
@@ -1128,7 +1130,42 @@ async function renderCollect() {
   }
   $('collect-status').textContent = bits.join(' · ');
   $('collect-toggle').textContent = d.enabled ? 'turn off' : 'turn on sharing';
+  // Historic sharing is a separate consent moment: dead until sharing is on
+  // (and the server refuses it regardless).
+  const hist = $('collect-history');
+  hist.disabled = !d.enabled;
+  hist.title = d.enabled
+    ? 'bundle recordings from before sharing was enabled (asks first)'
+    : 'turn on sharing first';
 }
+
+$('collect-history').onclick = async () => {
+  try {
+    const p = await (await fetch('/api/sharing/history')).json();
+    const skipped = [];
+    if (p.already) skipped.push(`${p.already} already shared/queued`);
+    if (p.unjournaled) skipped.push(`${p.unjournaled} without tune history`);
+    if (!p.stints) {
+      alert(`Nothing new to share${skipped.length ? ` — skipped: ${skipped.join(', ')}` : ''}.`);
+      return;
+    }
+    const msg = `Share ${p.stints} recording${p.stints === 1 ? '' : 's'} from `
+      + `${p.campaigns} session${p.campaigns === 1 ? '' : 's'} (~${p.mb} MB raw)`
+      + ` recorded before sharing was enabled?\n\n`
+      + `Same rules as live sharing: raw telemetry, setup values, and tune deltas only`
+      + ` — names, descriptions, and journal notes are stripped. Uploads happen in the`
+      + ` background while telemetry is idle.`
+      + (skipped.length ? `\n\n(Skipped: ${skipped.join(', ')}.)` : '');
+    if (!confirm(msg)) return;
+    const r = await fetch('/api/sharing/history', { method: 'POST' });
+    if (!r.ok) { alert(await r.text()); return; }
+    const d = await r.json();
+    $('collect-status').textContent = `bundling ${d.queuing} recording(s) in the background…`;
+    setTimeout(() => renderCollect().catch(() => {}), 4000);
+  } catch (e) {
+    alert(`share existing recordings failed: ${e}`);
+  }
+};
 
 // Wired at load, not inside renderCollect: the toggle must work (or say why
 // it can't) even when the status render failed. Every failure is audible.
