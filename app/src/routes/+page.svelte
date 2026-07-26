@@ -1,44 +1,38 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { commands, events, type SessionView, type StintRow, type LiveStateView } from "$lib/bindings";
-
-  // Phase 1a placeholder: proves the typed command/event wiring end to end.
-  // The real screens land with the parity port (plan 010 phase 1b).
-  let session: SessionView | null = $state(null);
-  let stints: StintRow[] = $state([]);
-  let live: LiveStateView | null = $state(null);
+  import { events } from "$lib/bindings";
+  import { app, loadSession, loadStints } from "$lib/app.svelte";
+  import Sidebar from "$lib/components/Sidebar.svelte";
+  import SessionPanel from "$lib/components/SessionPanel.svelte";
+  import LivePanel from "$lib/components/LivePanel.svelte";
+  import ComparePanel from "$lib/components/ComparePanel.svelte";
+  import AdvicePanel from "$lib/components/AdvicePanel.svelte";
+  import LapChartPanel from "$lib/components/LapChartPanel.svelte";
 
   onMount(() => {
-    commands.session().then((s) => (session = s));
-    commands.stints().then((rows) => (stints = rows));
-    const un = events.liveStateEvent.listen((e) => (live = e.payload));
+    (async () => {
+      await loadStints(true);
+      await loadSession();
+    })();
+    const subs = [
+      events.liveStateEvent.listen((e) => (app.live = e.payload)),
+      events.qualityEvent.listen((e) => (app.quality = e.payload)),
+      // rotation (new recording opened) or a finished run: refresh the sidebar
+      events.runsChangedEvent.listen(() => loadStints(true)),
+      events.runFinishedEvent.listen(() => loadStints(true)),
+    ];
     return () => {
-      un.then((f) => f());
+      for (const s of subs) s.then((un) => un());
     };
   });
 </script>
 
-<main>
-  <h1>tuners</h1>
-  <p>
-    {#if session?.carName}
-      session: {session.carName}
-    {:else}
-      no active session
-    {/if}
-    · {stints.length} runs on disk
-  </p>
-  <p>
-    recorder: {live?.recorder.mode ?? "starting…"}
-    {#if live?.recorder.file}
-      — {live.recorder.file} ({live.recorder.packets} packets)
-    {/if}
-  </p>
+<Sidebar />
+<main id="top">
+  <SessionPanel />
+  <LivePanel />
+  <ComparePanel />
+  <AdvicePanel />
+  <LapChartPanel />
+  <pre class={app.reportPlaceholder ? "placeholder" : ""}>{app.report}</pre>
 </main>
-
-<style>
-  main {
-    font-family: system-ui, sans-serif;
-    padding: 2rem;
-  }
-</style>

@@ -1,0 +1,125 @@
+// Shared app state + cross-panel actions (plan 010 phase 1b). One $state
+// object mirrors what the old dashboard kept in module-level lets; panels
+// read it reactively and call the actions below.
+
+import {
+  commands,
+  type ApiError,
+  type LapsView,
+  type LiveStateView,
+  type QualityView,
+  type SessionView,
+  type StintRow,
+} from "./bindings";
+
+// f32 crosses IPC as `number | null` (NaN serializes to null); chart data is
+// sanitized once here so panel math works on plain numbers.
+export type Laps = {
+  binMeters: number;
+  bestTime: number;
+  corroborated: boolean[];
+  laps: { lap: number; time: number; standing: boolean; speeds: number[] }[];
+};
+const num = (v: number | null) => v ?? 0;
+const sanitizeLaps = (v: LapsView): Laps => ({
+  binMeters: num(v.binMeters),
+  bestTime: num(v.bestTime),
+  corroborated: v.corroborated,
+  laps: v.laps.map((l) => ({ lap: l.lap, time: num(l.time), standing: l.standing, speeds: l.speeds.map(num) })),
+});
+import { UNIT_DIMS, unitPrefs } from "./units";
+import { ask, message } from "@tauri-apps/plugin-dialog";
+import { save } from "@tauri-apps/plugin-dialog";
+
+export const app = $state({
+  stints: [] as StintRow[],
+  session: null as SessionView | null,
+  live: null as LiveStateView | null,
+  quality: null as QualityView | null,
+  qualitySeen: false,
+  selA: null as string | null,
+  selB: null as string | null,
+  shownFile: null as string | null,
+  report: "select a stint",
+  reportPlaceholder: true,
+  lapData: null as Laps | null,
+  carFilter: "all",
+  showEarlierStints: false,
+  // bumped whenever unit prefs change so unit-dependent markup re-renders
+  unitsTick: 0,
+});
+
+export const errMsg = (e: ApiError): string => e.message;
+
+export async function loadStints(resetFilter: boolean) {
+  app.stints = await commands.stints();
+  if (!app.stints.length) return;
+  // default: the latest session's car (list is filename-sorted = chronological)
+  const valid = new Set(["all", ...app.stints.map((s) => String(s.car))]);
+  if (resetFilter || !valid.has(app.carFilter)) {
+    app.carFilter = String(app.stints[app.stints.length - 1].car);
+  }
+}
+
+export async function loadSession() {
+  app.session = await commands.session();
+  for (const [dim] of UNIT_DIMS) {
+    const v = app.session?.facts[`unit_${dim}`];
+    if (v) unitPrefs[dim] = v;
+  }
+  app.unitsTick++;
+  // Scope the stint list to the session's car by default.
+  if (
+    app.session?.car != null &&
+    app.stints.some((s) => s.car === app.session!.car)
+  ) {
+    app.carFilter = String(app.session.car);
+  }
+}
+
+export async function show(file: string) {
+  app.shownFile = file;
+  app.reportPlaceholder = false;
+  app.report = "analyzing…";
+  const [report, laps] = await Promise.all([commands.report(file), commands.laps(file)]);
+  app.report = report.status === "ok" ? report.data : report.error.message;
+  app.lapData = laps.status === "ok" && laps.data.laps.length ? sanitizeLaps(laps.data) : null;
+}
+
+export function pick(side: "a" | "b", file: string) {
+  if (side === "a") app.selA = app.selA === file ? null : file;
+  else app.selB = app.selB === file ? null : file;
+}
+
+export async function deleteStint(file: string) {
+  const name = file.split("/").pop()!;
+  if (!(await ask(`Delete ${name}?\n\nThis cannot be undone.`, { title: "Delete stint", kind: "warning" }))) return;
+  let r = await commands.deleteStint(name, false);
+  if (r.status === "error" && r.error.kind === "conflict") {
+    // Journaled stint: the engine wants an explicit force. Advice survives
+    // (the step is skipped, its note merged forward) but loses a measurement.
+    if (!(await ask(`${r.error.message}\n\nDelete anyway?`, { title: "Delete stint", kind: "warning" }))) return;
+    r = await commands.deleteStint(name, true);
+  }
+  if (r.status === "error") {
+    await message(`cannot delete: ${r.error.message}`, { kind: "error" });
+    return;
+  }
+  if (app.selA === file) app.selA = null;
+  if (app.selB === file) app.selB = null;
+  if (app.shownFile === file) {
+    app.shownFile = null;
+    app.report = "select a stint";
+    app.reportPlaceholder = true;
+    app.lapData = null;
+  }
+  await loadStints(true);
+}
+
+export async function exportBundle(file: string) {
+  const name = file.split("/").pop()!;
+  const dest = await save({ defaultPath: name.replace(/\.ftel$/, ".tar.zst") });
+  if (!dest) return;
+  const r = await commands.exportStint(name, dest);
+  if (r.status === "error") await message(`export failed: ${r.error.message}`, { kind: "error" });
+}

@@ -207,7 +207,7 @@ export type MeasurementView = {
 	effects: { [key in string]: number | null },
 };
 
-export type OutcomeView = ({ word: string; delta_s: number | null; unequal_laps: boolean }) & { error?: never } | ({ error: string }) & { delta_s?: never; unequal_laps?: never; word?: never };
+export type OutcomeView = ({ word: string; deltaS: number | null; unequalLaps: boolean }) & { error?: never } | ({ error: string }) & { deltaS?: never; unequalLaps?: never; word?: never };
 
 /**
  *  Data-quality summary, emitted only when it changes; None until a
