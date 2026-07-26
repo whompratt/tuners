@@ -132,9 +132,18 @@ fn apply_units(args: &[String]) -> Result<Vec<String>, String> {
         }
     }
     let units = match choice.as_deref() {
-        Some("imperial") => tuners::util::DisplayUnits { temp_c: false, speed_kmh: false },
-        Some("metric") => tuners::util::DisplayUnits { temp_c: true, speed_kmh: true },
-        Some("uk") => tuners::util::DisplayUnits { temp_c: true, speed_kmh: false },
+        Some("imperial") => tuners::util::DisplayUnits {
+            temp_c: false,
+            speed_kmh: false,
+        },
+        Some("metric") => tuners::util::DisplayUnits {
+            temp_c: true,
+            speed_kmh: true,
+        },
+        Some("uk") => tuners::util::DisplayUnits {
+            temp_c: true,
+            speed_kmh: false,
+        },
         Some(other) => return Err(format!("--units {other}: use imperial, metric, or uk")),
         None => {
             let s = tuners::tuning::TuningSession::load("tune-session.txt".as_ref());
@@ -294,6 +303,10 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             }
             println!("{line}");
         }
+        let movers = |fx: &tuners::analysis::effects::Effects| {
+            let m = tuners::analysis::effects::movers(fx, Some(&view.effect_floor));
+            (!m.is_empty()).then(|| tuners::analysis::effects::describe(&m))
+        };
         if let Some(a) = &view.anchor {
             if a.areas.is_empty() {
                 println!(
@@ -314,9 +327,20 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                     a.split.0,
                     a.split.1,
                     a.split.2,
-                    if a.weak { "  [single-lap side — corroborate]" } else { "" },
-                    if a.reconciled { "" } else { "  [multi-area — informational]" },
+                    if a.weak {
+                        "  [single-lap side — corroborate]"
+                    } else {
+                        ""
+                    },
+                    if a.reconciled {
+                        ""
+                    } else {
+                        "  [multi-area — informational]"
+                    },
                 );
+                if let Some(m) = movers(&a.effects) {
+                    println!("    behaviour that moved with it (above noise): {m}");
+                }
             }
         }
         if let Some(aba) = &view.aba {
@@ -326,6 +350,9 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                  drift are noise",
                 aba.families, aba.effect_s, aba.drift_s,
             );
+            if let Some(m) = movers(&aba.effects) {
+                println!("    drift-corrected behavioural movement: {m}");
+            }
         }
     }
 
@@ -347,7 +374,11 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             if pairs == 1 { "" } else { "s" },
         );
     }
-    let mapped: Vec<_> = view.landscapes.iter().filter(|l| l.nodes.len() >= 2).collect();
+    let mapped: Vec<_> = view
+        .landscapes
+        .iter()
+        .filter(|l| l.nodes.len() >= 2)
+        .collect();
     if !mapped.is_empty() {
         println!("\nmeasured landscapes (cumulative ideal delta vs first tried; lower = faster):");
         for l in mapped {
@@ -388,7 +419,10 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         );
     }
     println!();
-    print!("{}", analysis::report::render_recommendations(&view.recommendations));
+    print!(
+        "{}",
+        analysis::report::render_recommendations(&view.recommendations)
+    );
     Ok(())
 }
 
@@ -474,12 +508,8 @@ fn cmd_ingest(args: &[String]) -> Result<(), String> {
         }
     }
     let inbox = inbox.ok_or("usage: tuners ingest <dir> [--library dir] [--quarantine dir]")?;
-    let report = tuners::ingest::ingest_dir(
-        inbox.as_ref(),
-        library.as_ref(),
-        quarantine.as_ref(),
-    )
-    .map_err(|e| e.to_string())?;
+    let report = tuners::ingest::ingest_dir(inbox.as_ref(), library.as_ref(), quarantine.as_ref())
+        .map_err(|e| e.to_string())?;
     for name in &report.ingested {
         println!("ingested  {name}");
     }

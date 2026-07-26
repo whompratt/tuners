@@ -43,22 +43,20 @@ pub fn run(
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_secs(60));
-                let cfg = crate::collect::CollectConfig::load(
-                    crate::collect::CONFIG_PATH.as_ref(),
-                );
+                let cfg = crate::collect::CollectConfig::load(crate::collect::CONFIG_PATH.as_ref());
                 if !cfg.ready() {
                     continue;
                 }
                 let fresh = || {
-                    live.lock().unwrap().last_data.is_some_and(|t| {
-                        t.elapsed() < crate::collect::IDLE_BEFORE_DRAIN
-                    })
+                    live.lock()
+                        .unwrap()
+                        .last_data
+                        .is_some_and(|t| t.elapsed() < crate::collect::IDLE_BEFORE_DRAIN)
                 };
                 if fresh() {
                     continue;
                 }
-                for line in
-                    crate::collect::drain(crate::collect::OUTBOX_DIR.as_ref(), &cfg, &fresh)
+                for line in crate::collect::drain(crate::collect::OUTBOX_DIR.as_ref(), &cfg, &fresh)
                 {
                     println!("collect: {line}");
                 }
@@ -121,7 +119,12 @@ fn handle(
     // Binary response (the rest of the API is text) — handled outside the match.
     if target.split('?').next() == Some("/api/export") {
         let query = target.split_once('?').map(|(_, q)| q).unwrap_or("");
-        serve_export(stream, sessions_dir, query_param(query, "file"), session_file);
+        serve_export(
+            stream,
+            sessions_dir,
+            query_param(query, "file"),
+            session_file,
+        );
         return;
     }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
@@ -148,14 +151,22 @@ fn handle(
             tune_post(&form_params(&request_body), session_path, recorder)
         }
         ("POST", "/api/session/new") => {
-            let out = session_new(&form_params(&request_body), session_file, "tune-journal.txt");
+            let out = session_new(
+                &form_params(&request_body),
+                session_file,
+                "tune-journal.txt",
+            );
             if out.0 == "200 OK" {
                 split_and_drop_pending(recorder);
             }
             out
         }
         ("POST", "/api/session/resume") => {
-            let out = session_resume(&form_params(&request_body), session_file, "tune-journal.txt");
+            let out = session_resume(
+                &form_params(&request_body),
+                session_file,
+                "tune-journal.txt",
+            );
             if out.0 == "200 OK" {
                 split_and_drop_pending(recorder);
             }
@@ -202,7 +213,11 @@ fn handle(
                 std::thread::spawn(move || {
                     crate::collect::history_enqueue(plan, crate::collect::OUTBOX_DIR.as_ref());
                 });
-                ("200 OK", "application/json", format!("{{\"ok\":true,\"queuing\":{n}}}"))
+                (
+                    "200 OK",
+                    "application/json",
+                    format!("{{\"ok\":true,\"queuing\":{n}}}"),
+                )
             }
         }
         ("GET", "/api/sessions") => (
@@ -238,7 +253,12 @@ fn handle(
 /// The manual-export path (plan 009): build the stint's telemetry bundle and
 /// hand it to the browser as a download. The bundler self-verifies, so a 200
 /// here is a bundle that already round-tripped.
-fn serve_export(mut stream: TcpStream, sessions_dir: &str, file: Option<String>, session_file: &str) {
+fn serve_export(
+    mut stream: TcpStream,
+    sessions_dir: &str,
+    file: Option<String>,
+    session_file: &str,
+) {
     let result = (|| -> Result<(String, Vec<u8>), String> {
         let file = file.ok_or("missing ?file= parameter")?;
         if !file.ends_with(".ftel") || file.contains('/') || file.contains('\\') {
@@ -362,7 +382,10 @@ fn journals_referencing(stint_name: &str, journal_base: &str) -> Vec<String> {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
-    let stem = base.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = base
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
@@ -370,9 +393,7 @@ fn journals_referencing(stint_name: &str, journal_base: &str) -> Vec<String> {
             if !name.starts_with(&stem) || !name.ends_with(".txt") {
                 continue;
             }
-            if std::fs::read_to_string(entry.path())
-                .is_ok_and(|text| text.contains(stint_name))
-            {
+            if std::fs::read_to_string(entry.path()).is_ok_and(|text| text.contains(stint_name)) {
                 out.push(name);
             }
         }
@@ -389,12 +410,24 @@ fn delete_stint(
     journal_base: &str,
 ) -> (&'static str, &'static str, String) {
     let Some(name) = file else {
-        return ("400 Bad Request", "text/plain; charset=utf-8", "missing file parameter".into());
+        return (
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            "missing file parameter".into(),
+        );
     };
-    if name.contains('/') || name.contains('\\') || name.contains("..") || !name.ends_with(".ftel") {
-        return ("400 Bad Request", "text/plain; charset=utf-8", "bad file parameter".into());
+    if name.contains('/') || name.contains('\\') || name.contains("..") || !name.ends_with(".ftel")
+    {
+        return (
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            "bad file parameter".into(),
+        );
     }
-    if active.and_then(|p| p.file_name()).is_some_and(|a| a.to_string_lossy() == name) {
+    if active
+        .and_then(|p| p.file_name())
+        .is_some_and(|a| a.to_string_lossy() == name)
+    {
         return (
             "409 Conflict",
             "text/plain; charset=utf-8",
@@ -413,10 +446,16 @@ fn delete_stint(
     }
     match std::fs::remove_file(Path::new(sessions_dir).join(&name)) {
         Ok(()) => ("200 OK", "application/json", "{\"ok\":true}".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            ("404 Not Found", "text/plain; charset=utf-8", "no such stint".into())
-        }
-        Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            "no such stint".into(),
+        ),
+        Err(e) => (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        ),
     }
 }
 
@@ -462,7 +501,12 @@ fn collect_json() -> String {
 /// token itself never leaves the config file — the UI only ever sees the
 /// derived sender id. `discard=1` (with disable) empties the queue.
 fn collect_post(params: &[(String, String)]) -> (&'static str, &'static str, String) {
-    let get = |k: &str| params.iter().find(|(pk, _)| pk == k).map(|(_, v)| v.as_str());
+    let get = |k: &str| {
+        params
+            .iter()
+            .find(|(pk, _)| pk == k)
+            .map(|(_, v)| v.as_str())
+    };
     let mut cfg = crate::collect::CollectConfig::load(crate::collect::CONFIG_PATH.as_ref());
     match get("enabled") {
         Some("1") => {
@@ -485,10 +529,20 @@ fn collect_post(params: &[(String, String)]) -> (&'static str, &'static str, Str
                 }
             }
         }
-        _ => return ("400 Bad Request", "text/plain; charset=utf-8", "enabled=0|1 required".into()),
+        _ => {
+            return (
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                "enabled=0|1 required".into(),
+            );
+        }
     }
     if let Err(e) = cfg.save(crate::collect::CONFIG_PATH.as_ref()) {
-        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+        return (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        );
     }
     ("200 OK", "application/json", collect_json())
 }
@@ -507,9 +561,7 @@ fn session_json(s: &crate::tuning::TuningSession) -> String {
             .collect();
         format!("{{{}}}", pairs.join(","))
     };
-    let latest = s
-        .latest()
-        .map_or("null".into(), |rev| map(&rev.values));
+    let latest = s.latest().map_or("null".into(), |rev| map(&rev.values));
     // Baseline included so the dashboard can summarize "delta vs baseline"
     // instead of dumping the whole tune.
     let baseline = s
@@ -544,10 +596,7 @@ fn campaign_start(s: &crate::tuning::TuningSession, journal_base: &str) -> Optio
 }
 
 /// Create/update the session: car + facts (revisions kept unless reset=1).
-fn session_post(
-    params: &[(String, String)],
-    path: &Path,
-) -> (&'static str, &'static str, String) {
+fn session_post(params: &[(String, String)], path: &Path) -> (&'static str, &'static str, String) {
     let reset = params.iter().any(|(k, v)| k == "reset" && v == "1");
     let posted_car: Option<i32> = params
         .iter()
@@ -564,8 +613,9 @@ fn session_post(
         let base = path.to_string_lossy();
         let archive = crate::tuning::journal_path_for(current.car, &base);
         let _ = current.save(archive.as_ref());
-        let resumed =
-            crate::tuning::TuningSession::load(crate::tuning::journal_path_for(posted_car, &base).as_ref());
+        let resumed = crate::tuning::TuningSession::load(
+            crate::tuning::journal_path_for(posted_car, &base).as_ref(),
+        );
         if resumed.car == posted_car {
             resumed
         } else {
@@ -588,7 +638,11 @@ fn session_post(
     }
     match s.save(path) {
         Ok(()) => ("200 OK", "application/json", session_json(&s)),
-        Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string()),
+        Err(e) => (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        ),
     }
 }
 
@@ -646,7 +700,10 @@ fn archive_active(
         // Boundary marker (a comment — the entry parser skips it): a parked
         // campaign accrues no implicit trajectory steps while other campaigns
         // drive the same car (advise::campaign_bound).
-        append_line(&parked, &format!("# parked {}", crate::util::utc_stamp(now_secs())))?;
+        append_line(
+            &parked,
+            &format!("# parked {}", crate::util::utc_stamp(now_secs())),
+        )?;
     }
     Ok(id)
 }
@@ -670,7 +727,11 @@ fn session_new(
     if !session_is_blank(&current)
         && let Err(e) = archive_active(&current, session_file, journal_base)
     {
-        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+        return (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        );
     }
     let mut fresh = crate::tuning::TuningSession::default();
     for (k, v) in &current.facts {
@@ -690,7 +751,11 @@ fn session_new(
     }
     match fresh.save(session_file.as_ref()) {
         Ok(()) => ("200 OK", "application/json", session_json(&fresh)),
-        Err(e) => ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string()),
+        Err(e) => (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        ),
     }
 }
 
@@ -708,14 +773,26 @@ fn session_resume(
         .map(|(_, v)| v.trim())
         .filter(|v| !v.is_empty())
     else {
-        return ("400 Bad Request", "text/plain; charset=utf-8", "missing id".into());
+        return (
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            "missing id".into(),
+        );
     };
     if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        return ("400 Bad Request", "text/plain; charset=utf-8", "bad id".into());
+        return (
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            "bad id".into(),
+        );
     }
     let archived_session = crate::tuning::suffixed_path(session_file, id);
     if !Path::new(&archived_session).exists() {
-        return ("404 Not Found", "text/plain; charset=utf-8", "no such session".into());
+        return (
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            "no such session".into(),
+        );
     }
     let restored = crate::tuning::TuningSession::load(archived_session.as_ref());
     let current = crate::tuning::TuningSession::load(session_file.as_ref());
@@ -730,30 +807,50 @@ fn session_resume(
         return (
             "409 Conflict",
             "text/plain; charset=utf-8",
-            format!("{target} already exists — another session for this car is parked; resume it first"),
+            format!(
+                "{target} already exists — another session for this car is parked; resume it first"
+            ),
         );
     }
     if !session_is_blank(&current)
         && let Err(e) = archive_active(&current, session_file, journal_base)
     {
-        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+        return (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        );
     }
     if let Err(e) = std::fs::rename(&archived_session, session_file) {
-        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+        return (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        );
     }
     if src != target
         && Path::new(&src).exists()
         && let Err(e) = std::fs::rename(&src, &target)
     {
-        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+        return (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        );
     }
     // The resume marker floors the implicit-step scan: stints other campaigns
     // drove while this one was parked stay out of its trajectory.
     if Path::new(&target).exists()
-        && let Err(e) =
-            append_line(&target, &format!("# resumed {}", crate::util::utc_stamp(now_secs())))
+        && let Err(e) = append_line(
+            &target,
+            &format!("# resumed {}", crate::util::utc_stamp(now_secs())),
+        )
     {
-        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+        return (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        );
     }
     ("200 OK", "application/json", session_json(&restored))
 }
@@ -777,9 +874,13 @@ fn sessions_json(session_file: &str, journal_base: &str) -> String {
             "{{\"id\":{},\"car\":{},\"carName\":{},\"name\":{},\"description\":{},\"revisions\":{},\"stints\":{}}}",
             id.map_or("null".into(), json_str),
             s.car.map_or("null".into(), |c| c.to_string()),
-            s.car.and_then(crate::cars::car_name).map_or("null".into(), json_str),
+            s.car
+                .and_then(crate::cars::car_name)
+                .map_or("null".into(), json_str),
             s.facts.get("name").map_or("null".into(), |v| json_str(v)),
-            s.facts.get("description").map_or("null".into(), |v| json_str(v)),
+            s.facts
+                .get("description")
+                .map_or("null".into(), |v| json_str(v)),
             s.revisions.len(),
             stints,
         )
@@ -793,7 +894,9 @@ fn sessions_json(session_file: &str, journal_base: &str) -> String {
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name.as_str(), ""));
+    let (stem, ext) = file_name
+        .rsplit_once('.')
+        .unwrap_or((file_name.as_str(), ""));
     let (prefix, suffix) = (format!("{stem}-"), format!(".{ext}"));
     let mut archived: Vec<(std::time::SystemTime, String)> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -824,7 +927,11 @@ fn sessions_json(session_file: &str, journal_base: &str) -> String {
     format!(
         "{{\"active\":{},\"archived\":[{}]}}",
         row(None, &active, active_stints),
-        archived.into_iter().map(|(_, j)| j).collect::<Vec<_>>().join(","),
+        archived
+            .into_iter()
+            .map(|(_, j)| j)
+            .collect::<Vec<_>>()
+            .join(","),
     )
 }
 
@@ -854,7 +961,11 @@ fn tune_post(
         }
     }
     if rev.values.is_empty() {
-        return ("400 Bad Request", "text/plain; charset=utf-8", "empty tune".into());
+        return (
+            "400 Bad Request",
+            "text/plain; charset=utf-8",
+            "empty tune".into(),
+        );
     }
     // partial=1 (accepting a suggestion): the posted keys are merged onto the
     // LATEST revision — the rest of the setup carries over, and consecutive
@@ -901,14 +1012,26 @@ fn tune_post(
         if s.latest().is_some_and(|l| l.values != rev.values) {
             s.revisions.push(rev);
             if let Err(e) = s.save(path) {
-                return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+                return (
+                    "500 Internal Server Error",
+                    "text/plain; charset=utf-8",
+                    e.to_string(),
+                );
             }
         }
-        return ("200 OK", "application/json", "{\"ok\":true,\"note\":null,\"changed\":false}".into());
+        return (
+            "200 OK",
+            "application/json",
+            "{\"ok\":true,\"note\":null,\"changed\":false}".into(),
+        );
     }
     s.revisions.push(rev);
     if let Err(e) = s.save(path) {
-        return ("500 Internal Server Error", "text/plain; charset=utf-8", e.to_string());
+        return (
+            "500 Internal Server Error",
+            "text/plain; charset=utf-8",
+            e.to_string(),
+        );
     }
     if !first {
         let mut r = recorder.lock().unwrap();
@@ -916,7 +1039,11 @@ fn tune_post(
         r.pending_note = Some(note.clone());
         r.pending_base_rev = base_idx;
     }
-    let note_json = if first { "null".into() } else { json_str(&note) };
+    let note_json = if first {
+        "null".into()
+    } else {
+        json_str(&note)
+    };
     (
         "200 OK",
         "application/json",
@@ -925,18 +1052,26 @@ fn tune_post(
 }
 
 /// The advise view for the dashboard: trajectory + reconciled recommendations.
+/// Effect vector as a JSON object keyed by field ("{\"balance\":0.05,...}").
+fn effects_json(fx: &crate::analysis::effects::Effects) -> String {
+    let fields: Vec<String> = fx.iter().map(|(k, v)| format!("\"{k}\":{v:.4}")).collect();
+    format!("{{{}}}", fields.join(","))
+}
+
 fn advise_json(v: &crate::advise::AdviseView) -> String {
     let steps: Vec<String> = v
         .steps
         .iter()
         .map(|s| {
-            let balance = s.balance.map_or("null".into(), |(i, f, r)| {
-                format!("[{i:.2},{f:.2},{r:.2}]")
+            let balance = s
+                .balance
+                .map_or("null".into(), |(i, f, r)| format!("[{i:.2},{f:.2},{r:.2}]"));
+            let pos = s
+                .pos
+                .map_or("null".into(), |(f, r)| format!("[{f:.1},{r:.1}]"));
+            let split = s.split.map_or("null".into(), |(e, x, st)| {
+                format!("[{e:.3},{x:.3},{st:.3}]")
             });
-            let pos = s.pos.map_or("null".into(), |(f, r)| format!("[{f:.1},{r:.1}]"));
-            let split = s
-                .split
-                .map_or("null".into(), |(e, x, st)| format!("[{e:.3},{x:.3},{st:.3}]"));
             let outcome = match &s.outcome {
                 None => "null".into(),
                 Some(Ok((word, delta, unequal))) => format!(
@@ -1001,7 +1136,7 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         .collect();
     let anchor = v.anchor.as_ref().map_or("null".into(), |a| {
         format!(
-            "{{\"vsStep\":{},\"areas\":{},\"changes\":{},\"deltaS\":{:.3},\"word\":\"{}\",\"weak\":{},\"reconciled\":{},\"split\":[{:.3},{:.3},{:.3}]}}",
+            "{{\"vsStep\":{},\"areas\":{},\"changes\":{},\"deltaS\":{:.3},\"word\":\"{}\",\"weak\":{},\"reconciled\":{},\"split\":[{:.3},{:.3},{:.3}],\"effects\":{}}}",
             a.vs_step,
             json_str(&a.areas),
             json_str(&a.changes),
@@ -1012,6 +1147,7 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
             a.split.0,
             a.split.1,
             a.split.2,
+            effects_json(&a.effects),
         )
     });
     let landscapes: Vec<String> = v
@@ -1031,13 +1167,14 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
                         format!("[{e:.3},{x:.3},{st:.3}]")
                     });
                     format!(
-                        "{{\"fromStep\":{},\"toStep\":{},\"desc\":{},\"deltaS\":{:.3},\"split\":{split},\"weak\":{},\"direct\":{}}}",
+                        "{{\"fromStep\":{},\"toStep\":{},\"desc\":{},\"deltaS\":{:.3},\"split\":{split},\"weak\":{},\"direct\":{},\"effects\":{}}}",
                         m.from_step,
                         m.to_step,
                         json_str(&m.desc),
                         m.delta_s,
                         m.weak,
                         m.direct,
+                        effects_json(&m.effects),
                     )
                 })
                 .collect();
@@ -1054,16 +1191,18 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
             )
         })
         .collect();
+    let effect_floor = effects_json(&v.effect_floor);
     let aba = v.aba.as_ref().map_or("null".into(), |a| {
         format!(
-            "{{\"families\":{},\"effectS\":{:.3},\"driftS\":{:.3}}}",
+            "{{\"families\":{},\"effectS\":{:.3},\"driftS\":{:.3},\"effects\":{}}}",
             json_str(&a.families),
             a.effect_s,
             a.drift_s,
+            effects_json(&a.effects),
         )
     });
     format!(
-        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"landscapes\":[{}],\"driftFloor\":{},\"inProgress\":{},\"missing\":[{}],\"recommendations\":[{}],\"currentTune\":[{}]}}",
+        "{{\"journal\":{},\"adviceFor\":{},\"steps\":[{}],\"anchor\":{anchor},\"aba\":{aba},\"landscapes\":[{}],\"driftFloor\":{},\"effectFloor\":{effect_floor},\"inProgress\":{},\"missing\":[{}],\"recommendations\":[{}],\"currentTune\":[{}]}}",
         v.journal.as_deref().map_or("null".into(), json_str),
         json_str(&v.advice_for),
         steps.join(","),
@@ -1071,7 +1210,11 @@ fn advise_json(v: &crate::advise::AdviseView) -> String {
         v.drift_floor
             .map_or("null".into(), |(n, f)| format!("[{n},{f:.3}]")),
         v.in_progress.as_deref().map_or("null".into(), json_str),
-        v.missing.iter().map(|p| json_str(p)).collect::<Vec<_>>().join(","),
+        v.missing
+            .iter()
+            .map(|p| json_str(p))
+            .collect::<Vec<_>>()
+            .join(","),
         recs.join(","),
         tune.join(","),
     )
@@ -1088,7 +1231,10 @@ fn recorder_json(r: &crate::record::RecorderStatus) -> String {
         Some(name) => format!("\"{}\"", name.to_string_lossy()),
         None => "null".into(),
     };
-    format!("{{\"mode\":\"{mode}\",\"file\":{file},\"packets\":{}}}", r.packets)
+    format!(
+        "{{\"mode\":\"{mode}\",\"file\":{file},\"packets\":{}}}",
+        r.packets
+    )
 }
 
 /// The `quality` SSE payload; `null` until a comparable lap exists.
@@ -1160,7 +1306,11 @@ pub fn respond(target: &str, sessions_dir: &str) -> (&'static str, &'static str,
                 "bad or missing file parameter".into(),
             ),
         },
-        _ => ("404 Not Found", "text/plain; charset=utf-8", "not found".into()),
+        _ => (
+            "404 Not Found",
+            "text/plain; charset=utf-8",
+            "not found".into(),
+        ),
     }
 }
 
@@ -1203,8 +1353,8 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 /// the per-bin time delta (B − A), for the overlay + segment-delta view.
 fn compare_json(a_path: &Path, b_path: &Path) -> Result<String, String> {
     let profile = |path: &Path| -> Result<_, String> {
-        let session = crate::analysis::Stint::load(path)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let session =
+            crate::analysis::Stint::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
         crate::analysis::profile::stint_profile(&session.frames)
             .map_err(|e| format!("{}: {e}", path.display()))
     };
@@ -1251,7 +1401,8 @@ fn compare_json(a_path: &Path, b_path: &Path) -> Result<String, String> {
 
 /// Distance-binned speed traces per profiled lap — the dashboard's chart data.
 fn laps_json(path: &Path) -> Result<String, String> {
-    let session = crate::analysis::Stint::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let session =
+        crate::analysis::Stint::load(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let profile = crate::analysis::profile::stint_profile(&session.frames)?;
     let laps: Vec<String> = profile
         .laps
@@ -1340,11 +1491,16 @@ mod tests {
         let path = dir.join("tune-session.txt");
 
         // McLaren session with a revision on file.
-        let mut s = crate::tuning::TuningSession { car: Some(1314), ..Default::default() };
+        let mut s = crate::tuning::TuningSession {
+            car: Some(1314),
+            ..Default::default()
+        };
         s.facts.insert("abs".into(), "on".into());
         s.revisions.push(crate::tuning::Revision {
             stamp: "20260721-000000".into(),
-            values: [("arb_f".to_string(), "18.5".to_string())].into_iter().collect(),
+            values: [("arb_f".to_string(), "18.5".to_string())]
+                .into_iter()
+                .collect(),
         });
         s.save(&path).unwrap();
 
@@ -1371,6 +1527,17 @@ mod tests {
 
     use super::*;
 
+    /// Effect vectors serialize as a plain JSON object; empty stays valid.
+    #[test]
+    fn effects_json_shape() {
+        assert_eq!(effects_json(&Vec::new()), "{}");
+        let fx = vec![("balance", 0.05f32), ("apex_speed", -1.25f32)];
+        assert_eq!(
+            effects_json(&fx),
+            "{\"balance\":0.0500,\"apex_speed\":-1.2500}"
+        );
+    }
+
     /// Deleting a journaled stint needs an explicit force; unjournaled stints
     /// delete freely. Campaign start is the earlier of first revision and
     /// first journaled stint.
@@ -1390,26 +1557,50 @@ mod tests {
         }
         let sdir = sessions.to_string_lossy().into_owned();
 
-        let (status, _, body) =
-            delete_stint(&sdir, Some("stint-20260725-100000.ftel".into()), None, false, &jbase);
+        let (status, _, body) = delete_stint(
+            &sdir,
+            Some("stint-20260725-100000.ftel".into()),
+            None,
+            false,
+            &jbase,
+        );
         assert_eq!(status, "409 Conflict", "{body}");
         assert!(body.contains("tune-journal-99.txt"), "{body}");
         assert!(sessions.join("stint-20260725-100000.ftel").exists());
 
-        let (status, ..) =
-            delete_stint(&sdir, Some("stint-20260725-110000.ftel".into()), None, false, &jbase);
+        let (status, ..) = delete_stint(
+            &sdir,
+            Some("stint-20260725-110000.ftel".into()),
+            None,
+            false,
+            &jbase,
+        );
         assert_eq!(status, "200 OK", "unjournaled deletes without force");
 
-        let (status, ..) =
-            delete_stint(&sdir, Some("stint-20260725-100000.ftel".into()), None, true, &jbase);
+        let (status, ..) = delete_stint(
+            &sdir,
+            Some("stint-20260725-100000.ftel".into()),
+            None,
+            true,
+            &jbase,
+        );
         assert_eq!(status, "200 OK", "force overrides the guard");
         assert!(!sessions.join("stint-20260725-100000.ftel").exists());
 
         // Campaign start: journal baseline stint (100000) predates the first
         // revision save (100500) — the earlier stamp wins.
-        let mut s = crate::tuning::TuningSession { car: Some(99), ..Default::default() };
-        s.revisions.push(crate::tuning::Revision { stamp: "20260725-100500".into(), ..Default::default() });
-        assert_eq!(campaign_start(&s, &jbase).as_deref(), Some("20260725-100000"));
+        let mut s = crate::tuning::TuningSession {
+            car: Some(99),
+            ..Default::default()
+        };
+        s.revisions.push(crate::tuning::Revision {
+            stamp: "20260725-100500".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            campaign_start(&s, &jbase).as_deref(),
+            Some("20260725-100000")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1426,41 +1617,69 @@ mod tests {
             journal_base.to_string_lossy().into_owned(),
         );
         let p = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
-            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
         };
 
         // Campaign A: car 2793 with a name, one revision, a journal with 2 stints.
-        let mut a = crate::tuning::TuningSession { car: Some(2793), ..Default::default() };
+        let mut a = crate::tuning::TuningSession {
+            car: Some(2793),
+            ..Default::default()
+        };
         a.facts.insert("name".into(), "awd aero".into());
         a.facts.insert("unit_pressure".into(), "psi".into());
-        a.revisions.push(crate::tuning::Revision { stamp: "1".into(), ..Default::default() });
+        a.revisions.push(crate::tuning::Revision {
+            stamp: "1".into(),
+            ..Default::default()
+        });
         a.save(&session_file).unwrap();
         let journal_a = crate::tuning::journal_path_for(Some(2793), &jb);
-        std::fs::write(&journal_a, "# car\nsessions/a.ftel | baseline\nsessions/b.ftel | x\n")
-            .unwrap();
+        std::fs::write(
+            &journal_a,
+            "# car\nsessions/a.ftel | baseline\nsessions/b.ftel | x\n",
+        )
+        .unwrap();
 
         // New session: A is archived (session + journal move together), the
         // fresh session keeps unit prefs and takes the posted name.
         let (status, _, body) = session_new(&p(&[("name", "rwd build")]), &sf, &jb);
         assert_eq!(status, "200 OK", "{body}");
-        assert!(!Path::new(&journal_a).exists(), "journal A moved to the archive");
+        assert!(
+            !Path::new(&journal_a).exists(),
+            "journal A moved to the archive"
+        );
         let parked = std::fs::read_dir(&dir)
             .unwrap()
             .flatten()
-            .find(|e| e.file_name().to_string_lossy().starts_with("tune-journal-2793-"))
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("tune-journal-2793-")
+            })
             .expect("archived journal");
         assert!(
-            std::fs::read_to_string(parked.path()).unwrap().contains("# parked "),
+            std::fs::read_to_string(parked.path())
+                .unwrap()
+                .contains("# parked "),
             "parked marker closes the campaign"
         );
         let fresh = crate::tuning::TuningSession::load(&session_file);
         assert_eq!(fresh.car, None);
         assert_eq!(fresh.facts.get("name").unwrap(), "rwd build");
-        assert_eq!(fresh.facts.get("unit_pressure").unwrap(), "psi", "unit prefs carry");
+        assert_eq!(
+            fresh.facts.get("unit_pressure").unwrap(),
+            "psi",
+            "unit prefs carry"
+        );
         assert!(fresh.revisions.is_empty());
 
         let list = sessions_json(&sf, &jb);
-        assert!(list.contains("\"awd aero\"") && list.contains("\"stints\":2"), "{list}");
+        assert!(
+            list.contains("\"awd aero\"") && list.contains("\"stints\":2"),
+            "{list}"
+        );
         let id = list
             .split("\"id\":\"")
             .nth(1)
@@ -1481,14 +1700,29 @@ mod tests {
         assert_eq!(restored.facts.get("name").unwrap(), "awd aero");
         assert_eq!(restored.revisions.len(), 1);
         let journal = std::fs::read_to_string(&journal_a).unwrap();
-        assert!(journal.contains("sessions/b.ftel"), "campaign A journal restored: {journal}");
-        assert!(journal.contains("# resumed "), "resume marker floors the implicit-step scan");
+        assert!(
+            journal.contains("sessions/b.ftel"),
+            "campaign A journal restored: {journal}"
+        );
+        assert!(
+            journal.contains("# resumed "),
+            "resume marker floors the implicit-step scan"
+        );
         let list = sessions_json(&sf, &jb);
-        assert!(list.contains("\"rwd build\"") && list.contains("\"stints\":1"), "{list}");
+        assert!(
+            list.contains("\"rwd build\"") && list.contains("\"stints\":1"),
+            "{list}"
+        );
 
         // Bad ids are rejected, unknown ids 404.
-        assert_eq!(session_resume(&p(&[("id", "../evil")]), &sf, &jb).0, "400 Bad Request");
-        assert_eq!(session_resume(&p(&[("id", "none-19700101-000000")]), &sf, &jb).0, "404 Not Found");
+        assert_eq!(
+            session_resume(&p(&[("id", "../evil")]), &sf, &jb).0,
+            "400 Bad Request"
+        );
+        assert_eq!(
+            session_resume(&p(&[("id", "none-19700101-000000")]), &sf, &jb).0,
+            "404 Not Found"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1500,7 +1734,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tuners-partial-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tune-session.txt");
-        let mut s = crate::tuning::TuningSession { car: Some(2793), ..Default::default() };
+        let mut s = crate::tuning::TuningSession {
+            car: Some(2793),
+            ..Default::default()
+        };
         s.revisions.push(crate::tuning::Revision {
             stamp: "20260724-000000".into(),
             values: [
@@ -1514,8 +1751,10 @@ mod tests {
         s.save(&path).unwrap();
         let recorder = crate::record::new_shared();
         let post = |pairs: &[(&str, &str)], recorder: &crate::record::SharedRecorder| {
-            let params: Vec<(String, String)> =
-                pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            let params: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
             tune_post(&params, &path, recorder)
         };
 
@@ -1524,11 +1763,19 @@ mod tests {
         assert_eq!(status, "200 OK", "{body}");
         assert!(body.contains("front arb -1.5"), "{body}");
         let latest_vals = |p: &Path| {
-            crate::tuning::TuningSession::load(p).latest().unwrap().values.clone()
+            crate::tuning::TuningSession::load(p)
+                .latest()
+                .unwrap()
+                .values
+                .clone()
         };
         let vals = latest_vals(&path);
         assert_eq!(vals.get("arb_f").unwrap(), "16.8");
-        assert_eq!(vals.get("final_drive").unwrap(), "3.95", "unposted keys carry over");
+        assert_eq!(
+            vals.get("final_drive").unwrap(),
+            "3.95",
+            "unposted keys carry over"
+        );
         assert_eq!(vals.get("rebound_f").unwrap(), "10.6");
 
         // Accept #2 before any stint: chains onto #1 and the pending note nets
@@ -1541,19 +1788,28 @@ mod tests {
             "{note}"
         );
         let vals = latest_vals(&path);
-        assert_eq!(vals.get("arb_f").unwrap(), "16.8", "accept #2 chains onto #1");
+        assert_eq!(
+            vals.get("arb_f").unwrap(),
+            "16.8",
+            "accept #2 chains onto #1"
+        );
         assert_eq!(vals.get("final_drive").unwrap(), "4.1");
 
         // Accepting the original arb back nets the chain to one remaining change.
         post(&[("partial", "1"), ("arb_f", "18.3")], &recorder);
         let note = recorder.lock().unwrap().pending_note.clone().unwrap();
-        assert!(note.contains("final drive") && !note.contains("front arb"), "{note}");
+        assert!(
+            note.contains("final drive") && !note.contains("front arb"),
+            "{note}"
+        );
 
         // A partial save with no tune on file is rejected.
         let empty = dir.join("empty-session.txt");
         let (status, _, _) = {
-            let params: Vec<(String, String)> =
-                [("partial", "1"), ("arb_f", "16.8")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            let params: Vec<(String, String)> = [("partial", "1"), ("arb_f", "16.8")]
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
             tune_post(&params, &empty, &recorder)
         };
         assert_eq!(status, "400 Bad Request");
@@ -1594,10 +1850,16 @@ mod tests {
 
     #[test]
     fn report_serves_fixture() {
-        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/rivals-lap-boundary-01.ftel");
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/rivals-lap-boundary-01.ftel"
+        );
         // is_safe_session_path requires relative paths; test via relative-from-manifest
         let (status, _, body) = respond(
-            &format!("/api/report?file={}", "fixtures/rivals-lap-boundary-01.ftel"),
+            &format!(
+                "/api/report?file={}",
+                "fixtures/rivals-lap-boundary-01.ftel"
+            ),
             "fixtures",
         );
         // Depending on cwd this may 500 (file not found) — accept both but never 400.
@@ -1608,7 +1870,10 @@ mod tests {
     #[test]
     fn live_state_json_shapes() {
         let empty = crate::live::LiveState::default();
-        assert_eq!(live_state_json(&empty), "{\"file\":null,\"ageMs\":null,\"frame\":null}");
+        assert_eq!(
+            live_state_json(&empty),
+            "{\"file\":null,\"ageMs\":null,\"frame\":null}"
+        );
 
         let state = crate::live::LiveState {
             file: Some("sessions/session-x.ftel".into()),
@@ -1621,7 +1886,12 @@ mod tests {
         };
         let json = live_state_json(&state);
         assert!(json.starts_with("{\"file\":\"session-x.ftel\""), "{json}");
-        for key in ["\"raceOn\":true", "\"speedMps\":", "\"rpm\":", "\"tireTempF\":["] {
+        for key in [
+            "\"raceOn\":true",
+            "\"speedMps\":",
+            "\"rpm\":",
+            "\"tireTempF\":[",
+        ] {
             assert!(json.contains(key), "{json} missing {key}");
         }
         assert_eq!(quality_json(None), "null");

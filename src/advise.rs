@@ -5,7 +5,7 @@
 //! recommendations on the latest stint of the session car — the journal
 //! starts with the first tune change.
 
-use crate::analysis::{self, journal};
+use crate::analysis::{self, effects, journal};
 use crate::tuning::TuningSession;
 use std::path::Path;
 
@@ -52,6 +52,9 @@ pub struct AbaView {
     pub effect_s: f32,
     /// Per-stint drift over the pair — the noise floor for outcome margins.
     pub drift_s: f32,
+    /// Drift-corrected behavioural movement of the excursion, per effect
+    /// field ((exc − rev)/2, plan 011).
+    pub effects: effects::Effects,
 }
 
 /// The honest comparison for the last stint: the prior stint whose SETUP
@@ -76,6 +79,8 @@ pub struct AnchorView {
     pub reconciled: bool,
     /// Where the time moved vs the anchor: (entry, exit, straights).
     pub split: (f32, f32, f32),
+    /// Behavioural movement anchor → last stint (plan 011 effect deltas).
+    pub effects: effects::Effects,
 }
 
 /// One measured effect for a family: a stint pair whose setups isolate it
@@ -89,6 +94,10 @@ pub struct MeasurementView {
     pub split: Option<(f32, f32, f32)>,
     pub weak: bool,
     pub direct: bool,
+    /// Behavioural movement of the underlying stint pair (plan 011). For an
+    /// attributed compound clause this is the WHOLE pair's movement — the
+    /// vector belongs to the pair, siblings share it.
+    pub effects: effects::Effects,
 }
 
 /// A family's measured landscape over one slider: every tried value with its
@@ -129,6 +138,10 @@ pub struct AdviseView {
     /// Largest |ideal delta| measured between SAME-setup stints — the
     /// campaign's own noise floor. (count of same-setup pairs, floor s).
     pub drift_floor: Option<(usize, f32)>,
+    /// Per-field campaign noise floor: largest |effect delta| across the same
+    /// same-setup pairs. Raises (never lowers) the library defaults when
+    /// gating which effect movements are worth showing.
+    pub effect_floor: effects::Effects,
     /// Stint the recommendations are for.
     pub advice_for: String,
     pub recommendations: Vec<analysis::recommend::Recommendation>,
@@ -148,7 +161,11 @@ fn splice_trusted(p: &analysis::profile::StintProfile) -> bool {
 
 /// The car driven in a stint: first frame with a car ordinal set.
 fn car_of(stint: &analysis::Stint) -> Option<i32> {
-    stint.frames.iter().find(|t| t.frame.car_ordinal != 0).map(|t| t.frame.car_ordinal)
+    stint
+        .frames
+        .iter()
+        .find(|t| t.frame.car_ordinal != 0)
+        .map(|t| t.frame.car_ordinal)
 }
 
 /// The prior stint whose SETUP differs least from `target` (ties -> most
@@ -171,8 +188,7 @@ fn min_diff_ancestor(
 
 /// Distinct tuning areas the changed keys span, sorted for stable display.
 fn area_list(keys: &[String]) -> Vec<&'static str> {
-    let mut areas: Vec<&'static str> =
-        keys.iter().map(|k| crate::tuning::field_area(k)).collect();
+    let mut areas: Vec<&'static str> = keys.iter().map(|k| crate::tuning::field_area(k)).collect();
     areas.sort();
     areas.dedup();
     areas
@@ -187,11 +203,12 @@ fn nodes_summary(nodes: &[(f32, f32, usize)]) -> String {
         .join(", ")
 }
 
-fn stint_balance(stint: &analysis::Stint) -> Option<(f32, f32, f32)> {
+/// Metrics of a stint's longest driving segment — the basis for both the
+/// step balance display and the plan-011 effect vector.
+fn stint_overall_metrics(stint: &analysis::Stint) -> Option<analysis::metrics::StintMetrics> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments.iter().max_by_key(|s| s.len())?;
-    let m = analysis::metrics::stint_metrics(longest);
-    Some((m.understeer_index?, m.cornering_front_slip?, m.cornering_rear_slip?))
+    Some(analysis::metrics::stint_metrics(longest))
 }
 
 /// Rule context from the session: tire compound fact + whether the build has
@@ -252,14 +269,38 @@ fn exhausted_flip(
 ) -> Option<(journal::Family, bool, &'static str)> {
     use journal::Family as F;
     let (partner, text): (F, &str) = match (family, softer) {
-        (F::FrontRoll, true) => (F::RearRoll, "front roll sliders are at minimum — stiffen the rear instead (rear anti-roll bar first)"),
-        (F::FrontRoll, false) => (F::RearRoll, "front roll sliders are at maximum — soften the rear instead"),
-        (F::RearRoll, true) => (F::FrontRoll, "rear roll sliders are at minimum — stiffen the front instead (front anti-roll bar first)"),
-        (F::RearRoll, false) => (F::FrontRoll, "rear roll sliders are at maximum — soften the front instead"),
-        (F::FrontAero, false) => (F::RearAero, "front aero is at maximum — reduce rear aero instead"),
-        (F::FrontAero, true) => (F::RearAero, "front aero is at minimum — add rear aero instead"),
-        (F::RearAero, false) => (F::FrontAero, "rear aero is at maximum — reduce front aero instead"),
-        (F::RearAero, true) => (F::FrontAero, "rear aero is at minimum — add front aero instead"),
+        (F::FrontRoll, true) => (
+            F::RearRoll,
+            "front roll sliders are at minimum — stiffen the rear instead (rear anti-roll bar first)",
+        ),
+        (F::FrontRoll, false) => (
+            F::RearRoll,
+            "front roll sliders are at maximum — soften the rear instead",
+        ),
+        (F::RearRoll, true) => (
+            F::FrontRoll,
+            "rear roll sliders are at minimum — stiffen the front instead (front anti-roll bar first)",
+        ),
+        (F::RearRoll, false) => (
+            F::FrontRoll,
+            "rear roll sliders are at maximum — soften the front instead",
+        ),
+        (F::FrontAero, false) => (
+            F::RearAero,
+            "front aero is at maximum — reduce rear aero instead",
+        ),
+        (F::FrontAero, true) => (
+            F::RearAero,
+            "front aero is at minimum — add rear aero instead",
+        ),
+        (F::RearAero, false) => (
+            F::FrontAero,
+            "rear aero is at maximum — reduce front aero instead",
+        ),
+        (F::RearAero, true) => (
+            F::FrontAero,
+            "rear aero is at minimum — add front aero instead",
+        ),
         _ => return None,
     };
     Some((partner, !softer, text))
@@ -273,7 +314,9 @@ fn enrich_with_tune(
     recs: &mut [analysis::recommend::Recommendation],
     session: &TuningSession,
 ) -> Vec<(String, String, Option<&'static str>)> {
-    let Some(rev) = session.latest() else { return Vec::new() };
+    let Some(rev) = session.latest() else {
+        return Vec::new();
+    };
     for r in recs.iter_mut() {
         let Some(implied) = r.implied else { continue };
         let keys = family_keys(implied.family);
@@ -282,7 +325,9 @@ fn enrich_with_tune(
         let mut pinned = 0usize;
         let mut primary_pinned = false;
         for (idx, k) in keys.iter().enumerate() {
-            let Some(v) = rev.values.get(*k) else { continue };
+            let Some(v) = rev.values.get(*k) else {
+                continue;
+            };
             let mut line = format!(
                 "{} = {}",
                 crate::tuning::field_phrase(k),
@@ -300,22 +345,31 @@ fn enrich_with_tune(
                 if crate::tuning::pinned(val, lim, implied.softer, k) {
                     pinned += 1;
                     primary_pinned |= idx == 0;
-                    line.push_str(if implied.softer { " AT MINIMUM" } else { " AT MAXIMUM" });
+                    line.push_str(if implied.softer {
+                        " AT MINIMUM"
+                    } else {
+                        " AT MAXIMUM"
+                    });
                 }
             }
             known.push(line);
         }
         if !known.is_empty() {
-            r.evidence.push(format!("current setting: {}", known.join(", ")));
+            r.evidence
+                .push(format!("current setting: {}", known.join(", ")));
         }
         // Exhausted = every slider of the family has a known limit and sits
         // at the advised bound. Unknown limits never claim exhaustion.
         if with_limit > 0 && with_limit == known.len() && pinned == with_limit {
             if let Some((pf, ps, text)) = exhausted_flip(implied.family, implied.softer) {
-                r.evidence.push(format!("advised direction exhausted (was: {})", r.advice));
+                r.evidence
+                    .push(format!("advised direction exhausted (was: {})", r.advice));
                 r.advice = text.to_string();
-                r.implied =
-                    Some(journal::Change { family: pf, softer: ps, magnitude: None });
+                r.implied = Some(journal::Change {
+                    family: pf,
+                    softer: ps,
+                    magnitude: None,
+                });
                 // Any concrete value suggested for the exhausted end no
                 // longer applies to the rewritten advice.
                 r.suggestion = None;
@@ -396,9 +450,9 @@ fn quad_fit(pts: &[(f32, f32)]) -> Option<(f64, f64, f64)> {
 /// that case), or the slider's range allows no new point.
 fn probe_value(nodes: &[(f32, f32, usize)], lim: Option<(f32, f32)>) -> Option<f32> {
     let (first, last) = (nodes.first()?, nodes.last()?);
-    let (lo, hi) = nodes
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(lo, hi), n| (lo.min(n.1), hi.max(n.1)));
+    let (lo, hi) = nodes.iter().fold((f32::MAX, f32::MIN), |(lo, hi), n| {
+        (lo.min(n.1), hi.max(n.1))
+    });
     if nodes.len() < 2 || hi - lo < 0.10 {
         return None;
     }
@@ -445,7 +499,10 @@ pub(crate) fn stint_stamp(path: &str) -> Option<&str> {
     let name = Path::new(path).file_stem()?.to_str()?;
     let stamp = name.get(name.len().checked_sub(15)?..)?;
     (stamp.as_bytes()[8] == b'-'
-        && stamp.bytes().enumerate().all(|(i, b)| i == 8 || b.is_ascii_digit()))
+        && stamp
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| i == 8 || b.is_ascii_digit()))
     .then_some(stamp)
 }
 
@@ -567,15 +624,18 @@ pub fn advise(
             })
             .collect();
         extra.sort();
-        entries.extend(extra.into_iter().map(|path| journal::Entry { path, note: None }));
+        entries.extend(
+            extra
+                .into_iter()
+                .map(|path| journal::Entry { path, note: None }),
+        );
     }
 
     if entries.is_empty() {
         // No journal yet: blind advice on the session car's latest stint.
         let path = latest_stint_for_car(stints_dir, session.car)
             .ok_or("no stints recorded yet — drive first")?;
-        let stint =
-            analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
+        let stint = analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
         let mut recs = blind_recommendations(&stint, &path, &rule_context(&session))?;
         let current_tune = enrich_with_tune(&mut recs, &session);
         return Ok(AdviseView {
@@ -587,6 +647,7 @@ pub fn advise(
             missing: Vec::new(),
             landscapes: Vec::new(),
             drift_floor: None,
+            effect_floor: Vec::new(),
             advice_for: path,
             recommendations: recs,
             current_tune,
@@ -601,10 +662,8 @@ pub fn advise(
     {
         let journal_car = car_of(&stint);
         if journal_car.is_some() && journal_car != session.car {
-            let per_car = crate::tuning::journal_path_for(
-                journal_car,
-                &session_path.to_string_lossy(),
-            );
+            let per_car =
+                crate::tuning::journal_path_for(journal_car, &session_path.to_string_lossy());
             let archived = TuningSession::load(per_car.as_ref());
             if archived.car == journal_car {
                 session = archived;
@@ -645,9 +704,26 @@ pub fn advise(
 
     let changes: Vec<_> = loaded
         .iter()
-        .map(|(e, _, _)| e.note.as_deref().map(journal::parse_clauses).unwrap_or_default())
+        .map(|(e, _, _)| {
+            e.note
+                .as_deref()
+                .map(journal::parse_clauses)
+                .unwrap_or_default()
+        })
         .collect();
     let positions = journal::track_positions(&changes);
+
+    // Per-stint overall metrics (computed once) and their effect vectors:
+    // every stint-pair comparison below carries its behavioural movement
+    // alongside the time delta (plan 011 phase A).
+    let mets: Vec<Option<analysis::metrics::StintMetrics>> = loaded
+        .iter()
+        .map(|(_, stint, _)| stint_overall_metrics(stint))
+        .collect();
+    let fx: Vec<effects::Effects> = mets
+        .iter()
+        .map(|m| m.as_ref().map(effects::vector).unwrap_or_default())
+        .collect();
 
     // "suspect" in a journal note is the driver's own verdict on that stint
     // (unfamiliar car, chaotic drive, traffic): every measurement touching it
@@ -676,7 +752,7 @@ pub fn advise(
     let mut deltas: Vec<Option<f32>> = Vec::new();
     let mut attrs: Vec<Option<analysis::attribution::Attribution>> = Vec::new();
     for i in 0..loaded.len() {
-        let (entry, stint, profile) = &loaded[i];
+        let (entry, _stint, profile) = &loaded[i];
         let mut split = None;
         deltas.push(None);
         attrs.push(None);
@@ -691,7 +767,11 @@ pub fn advise(
                     *deltas.last_mut().unwrap() = Some(cmp.ideal_delta_s);
                     *attrs.last_mut().unwrap() = Some(attr);
                     let word = journal::judge(cmp.ideal_delta_s).word();
-                    Some(Ok((word, cmp.ideal_delta_s, prev.laps.len() != profile.laps.len())))
+                    Some(Ok((
+                        word,
+                        cmp.ideal_delta_s,
+                        prev.laps.len() != profile.laps.len(),
+                    )))
                 }
                 Err(e) => Some(Err(e)),
             }
@@ -701,7 +781,13 @@ pub fn advise(
             laps: profile.laps.len(),
             best_s: profile.best_lap_time_s,
             ideal_s: profile.composite.time_s,
-            balance: stint_balance(stint),
+            balance: mets[i].as_ref().and_then(|m| {
+                Some((
+                    m.understeer_index?,
+                    m.cornering_front_slip?,
+                    m.cornering_rear_slip?,
+                ))
+            }),
             note: entry.note.clone(),
             pos: match positions[i] {
                 (Some(f), Some(r)) if f != 0.0 || r != 0.0 => Some((f, r)),
@@ -724,7 +810,11 @@ pub fn advise(
                 return None;
             }
             let stamp = stint_stamp(&entry.path)?;
-            session.revisions.iter().rev().find(|r| r.stamp.as_str() < stamp)
+            session
+                .revisions
+                .iter()
+                .rev()
+                .find(|r| r.stamp.as_str() < stamp)
         })
         .collect();
 
@@ -732,9 +822,12 @@ pub fn advise(
     // pairs is pure driver/track drift. Verdicts with margins below the
     // worst observed drift are provisional, and advice must say so.
     let mut drift_obs: Vec<f32> = Vec::new();
+    let mut effect_floor: effects::Effects = Vec::new();
     for j in 1..loaded.len() {
         for i in 0..j {
-            let (Some(si), Some(sj)) = (setups[i], setups[j]) else { continue };
+            let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
+                continue;
+            };
             if !crate::tuning::diff_keys(si, sj).is_empty() {
                 continue;
             }
@@ -743,11 +836,18 @@ pub fn advise(
             }
             if let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) {
                 drift_obs.push(cmp.ideal_delta_s.abs());
+                // Same-setup behavioural movement is pure drift too: the
+                // campaign's own per-field noise floor.
+                effects::fold_floor(&mut effect_floor, &effects::delta(&fx[i], &fx[j]));
             }
         }
     }
-    let drift_floor = (!drift_obs.is_empty())
-        .then(|| (drift_obs.len(), drift_obs.iter().fold(0.0f32, |a, b| a.max(*b))));
+    let drift_floor = (!drift_obs.is_empty()).then(|| {
+        (
+            drift_obs.len(),
+            drift_obs.iter().fold(0.0f32, |a, b| a.max(*b)),
+        )
+    });
 
     // Per-row honest verdicts: each step compared against its minimal-diff
     // ancestor, shown only when that ancestor is NOT the previous step (the
@@ -756,11 +856,15 @@ pub fn advise(
     let n = loaded.len();
     for j in 1..n.saturating_sub(1) {
         let Some(sj) = setups[j] else { continue };
-        let Some((i, keys)) = min_diff_ancestor(&setups[..j], sj) else { continue };
+        let Some((i, keys)) = min_diff_ancestor(&setups[..j], sj) else {
+            continue;
+        };
         if i == j - 1 {
             continue;
         }
-        let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else { continue };
+        let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else {
+            continue;
+        };
         steps[j].anchor = Some(RowAnchor {
             vs_step: i + 1,
             areas: area_list(&keys).join(", "),
@@ -788,8 +892,9 @@ pub fn advise(
             let changes = crate::tuning::diff_note(setups[i].unwrap(), last_setup);
             let weak = weak_pair(i, n - 1);
             let outcome = journal::judge(cmp.ideal_delta_s);
-            let single_family =
-                (areas.len() == 1).then(|| journal::family_for_area(areas[0])).flatten();
+            let single_family = (areas.len() == 1)
+                .then(|| journal::family_for_area(areas[0]))
+                .flatten();
             if let Some(family) = single_family {
                 let deltas: Vec<f32> = keys
                     .iter()
@@ -815,6 +920,7 @@ pub fn advise(
                 weak,
                 reconciled: anchor_change.is_some(),
                 split: (attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s),
+                effects: effects::delta(&fx[i], &fx[n - 1]),
             });
         }
     }
@@ -832,13 +938,16 @@ pub fn advise(
                 return None;
             }
             let (d_exc, d_rev) = (deltas[n - 2]?, deltas[n - 1]?);
-            let mut areas: Vec<&str> =
-                exc.iter().map(|c| journal::family_area(c.family)).collect();
+            let mut areas: Vec<&str> = exc.iter().map(|c| journal::family_area(c.family)).collect();
             areas.dedup();
             Some(AbaView {
                 families: areas.join("+"),
                 effect_s: (d_exc - d_rev) / 2.0,
                 drift_s: (d_exc + d_rev) / 2.0,
+                effects: effects::aba(
+                    &effects::delta(&fx[n - 3], &fx[n - 2]),
+                    &effects::delta(&fx[n - 2], &fx[n - 1]),
+                ),
             })
         })
         .flatten();
@@ -871,17 +980,25 @@ pub fn advise(
         /// share this clause is judged on). A corner-channel sibling would
         /// contaminate the curve.
         clean: bool,
+        /// Behavioural movement of the stint pair (plan 011 phase A).
+        effects: effects::Effects,
     }
     let mut measurements: Vec<Measurement> = Vec::new();
     for j in 1..n {
         for i in 0..j {
-            let (Some(si), Some(sj)) = (setups[i], setups[j]) else { continue };
+            let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
+                continue;
+            };
             let keys = crate::tuning::diff_keys(si, sj);
             if keys.is_empty() {
                 continue;
             }
-            let [area] = area_list(&keys)[..] else { continue };
-            let Some(family) = journal::family_for_area(area) else { continue };
+            let [area] = area_list(&keys)[..] else {
+                continue;
+            };
+            let Some(family) = journal::family_for_area(area) else {
+                continue;
+            };
             let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else {
                 continue;
             };
@@ -889,8 +1006,10 @@ pub fn advise(
             let vals: Vec<f32> = keys
                 .iter()
                 .filter_map(|k| {
-                    Some(sj.values.get(k)?.parse::<f32>().ok()?
-                        - si.values.get(k)?.parse::<f32>().ok()?)
+                    Some(
+                        sj.values.get(k)?.parse::<f32>().ok()?
+                            - si.values.get(k)?.parse::<f32>().ok()?,
+                    )
                 })
                 .collect();
             measurements.push(Measurement {
@@ -912,14 +1031,23 @@ pub fn advise(
                 j,
                 direct: true,
                 key: Some(keys[0].clone()),
-                split: Some((mattr.entry_delta_s, mattr.exit_delta_s, mattr.straight_delta_s)),
+                split: Some((
+                    mattr.entry_delta_s,
+                    mattr.exit_delta_s,
+                    mattr.straight_delta_s,
+                )),
                 clean: true,
+                effects: effects::delta(&fx[i], &fx[j]),
             });
         }
     }
     for j in 1..n {
-        let Some(note) = &loaded[j].0.note else { continue };
-        let (Some(delta), Some(attr)) = (deltas[j], attrs[j]) else { continue };
+        let Some(note) = &loaded[j].0.note else {
+            continue;
+        };
+        let (Some(delta), Some(attr)) = (deltas[j], attrs[j]) else {
+            continue;
+        };
         if let Some(change) = journal::parse_change(note) {
             measurements.push(Measurement {
                 change,
@@ -933,6 +1061,7 @@ pub fn advise(
                 key: key_from_phrase(note),
                 split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
                 clean: true,
+                effects: effects::delta(&fx[j - 1], &fx[j]),
             });
         } else {
             let evidence = format!(
@@ -948,7 +1077,9 @@ pub fn advise(
             let clauses: Vec<journal::Change> = journal::parse_clauses(note);
             let mut seen = Vec::new();
             for clause_text in note.split(';').map(str::trim) {
-                let Some(clause) = journal::parse_change(clause_text) else { continue };
+                let Some(clause) = journal::parse_change(clause_text) else {
+                    continue;
+                };
                 if seen.contains(&clause.family) {
                     continue;
                 }
@@ -973,19 +1104,19 @@ pub fn advise(
                     direct: false,
                     key: key_from_phrase(clause_text),
                     split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
+                    effects: effects::delta(&fx[j - 1], &fx[j]),
                     clean: clauses.iter().all(|c| {
                         // Judged-channel overlap: gearing reads straights,
                         // brakes reads entry, everything else the corner
                         // total (entry included). Siblings on a disjoint
                         // channel can't contaminate this clause's reading.
                         let chan = |f: journal::Family| match f {
-                            journal::Family::Gearing => 0u8,   // straights
-                            journal::Family::Brakes => 1,      // entry
-                            _ => 2,                            // corner total
+                            journal::Family::Gearing => 0u8, // straights
+                            journal::Family::Brakes => 1,    // entry
+                            _ => 2,                          // corner total
                         };
                         let (a, b) = (chan(clause.family), chan(c.family));
-                        c.family == clause.family
-                            || (a != b && !(a >= 1 && b >= 1)) // entry ⊂ corner
+                        c.family == clause.family || (a != b && !(a >= 1 && b >= 1)) // entry ⊂ corner
                     }),
                 });
             }
@@ -996,7 +1127,10 @@ pub fn advise(
     // breaks remaining ties (least drift).
     let mut latest: Vec<&Measurement> = Vec::new();
     for m in &measurements {
-        match latest.iter_mut().find(|l| l.change.family == m.change.family) {
+        match latest
+            .iter_mut()
+            .find(|l| l.change.family == m.change.family)
+        {
             Some(l) => {
                 if (m.j, m.direct, m.i) > (l.j, l.direct, l.i) {
                     *l = m;
@@ -1063,6 +1197,7 @@ pub fn advise(
         && let Some(a) = &anchor
     {
         let (e, x, st) = a.split;
+        let moved = effects::movers(&a.effects, Some(&effect_floor));
         for r in recs
             .iter_mut()
             .filter(|r| r.implied.is_some_and(|i| i.family == change.family))
@@ -1072,6 +1207,12 @@ pub fn advise(
                  exit {x:+.2}s / straights {st:+.2}s",
                 a.vs_step,
             ));
+            if !moved.is_empty() {
+                r.evidence.push(format!(
+                    "behaviour that moved with it (above noise): {}",
+                    effects::describe(&moved),
+                ));
+            }
         }
     }
     // ---- measured landscapes: the campaign's response per slider ----
@@ -1103,6 +1244,7 @@ pub fn advise(
                 split: m.split,
                 weak: m.weak,
                 direct: m.direct,
+                effects: m.effects.clone(),
             })
             .collect();
 
@@ -1122,7 +1264,13 @@ pub fn advise(
         let mut nodes: Vec<(f32, f32, usize)> = Vec::new();
         if let Some(key) = key.as_deref() {
             let value_of = |idx: usize| -> Option<f32> {
-                setups.get(idx)?.as_ref()?.values.get(key)?.parse::<f32>().ok()
+                setups
+                    .get(idx)?
+                    .as_ref()?
+                    .values
+                    .get(key)?
+                    .parse::<f32>()
+                    .ok()
             };
             let mut edges: Vec<(usize, f32, f32, f32)> = fam_all
                 .iter()
@@ -1138,8 +1286,7 @@ pub fn advise(
                 nodes.push((v0, 0.0, 1));
             }
             for (_, vf, vt, d) in edges {
-                let Some(cum_f) =
-                    nodes.iter().find(|n| (n.0 - vf).abs() < 1e-3).map(|n| n.1)
+                let Some(cum_f) = nodes.iter().find(|n| (n.0 - vf).abs() < 1e-3).map(|n| n.1)
                 else {
                     continue;
                 };
@@ -1157,9 +1304,9 @@ pub fn advise(
 
         let pts: Vec<(f32, f32)> = nodes.iter().map(|n| (n.0, n.1)).collect();
         let fit = quad_fit(&pts).map(|(a, b, c)| (a as f32, b as f32, c as f32));
-        let (lo, hi) = nodes
-            .iter()
-            .fold((f32::MAX, f32::MIN), |(lo, hi), n| (lo.min(n.1), hi.max(n.1)));
+        let (lo, hi) = nodes.iter().fold((f32::MAX, f32::MIN), |(lo, hi), n| {
+            (lo.min(n.1), hi.max(n.1))
+        });
         let mut vertex_out = None;
         if let (Some((a, b, _)), Some(key)) = (fit, key.as_deref())
             && a > 0.0
@@ -1184,8 +1331,7 @@ pub fn advise(
                     .and_then(|b| b.values.get(key)?.parse::<f32>().ok())
                     .is_some_and(|cur| (cur - vertex).abs() < 0.05);
                 let landscape = nodes_summary(&nodes);
-                let disp =
-                    crate::tuning::display_value(key, &vertex.to_string(), &session.facts);
+                let disp = crate::tuning::display_value(key, &vertex.to_string(), &session.facts);
                 // A fitted optimum away from the current setting deserves a
                 // recommendation even when no behavioural rule speaks for the
                 // family (the pressure rule is blind on cars whose temps
@@ -1195,7 +1341,8 @@ pub fn advise(
                         .iter()
                         .any(|r| r.implied.is_some_and(|i| i.family == family))
                 {
-                    recs.push(analysis::recommend::Recommendation { apply: Vec::new(),
+                    recs.push(analysis::recommend::Recommendation {
+                        apply: Vec::new(),
                         area: journal::family_area(family),
                         suggestion: None,
                         advice: String::new(),
@@ -1278,10 +1425,7 @@ pub fn advise(
                 .copied()
                 .flatten()
                 .and_then(|b| b.values.get(key)?.parse::<f32>().ok())
-            && let Some(best) = nodes
-                .iter()
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .copied()
+            && let Some(best) = nodes.iter().min_by(|a, b| a.1.total_cmp(&b.1)).copied()
             && let Some(cur_node) = nodes.iter().find(|n| (n.0 - cur).abs() < 1e-3)
             && (best.0 - cur).abs() > 1e-3
             && cur_node.1 - best.1 >= drift_floor.map_or(0.10, |(_, f)| f.max(0.10))
@@ -1380,7 +1524,9 @@ pub fn advise(
             let Some(m) = latest.iter().find(|m| m.change.family == implied.family) else {
                 continue;
             };
-            let Some(margin) = m.outcome.delta_s().map(f32::abs) else { continue };
+            let Some(margin) = m.outcome.delta_s().map(f32::abs) else {
+                continue;
+            };
             if margin < floor {
                 r.evidence.push(format!(
                     "provisional: the deciding margin ({margin:.2}s) is under the \
@@ -1418,7 +1564,9 @@ pub fn advise(
             continue;
         }
         let Some(implied) = r.implied else { continue };
-        let Some(delta) = implied.magnitude else { continue };
+        let Some(delta) = implied.magnitude else {
+            continue;
+        };
         let Some(key) = latest
             .iter()
             .find(|m| m.change.family == implied.family)
@@ -1461,6 +1609,7 @@ pub fn advise(
         missing,
         landscapes,
         drift_floor,
+        effect_floor,
         advice_for: last_entry.path.clone(),
         recommendations: recs,
         current_tune,
@@ -1474,7 +1623,8 @@ mod tests {
     use crate::tuning::Revision;
 
     fn balance_rec() -> Recommendation {
-        Recommendation { apply: Vec::new(),
+        Recommendation {
+            apply: Vec::new(),
             area: "balance",
             advice: "reduce front roll stiffness".into(),
             evidence: vec![],
@@ -1490,7 +1640,10 @@ mod tests {
 
     fn session_with(values: &[(&str, &str)], facts: &[(&str, &str)]) -> TuningSession {
         let mut s = TuningSession::default();
-        let mut rev = Revision { stamp: "20260721-000000".into(), ..Default::default() };
+        let mut rev = Revision {
+            stamp: "20260721-000000".into(),
+            ..Default::default()
+        };
         for (k, v) in values {
             rev.values.insert(k.to_string(), v.to_string());
         }
@@ -1511,12 +1664,25 @@ mod tests {
         );
         let mut recs = vec![balance_rec()];
         enrich_with_tune(&mut recs, &session);
-        assert!(recs[0].advice.contains("stiffen the rear instead"), "{}", recs[0].advice);
+        assert!(
+            recs[0].advice.contains("stiffen the rear instead"),
+            "{}",
+            recs[0].advice
+        );
         let implied = recs[0].implied.unwrap();
         assert_eq!(implied.family, journal::Family::RearRoll);
         assert!(!implied.softer);
-        assert!(recs[0].evidence.iter().any(|e| e.contains("AT MINIMUM")), "{:?}", recs[0].evidence);
-        assert!(recs[0].evidence.iter().any(|e| e.contains("advised direction exhausted")));
+        assert!(
+            recs[0].evidence.iter().any(|e| e.contains("AT MINIMUM")),
+            "{:?}",
+            recs[0].evidence
+        );
+        assert!(
+            recs[0]
+                .evidence
+                .iter()
+                .any(|e| e.contains("advised direction exhausted"))
+        );
     }
 
     /// Only the primary slider pinned: advice stands, evidence points at the
@@ -1529,10 +1695,17 @@ mod tests {
         );
         let mut recs = vec![balance_rec()];
         enrich_with_tune(&mut recs, &session);
-        assert!(recs[0].advice.contains("reduce front roll stiffness"), "{}", recs[0].advice);
+        assert!(
+            recs[0].advice.contains("reduce front roll stiffness"),
+            "{}",
+            recs[0].advice
+        );
         assert_eq!(recs[0].implied.unwrap().family, journal::Family::FrontRoll);
         assert!(
-            recs[0].evidence.iter().any(|e| e.contains("work with front springs")),
+            recs[0]
+                .evidence
+                .iter()
+                .any(|e| e.contains("work with front springs")),
             "{:?}",
             recs[0].evidence
         );
@@ -1545,9 +1718,16 @@ mod tests {
         let session = session_with(&[("arb_f", "1"), ("springs_f", "100")], &[]);
         let mut recs = vec![balance_rec()];
         enrich_with_tune(&mut recs, &session);
-        assert!(recs[0].advice.contains("reduce front roll stiffness"), "{}", recs[0].advice);
         assert!(
-            recs[0].evidence.iter().any(|e| e.contains("work with front springs")),
+            recs[0].advice.contains("reduce front roll stiffness"),
+            "{}",
+            recs[0].advice
+        );
+        assert!(
+            recs[0]
+                .evidence
+                .iter()
+                .any(|e| e.contains("work with front springs")),
             "{:?}",
             recs[0].evidence
         );
@@ -1560,7 +1740,13 @@ mod tests {
     #[test]
     fn quad_fit_finds_the_interior_optimum() {
         // Cumulative deltas from lap times 60.0, 59.0, 58.3, 58.0, 58.5.
-        let pts = [(10.0, 0.0), (12.0, -1.0), (14.0, -1.7), (15.0, -2.0), (16.0, -1.5)];
+        let pts = [
+            (10.0, 0.0),
+            (12.0, -1.0),
+            (14.0, -1.7),
+            (15.0, -2.0),
+            (16.0, -1.5),
+        ];
         let (a, b, _) = quad_fit(&pts).unwrap();
         assert!(a > 0.0, "upward curvature (a minimum exists)");
         let vertex = (-b / (2.0 * a)) as f32;
@@ -1570,9 +1756,15 @@ mod tests {
         let mono = [(10.0, 0.0), (12.0, -1.0), (14.0, -2.0)];
         if let Some((a, b, _)) = quad_fit(&mono) {
             let v = (-b / (2.0 * a)) as f32;
-            assert!(!(10.0..=14.0).contains(&v) || a <= 0.0, "no interior vertex: a={a} v={v}");
+            assert!(
+                !(10.0..=14.0).contains(&v) || a <= 0.0,
+                "no interior vertex: a={a} v={v}"
+            );
         }
-        assert!(quad_fit(&[(10.0, 0.0), (12.0, -1.0)]).is_none(), "2 points fit nothing");
+        assert!(
+            quad_fit(&[(10.0, 0.0), (12.0, -1.0)]).is_none(),
+            "2 points fit nothing"
+        );
     }
 
     /// Probes extend the landscape past the good edge; interior optima and
@@ -1621,8 +1813,7 @@ mod tests {
             e("b.ftel", Some("rear arb -1")),
             e("gone3.ftel", Some("front camber -1")),
         ];
-        let (kept, missing) =
-            drop_missing_entries(entries, |p| !p.starts_with("gone"));
+        let (kept, missing) = drop_missing_entries(entries, |p| !p.starts_with("gone"));
         assert_eq!(missing, vec!["gone1.ftel", "gone2.ftel", "gone3.ftel"]);
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].note.as_deref(), Some("baseline"));
@@ -1637,7 +1828,10 @@ mod tests {
     /// nothing, resumed ones only take stints newer than the resume.
     #[test]
     fn campaign_bound_reads_the_last_marker() {
-        assert!(matches!(campaign_bound("# car\na.ftel | baseline\n"), CampaignBound::Open));
+        assert!(matches!(
+            campaign_bound("# car\na.ftel | baseline\n"),
+            CampaignBound::Open
+        ));
         assert!(matches!(
             campaign_bound("a.ftel | baseline\n# parked 20260724-190000\n"),
             CampaignBound::Closed
@@ -1655,8 +1849,14 @@ mod tests {
 
     #[test]
     fn stint_stamps_parse_from_both_naming_schemes() {
-        assert_eq!(stint_stamp("sessions/stint-20260720-233644.ftel"), Some("20260720-233644"));
-        assert_eq!(stint_stamp("sessions/session-20260719-115355.ftel"), Some("20260719-115355"));
+        assert_eq!(
+            stint_stamp("sessions/stint-20260720-233644.ftel"),
+            Some("20260720-233644")
+        );
+        assert_eq!(
+            stint_stamp("sessions/session-20260719-115355.ftel"),
+            Some("20260719-115355")
+        );
         assert_eq!(stint_stamp("sessions/other.ftel"), None);
     }
 }

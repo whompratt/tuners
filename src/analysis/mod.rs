@@ -4,8 +4,9 @@
 pub mod attribution;
 pub mod compare;
 pub mod corners;
-pub mod journal;
 pub mod driveline;
+pub mod effects;
+pub mod journal;
 pub mod metrics;
 pub mod profile;
 pub mod recommend;
@@ -38,7 +39,10 @@ impl Stint {
                 Err(_) => decode_errors += 1,
             }
         }
-        Ok(Self { frames, decode_errors })
+        Ok(Self {
+            frames,
+            decode_errors,
+        })
     }
 }
 
@@ -127,7 +131,10 @@ pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GapKind {
     Pause,
-    Rewind { race_t_before: f32, race_t_after: f32 },
+    Rewind {
+        race_t_before: f32,
+        race_t_after: f32,
+    },
     Restart,
 }
 
@@ -163,11 +170,18 @@ pub fn classify_gaps(frames: &[TimedFrame]) -> Vec<SessionGap> {
             let kind = if f.current_race_time < RESTART_RACE_T_S {
                 GapKind::Restart
             } else if f.current_race_time < race_t_before - REWIND_MIN_STEP_S {
-                GapKind::Rewind { race_t_before, race_t_after: f.current_race_time }
+                GapKind::Rewind {
+                    race_t_before,
+                    race_t_after: f.current_race_time,
+                }
             } else {
                 GapKind::Pause
             };
-            gaps.push(SessionGap { resume_frame: i, resume_lap: f.lap_number, kind });
+            gaps.push(SessionGap {
+                resume_frame: i,
+                resume_lap: f.lap_number,
+                kind,
+            });
             in_gap = false;
         }
         last_on = Some(f.current_race_time);
@@ -226,8 +240,7 @@ pub fn driving_segments(frames: &[TimedFrame], min_seconds: f32) -> Vec<Vec<Time
         segments.push(current);
     }
     segments.retain(|s| {
-        stint_seconds(s) >= min_seconds
-            && s.iter().any(|f| f.frame.speed > MIN_DRIVING_SPEED_MPS)
+        stint_seconds(s) >= min_seconds && s.iter().any(|f| f.frame.speed > MIN_DRIVING_SPEED_MPS)
     });
     segments
 }
@@ -305,7 +318,10 @@ mod tests {
         assert_eq!(laps[0].time_s, Some(60.0));
         assert!(!laps[1].standing_start);
         assert_eq!(laps[1].time_s, Some(59.0));
-        assert_eq!(laps[2].time_s, None, "final partial lap has no finished time");
+        assert_eq!(
+            laps[2].time_s, None,
+            "final partial lap has no finished time"
+        );
     }
 
     fn racing(race_t: f32, lap: u16) -> TimedFrame {
@@ -343,7 +359,10 @@ mod tests {
     }
 
     fn gap_frame() -> TimedFrame {
-        TimedFrame { recv_us: 0, frame: TelemetryFrame::default() }
+        TimedFrame {
+            recv_us: 0,
+            frame: TelemetryFrame::default(),
+        }
     }
 
     /// The three race-off gap kinds, using the signature observed in the real
@@ -452,7 +471,11 @@ mod tests {
 
         let profile = crate::analysis::profile::stint_profile(&frames).unwrap();
         let numbers: Vec<u16> = profile.laps.iter().map(|l| l.lap_number).collect();
-        assert_eq!(numbers, vec![1, 2], "the kept lap 2 must be profiled: {numbers:?}");
+        assert_eq!(
+            numbers,
+            vec![1, 2],
+            "the kept lap 2 must be profiled: {numbers:?}"
+        );
 
         // The spliced lap must carry no phantom time: bin times sum to ~the lap time.
         let lap2 = profile.laps.iter().find(|l| l.lap_number == 2).unwrap();
@@ -481,7 +504,10 @@ mod tests {
             }
         }
         let laps = split_laps(&frames);
-        assert!(laps[0].standing_start, "late-started capture of the out lap");
+        assert!(
+            laps[0].standing_start,
+            "late-started capture of the out lap"
+        );
         assert!(!laps[1].standing_start);
     }
 
@@ -508,15 +534,23 @@ mod tests {
 
     #[test]
     fn rewind_erases_superseded_frames() {
-        let mut frames: Vec<TimedFrame> = (0..10).map(|i| racing(100.0 + i as f32 * 0.1, 3)).collect();
+        let mut frames: Vec<TimedFrame> =
+            (0..10).map(|i| racing(100.0 + i as f32 * 0.1, 3)).collect();
         frames.push(gap_frame());
         // rewind lands at 100.4s: the four frames at 100.4..100.9 are superseded
         frames.extend((0..6).map(|i| racing(100.4 + i as f32 * 0.1, 3)));
 
         let segments = driving_segments(&frames, 0.0);
         assert_eq!(segments.len(), 1);
-        let times: Vec<f32> = segments[0].iter().map(|t| t.frame.current_race_time).collect();
-        assert_eq!(times.len(), 10, "4 pre-rewind frames erased, 6 retry frames kept");
+        let times: Vec<f32> = segments[0]
+            .iter()
+            .map(|t| t.frame.current_race_time)
+            .collect();
+        assert_eq!(
+            times.len(),
+            10,
+            "4 pre-rewind frames erased, 6 retry frames kept"
+        );
         assert!(
             times.windows(2).all(|w| w[1] > w[0]),
             "kept timeline must be monotonic on the race clock: {times:?}"
@@ -525,7 +559,8 @@ mod tests {
 
     #[test]
     fn pause_stitches_and_restart_splits() {
-        let mut frames: Vec<TimedFrame> = (0..5).map(|i| racing(100.0 + i as f32 * 0.1, 2)).collect();
+        let mut frames: Vec<TimedFrame> =
+            (0..5).map(|i| racing(100.0 + i as f32 * 0.1, 2)).collect();
         frames.push(gap_frame()); // pause: clock resumes where it left off
         frames.extend((0..5).map(|i| racing(100.5 + i as f32 * 0.1, 2)));
         frames.push(gap_frame()); // restart: clock near zero
