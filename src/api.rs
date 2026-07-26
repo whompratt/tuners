@@ -78,6 +78,10 @@ fn effects_map(fx: &Effects) -> BTreeMap<String, f32> {
 #[serde(rename_all = "camelCase")]
 pub struct FrameView {
     pub race_on: bool,
+    /// Car ordinal from the packet (0 in menus — everything but the timestamp
+    /// is zeroed while race is off). Lets onboarding show "car detected".
+    pub car: i32,
+    pub car_name: Option<String>,
     pub speed_mps: f32,
     pub rpm: f32,
     pub max_rpm: f32,
@@ -118,6 +122,8 @@ pub fn live_state_view(
         let t = f.tire_temp;
         FrameView {
             race_on: f.is_race_on,
+            car: f.car_ordinal,
+            car_name: crate::cars::car_name(f.car_ordinal).map(str::to_string),
             speed_mps: f.speed,
             rpm: f.current_engine_rpm,
             max_rpm: f.engine_max_rpm,

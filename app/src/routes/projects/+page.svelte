@@ -274,11 +274,20 @@
           </div>
           <div>
             <label for="ss-car">car (from recorded runs)</label>
-            <select id="ss-car" bind:value={ssCar}>
-              {#each cars as [o, n] (o)}
-                <option value={String(o)}>{n}</option>
-              {/each}
+            <select id="ss-car" bind:value={ssCar} disabled={!cars.size}>
+              {#if !cars.size}
+                <option value="">no recorded runs yet</option>
+              {:else}
+                {#each cars as [o, n] (o)}
+                  <option value={String(o)}>{n}</option>
+                {/each}
+              {/if}
             </select>
+            {#if !cars.size}
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">
+                this list fills from recordings — drive once with the app open, or enter the ordinal manually
+              </div>
+            {/if}
           </div>
           <div>
             <label for="ss-car-manual">or car ordinal (manual)</label>

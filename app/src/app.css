@@ -75,7 +75,7 @@ canvas { width: 100%; display: block; }
 .tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
 pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; }
 .placeholder { color: var(--muted); }
-#live-panel.stale { opacity: 0.55; }
+.screen.stale { opacity: 0.55; }
 #rec-split, .btn {
   background: none; border: 1px solid var(--border); border-radius: 6px;
   color: var(--ink-2); font: 13px system-ui; padding: 5px 12px; cursor: pointer;
@@ -123,12 +123,6 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 #split-form button { cursor: pointer; }
 #split-form button:hover { border-color: var(--accent); color: var(--ink); }
 #sf-go { border-color: var(--accent); }
-.live-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.live-head .dot {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
-  align-self: center;
-}
-#live-panel:not(.stale) .live-head .dot { background: #199e70; }
 .readout .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .readout .value { font-size: 40px; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
 .readout .unit { font-size: 14px; color: var(--muted); }
@@ -187,6 +181,45 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 .dlg-body { font-size: 14px; color: var(--ink-2); white-space: pre-line; }
 .dlg-actions { margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
 .btn-danger { border-color: var(--danger); color: var(--danger); }
+.wiz-backdrop {
+  position: fixed; inset: 0; z-index: 9;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.wiz {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 24px 28px; width: min(560px, 92vw);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+}
+.wiz h2 { font-size: 19px; color: var(--ink); margin-bottom: 10px; }
+.wiz p { font-size: 14px; color: var(--ink-2); margin-bottom: 10px; }
+.wiz p.muted, .wiz .muted { color: var(--muted); }
+.wiz ol { margin: 0 0 12px 20px; font-size: 14px; color: var(--ink-2); }
+.wiz ol li { margin-bottom: 4px; }
+.wiz-progress { display: flex; gap: 12px; margin-bottom: 16px; font-size: 12px; }
+.wiz-progress span { color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.wiz-progress span.current { color: var(--accent); }
+.wiz-progress span.done { color: var(--ok); }
+.wiz-live {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 12px; font-size: 14px; color: var(--muted); margin-bottom: 10px;
+}
+.wiz-live.ok { border-color: var(--ok); color: var(--ok); }
+.wiz-live .pulse { animation: wiz-pulse 1.6s ease-in-out infinite; }
+@keyframes wiz-pulse { 50% { opacity: 0.25; } }
+.wiz-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.wiz-form label { font-size: 12px; color: var(--muted); }
+.wiz-form input {
+  display: block; width: 100%; margin-top: 3px;
+  background: var(--page); color: var(--ink-2); font: 14px var(--font-ui);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px;
+}
+.wiz-actions { margin-top: 16px; display: flex; gap: 8px; align-items: center; }
+.wiz-skip {
+  all: unset; cursor: pointer; margin-left: auto;
+  font-size: 13px; color: var(--muted);
+}
+.wiz-skip:hover { color: var(--ink-2); }
 .btn-danger:hover { border-color: var(--danger); color: var(--ink); background: rgba(230,103,103,0.15); }
 .adv-toggle {
   margin-top: 14px; font-size: 13px; color: var(--muted);
@@ -221,6 +254,16 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 .fam-grid {
   columns: 3 320px; column-gap: 14px; max-width: 1200px;
 }
+/* baseline stepper: one game screen at a time */
+.fam-grid.single { columns: 1; max-width: 460px; }
+.b-steps { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; max-width: 1200px; }
+.b-steps button {
+  background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--muted); font: 12px var(--font-ui); padding: 3px 9px; cursor: pointer;
+}
+.b-steps button:hover { color: var(--ink); }
+.b-steps button.filled { color: var(--ink-2); border-color: var(--ok); }
+.b-steps button.current { color: var(--ink); border-color: var(--accent); }
 .fam-card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px 14px;

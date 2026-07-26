@@ -131,6 +131,12 @@ export type ErrorKind = "badRequest" | "forbidden" | "notFound" | "conflict" | "
 /**  Latest telemetry frame, cut down to what the Drive screen shows. */
 export type FrameView = {
 	raceOn: boolean,
+	/**
+	 *  Car ordinal from the packet (0 in menus — everything but the timestamp
+	 *  is zeroed while race is off). Lets onboarding show "car detected".
+	 */
+	car: number,
+	carName: string | null,
 	speedMps: number | null,
 	rpm: number | null,
 	maxRpm: number | null,

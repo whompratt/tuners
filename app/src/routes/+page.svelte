@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { app, loadAdvice, loadPending } from "$lib/app.svelte";
+  import { reopenOnboarding } from "$lib/onboarding.svelte";
   import { isAccepted, isHold, primaryRec } from "$lib/advice";
   import { commands } from "$lib/bindings";
   import { SPD, fmtLap, toDisp } from "$lib/units";
@@ -99,7 +100,10 @@
     <div class="hero">No project yet.</div>
     <div class="next-action">
       Set up your car first — pick it and note what the telemetry can't see (weight, compound, assists).
-      <div style="margin-top:10px"><Button go onclick={() => goto("/projects")}>set up your project</Button></div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+        <Button go onclick={() => reopenOnboarding()}>first-time setup guide</Button>
+        <Button onclick={() => goto("/projects")}>set up your project</Button>
+      </div>
     </div>
   {:else if !app.session.latest}
     <div class="hero">{app.session.carName || `car #${app.session.car}`} — no tune on file.</div>

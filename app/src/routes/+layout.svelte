@@ -5,7 +5,9 @@
   import { events } from "$lib/bindings";
   import { app, loadAdvice, loadPending, loadSession, loadStints } from "$lib/app.svelte";
   import { initAdvanced } from "$lib/advanced.svelte";
+  import { initOnboarding, onboarding } from "$lib/onboarding.svelte";
   import DialogHost from "$lib/ui/DialogHost.svelte";
+  import Onboarding from "$lib/components/Onboarding.svelte";
 
   let { children } = $props();
 
@@ -24,6 +26,7 @@
       await loadSession();
       await loadPending();
       app.booted = true;
+      initOnboarding(!!app.session && app.session.car != null);
       // Advice on launch feeds all three registers; recomputed on run close.
       loadAdvice();
     })();
@@ -45,6 +48,7 @@
 </script>
 
 <DialogHost />
+{#if onboarding.open}<Onboarding />{/if}
 <nav class="rail">
   <div class="rail-brand" title="FH6 tuning assistant">tuners</div>
   {#each NAV as [href, label] (href)}

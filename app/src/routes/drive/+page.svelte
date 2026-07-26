@@ -53,7 +53,12 @@
     {/if}
   </div>
 
-  {#if f && stale}
+  {#if !f && app.booted}
+    <div class="banner" style="margin-top:12px">
+      no telemetry yet — in FH6: Settings → HUD and Gameplay → Data Out → ON, IP 127.0.0.1, port 20440.
+      The game only honours new Data Out settings after a full restart.
+    </div>
+  {:else if f && stale}
     <div class="banner" style="margin-top:12px">no data for {Math.round((app.live?.ageMs ?? 0) / 1000)}s</div>
   {:else if f && !f.raceOn}
     <div class="banner" style="margin-top:12px">menu / paused</div>
