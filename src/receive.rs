@@ -127,6 +127,7 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
         }
     }
 
+    let mut body_consumed = 0u64;
     let (status, body) = match (method, target) {
         ("GET", "/healthz") => ("200 OK", "{\"ok\":true}".to_string()),
         ("PUT", t) if t.starts_with("/v1/bundle/") => {
@@ -140,6 +141,7 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
                 expect_continue,
                 &mut stream,
                 &mut reader,
+                &mut body_consumed,
             ) {
                 Ok(pair) | Err(pair) => pair,
             }
@@ -153,6 +155,20 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
         body.len(),
     );
     let _ = stream.write_all(body.as_bytes());
+    // A rejected upload leaves body bytes unread, and closing with unread
+    // data can RST away the response we just wrote (curl then reports "no
+    // response", so a permanent 4xx looks transient to the drainer). Drain
+    // exactly the unread remainder — zero on clean paths, and bounded by the
+    // read timeout if the client stalls mid-body.
+    let mut drain_left =
+        content_length.unwrap_or(0).saturating_sub(body_consumed).min(cfg.max_bundle_bytes);
+    let mut buf = [0u8; 64 * 1024];
+    while drain_left > 0 {
+        match reader.read(&mut buf[..(drain_left.min(64 * 1024) as usize)]) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => drain_left -= n as u64,
+        }
+    }
 }
 
 type Reply = (&'static str, String);
@@ -167,6 +183,7 @@ fn put_bundle(
     expect_continue: bool,
     stream: &mut TcpStream,
     reader: &mut BufReader<TcpStream>,
+    body_consumed: &mut u64,
 ) -> Result<Reply, Reply> {
     // Everything is checked BEFORE the body is read: a rejected upload costs
     // the sender headers, not megabytes.
@@ -232,6 +249,7 @@ fn put_bundle(
             if n == 0 {
                 return Err(("400 Bad Request", err_json("body truncated")));
             }
+            *body_consumed += n as u64;
             hasher.update(&buf[..n]);
             out.write_all(&buf[..n])
                 .map_err(|e| ("500 Internal Server Error", err_json(&e.to_string())))?;

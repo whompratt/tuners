@@ -161,8 +161,8 @@ fn handle(
             }
             out
         }
-        ("GET", "/api/collect") => ("200 OK", "application/json", collect_json()),
-        ("POST", "/api/collect") => collect_post(&form_params(&request_body)),
+        ("GET", "/api/sharing") => ("200 OK", "application/json", collect_json()),
+        ("POST", "/api/sharing") => collect_post(&form_params(&request_body)),
         ("GET", "/api/sessions") => (
             "200 OK",
             "application/json",

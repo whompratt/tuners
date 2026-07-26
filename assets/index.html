@@ -1116,7 +1116,7 @@ async function renderSessList() {
 }
 // --- telemetry sharing (plan 009): consent toggle + queue status ---
 async function renderCollect() {
-  const d = await (await fetch('/api/collect')).json();
+  const d = await (await fetch('/api/sharing')).json();
   const bits = [];
   if (d.enabled) {
     bits.push(`on — sender ${d.sender}`);
@@ -1134,13 +1134,13 @@ async function renderCollect() {
 // it can't) even when the status render failed. Every failure is audible.
 $('collect-toggle').onclick = async () => {
   try {
-    const d = await (await fetch('/api/collect')).json();
+    const d = await (await fetch('/api/sharing')).json();
     const body = new URLSearchParams({ enabled: d.enabled ? '0' : '1' });
     if (d.enabled && d.queued
         && confirm(`${d.queued} bundle(s) are still queued.\n\nOK = delete them, Cancel = keep them (they upload if you re-enable).`)) {
       body.set('discard', '1');
     }
-    const r = await fetch('/api/collect', { method: 'POST', body });
+    const r = await fetch('/api/sharing', { method: 'POST', body });
     if (!r.ok) { alert(await r.text()); return; }
     await renderCollect();
   } catch (e) {

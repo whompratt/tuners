@@ -78,6 +78,7 @@ fn put_raw(
         req += "\r\n";
         s.write_all(req.as_bytes()).unwrap();
         let _ = s.write_all(body); // may hit a closed socket on early rejects
+        let _ = s.shutdown(std::net::Shutdown::Write); // half-close: we sent everything
         let mut resp = String::new();
         let _ = s.read_to_string(&mut resp); // RST after a partial read is fine too
         if let Some(status) = resp.split_whitespace().nth(1).and_then(|c| c.parse().ok()) {
@@ -249,12 +250,14 @@ fn health_and_unknown_routes() {
     let srv = start(64 << 20, 512 << 20, "routes");
     let mut s = TcpStream::connect(srv.addr).unwrap();
     s.write_all(b"GET /healthz HTTP/1.1\r\nHost: t\r\n\r\n").unwrap();
+    let _ = s.shutdown(std::net::Shutdown::Write);
     let mut resp = String::new();
     s.read_to_string(&mut resp).unwrap();
     assert!(resp.starts_with("HTTP/1.1 200"), "{resp}");
 
     let mut s = TcpStream::connect(srv.addr).unwrap();
     s.write_all(b"GET /v1/bundle/a.tar.zst HTTP/1.1\r\nHost: t\r\n\r\n").unwrap();
+    let _ = s.shutdown(std::net::Shutdown::Write);
     let mut resp = String::new();
     s.read_to_string(&mut resp).unwrap();
     assert!(resp.starts_with("HTTP/1.1 405"), "{resp}");
