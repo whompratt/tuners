@@ -1077,9 +1077,13 @@ $('session-save').onclick = async () => {
 $('sess-manage').onclick = async () => {
   const body = $('sess-body');
   if (body.style.display !== 'none') { body.style.display = 'none'; return; }
-  await renderSessList();
-  await renderCollect();
   body.style.display = '';
+  // Sections render independently: a failure in one shows inline and must
+  // never blank the other (or keep the panel from opening at all).
+  try { await renderSessList(); }
+  catch (e) { $('sess-list').innerHTML = `<div class="placeholder">session list failed: ${escT(String(e))}</div>`; }
+  try { await renderCollect(); }
+  catch (e) { $('collect-status').textContent = `status unavailable (${e})`; }
 };
 async function renderSessList() {
   const d = await fetch('/api/sessions').then(r => r.json());
