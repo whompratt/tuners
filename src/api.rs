@@ -1051,7 +1051,7 @@ pub fn report_text(file: &str) -> Result<String, ApiError> {
 // -------------------------------------------------------------------- advise
 
 #[derive(Serialize, Type, Debug, Clone)]
-#[serde(rename_all = "camelCase", untagged)]
+#[serde(rename_all_fields = "camelCase", untagged)]
 pub enum OutcomeView {
     Measured {
         word: String,
