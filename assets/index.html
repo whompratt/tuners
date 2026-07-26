@@ -202,7 +202,7 @@
             <b>telemetry sharing</b>
             <span id="collect-status" style="color:var(--muted)"></span>
             <span style="flex:1"></span>
-            <button id="collect-toggle" class="btn"></button>
+            <button id="collect-toggle" class="btn">sharing…</button>
           </div>
           <div style="color:var(--muted);font-size:12px;margin-top:6px;max-width:640px">
             When on, each finished stint is bundled and uploaded (only while telemetry is idle)
@@ -1127,9 +1127,14 @@ async function renderCollect() {
     if (d.queued) bits.push(`${d.queued} still queued from before`);
   }
   $('collect-status').textContent = bits.join(' · ');
-  const btn = $('collect-toggle');
-  btn.textContent = d.enabled ? 'turn off' : 'turn on sharing';
-  btn.onclick = async () => {
+  $('collect-toggle').textContent = d.enabled ? 'turn off' : 'turn on sharing';
+}
+
+// Wired at load, not inside renderCollect: the toggle must work (or say why
+// it can't) even when the status render failed. Every failure is audible.
+$('collect-toggle').onclick = async () => {
+  try {
+    const d = await (await fetch('/api/collect')).json();
     const body = new URLSearchParams({ enabled: d.enabled ? '0' : '1' });
     if (d.enabled && d.queued
         && confirm(`${d.queued} bundle(s) are still queued.\n\nOK = delete them, Cancel = keep them (they upload if you re-enable).`)) {
@@ -1138,8 +1143,10 @@ async function renderCollect() {
     const r = await fetch('/api/collect', { method: 'POST', body });
     if (!r.ok) { alert(await r.text()); return; }
     await renderCollect();
-  };
-}
+  } catch (e) {
+    alert(`telemetry sharing toggle failed: ${e}`);
+  }
+};
 
 $('sess-new-go').onclick = async () => {
   const body = new URLSearchParams();

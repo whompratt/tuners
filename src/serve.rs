@@ -183,9 +183,11 @@ fn handle(
         }
         _ => respond(target, sessions_dir),
     };
+    // no-store: a stale cached dashboard against a newer server is a debugging
+    // trap (the UI is compiled into the binary, so page and API must match).
     let _ = write!(
         stream,
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len(),
     );
     let _ = stream.write_all(body.as_bytes());
