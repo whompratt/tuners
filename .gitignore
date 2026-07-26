@@ -1,6 +1,6 @@
 /target
 /sessions
-/tune-journal.txt
+/tune-journal*.txt
 
 # telemetry collection (plan 009): received bundles + credentials stay local
 /inbox
