@@ -49,16 +49,25 @@ while [[ "$1" == *=* && "$1" != -* ]]; do
     shift
 done
 
-if ! "$PS" -Command "Get-Command pnpm -ErrorAction Stop | Out-Null"; then
-    echo "run.sh: pnpm not found on the Windows side — install Node, then 'npm install -g pnpm'" >&2
+# WSL-launched Windows processes get the PATH captured when WSL started, so
+# a freshly installed pnpm (or one added by a shell-profile hook like
+# fnm/volta) is invisible here even though interactive PowerShell sees it.
+# Prepend the usual install locations explicitly.
+path_fix='foreach ($c in @("$env:APPDATA\npm", "$env:LOCALAPPDATA\pnpm", "$env:ProgramFiles\nodejs", "$env:LOCALAPPDATA\Volta\bin")) { if (Test-Path $c) { $env:Path = "$c;" + $env:Path } }; '
+
+if ! "$PS" -Command "${path_fix}Get-Command pnpm -ErrorAction Stop | Out-Null"; then
+    echo "run.sh: pnpm not found on the Windows side." >&2
+    echo "  - not installed yet? install Node, then 'npm install -g pnpm'" >&2
+    echo "  - installed after WSL started? restart WSL to refresh the PATH:" >&2
+    echo "      wsl.exe --shutdown   (then reopen this terminal)" >&2
     exit 1
 fi
 
 cd app
 if [ ! -d node_modules ]; then
     echo "first run: installing app/node_modules on the Windows side…"
-    "$PS" -Command "pnpm install"
+    "$PS" -Command "${path_fix}pnpm install"
 fi
 
 echo "launching pnpm tauri dev (data root: $TUNERS_DATA)…"
-"$PS" -Command "${env_prefix}pnpm tauri dev $*"
+"$PS" -Command "${path_fix}${env_prefix}pnpm tauri dev $*"
