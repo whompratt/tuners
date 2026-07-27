@@ -4,7 +4,7 @@
   import { advanced } from "$lib/advanced.svelte";
   import { commands, type RecommendationView } from "$lib/bindings";
   import { TUNE_GROUPS } from "$lib/fields";
-  import { UNIVERSAL_LIMITS, limToCanon, limToDisp, toCanon, toDisp, unitOf } from "$lib/units";
+  import { UNIT_PRESETS, UNIVERSAL_LIMITS, limToCanon, limToDisp, toCanon, toDisp, unitOf, unitPrefs } from "$lib/units";
   import { drawLandscape, landscapeLayout, type LandscapeData } from "$lib/charts/landscape";
   import { palette } from "$lib/charts/palette";
   import Chart from "$lib/ui/Chart.svelte";
@@ -17,26 +17,67 @@
   // Draft edits (display units), keyed by slider. In living-tune mode a field
   // commits on change; in baseline mode the whole draft saves at once.
   let draft: Record<string, string> = $state({});
-  let limDraft: Record<string, string> = $state({});
+  // Limits edit as separate min/max boxes; storage stays the engine's
+  // canonical "min..max" fact string.
+  let limDraft: Record<string, { min: string; max: string }> = $state({});
   let expanded: Record<string, boolean> = $state({});
   let msg = $state("");
 
   // Re-seed the draft from the saved version whenever it (or units) change.
+  // In baseline mode the draft IS the user's in-progress transcription and
+  // there is no saved version to reseed from — seed once per car and never
+  // clobber it (applyUnits re-expresses it in place instead).
+  let baselineSeededFor = $state<number | null>(null);
   $effect(() => {
     void app.unitsTick;
     const vals = latest;
     const facts = app.session?.facts ?? {};
+    const car = app.session?.car ?? null;
+    if (baselineMode && baselineSeededFor === car) return;
+    baselineSeededFor = baselineMode ? car : null;
     const d: Record<string, string> = {};
-    const ld: Record<string, string> = {};
+    const ld: Record<string, { min: string; max: string }> = {};
     for (const [, fields] of TUNE_GROUPS) {
       for (const [k] of fields) {
         d[k] = toDisp(k, vals?.[k] ?? "");
-        ld[k] = limToDisp(k, facts[`limit_${k}`] ?? "");
+        const [min = "", max = ""] = limToDisp(k, facts[`limit_${k}`] ?? "").split("..");
+        ld[k] = { min, max };
       }
     }
     draft = d;
     limDraft = ld;
   });
+
+  /** Baseline units: re-express the in-progress draft under the new preset
+   * (via canonical, so nothing drifts) and persist the prefs to the project.
+   * Getting this right BEFORE saving matters — save interprets the numbers
+   * under the active prefs. */
+  async function applyUnits(preset: string) {
+    const canon: Record<string, string> = {};
+    const limCanon: Record<string, { min: string; max: string }> = {};
+    for (const [, fields] of TUNE_GROUPS) {
+      for (const [k] of fields) {
+        canon[k] = String(draft[k] ?? "").trim() === "" ? "" : toCanon(k, draft[k]);
+        limCanon[k] = {
+          min: String(limDraft[k]?.min ?? "").trim() === "" ? "" : toCanon(k, limDraft[k].min),
+          max: String(limDraft[k]?.max ?? "").trim() === "" ? "" : toCanon(k, limDraft[k].max),
+        };
+      }
+    }
+    for (const [dim, u] of Object.entries(UNIT_PRESETS[preset])) unitPrefs[dim] = u;
+    for (const [, fields] of TUNE_GROUPS) {
+      for (const [k] of fields) {
+        draft[k] = canon[k] === "" ? "" : toDisp(k, canon[k]);
+        limDraft[k] = {
+          min: limCanon[k].min === "" ? "" : toDisp(k, limCanon[k].min),
+          max: limCanon[k].max === "" ? "" : toDisp(k, limCanon[k].max),
+        };
+      }
+    }
+    const facts: [string, string][] = Object.entries(UNIT_PRESETS[preset]).map(([dim, u]) => [`unit_${dim}`, u]);
+    await commands.updateSession(false, null, facts);
+    await loadSession();
+  }
 
   const dirty = (k: string) => {
     const saved = toDisp(k, latest?.[k] ?? "");
@@ -63,10 +104,13 @@
   }
 
   async function commitLimit(k: string) {
-    const raw = String(limDraft[k] ?? "").trim();
-    const canon = raw === "" ? "" : limToCanon(k, raw);
-    if (raw !== "" && canon === "") {
-      msg = `bad range for ${k}: use min..max`;
+    const mn = String(limDraft[k]?.min ?? "").trim();
+    const mx = String(limDraft[k]?.max ?? "").trim();
+    // Half-entered = mid-typing (or mid-clearing) — commit when both settle.
+    if ((mn === "") !== (mx === "")) return;
+    const canon = mn === "" ? "" : limToCanon(k, `${mn}..${mx}`);
+    if (mn !== "" && canon === "") {
+      msg = `bad range for ${k}: min and max must be numbers`;
       return;
     }
     const cur = app.session?.facts[`limit_${k}`] ?? "";
@@ -165,6 +209,15 @@
         {#if baselineEntered}<span style="color:var(--muted)">{baselineEntered} entered</span>{/if}
         <Button go onclick={saveBaseline}>save baseline tune</Button>
         {#if msg}<span style="color:var(--accent)">{msg}</span>{/if}
+        <div style="flex-basis:100%;display:flex;gap:8px;align-items:baseline;margin-top:6px">
+          <span style="font-size:12px;color:var(--muted)">units — match what the game shows you:</span>
+          <Button onclick={() => applyUnits("imperial")}>imperial</Button>
+          <Button onclick={() => applyUnits("metric")}>metric</Button>
+          <Button onclick={() => applyUnits("uk")}>UK</Button>
+          <span style="font-size:12px;color:var(--muted)">
+            switching re-converts anything already typed; per-field prefs live in Projects
+          </span>
+        </div>
       </div>
     {:else if app.pending}
       <div class="pending-bar">
@@ -202,16 +255,15 @@
                 <span class="unit">{unitOf(k)?.l ?? ""}</span>
                 {#if advanced.on}
                   {#if UNIVERSAL_LIMITS(k) && !app.session?.facts[`limit_${k}`]}
-                    <span style="opacity:.45;font-size:11px" title="range fixed across cars">{UNIVERSAL_LIMITS(k)}</span>
-                  {:else}
-                    <input
-                      type="text"
-                      placeholder="min..max"
-                      title="slider range on this car (for limit-aware advice)"
-                      style="width:72px;opacity:.65"
-                      bind:value={limDraft[k]}
-                      onchange={() => commitLimit(k)}
-                    />
+                    <span style="opacity:.45;font-size:11px" title="range fixed across cars">
+                      {UNIVERSAL_LIMITS(k)?.replace("..", " – ")}
+                    </span>
+                  {:else if limDraft[k]}
+                    <span class="lim" title="slider range on this car (for limit-aware advice)">
+                      <input type="number" step="any" placeholder="min" bind:value={limDraft[k].min} onchange={() => commitLimit(k)} />
+                      –
+                      <input type="number" step="any" placeholder="max" bind:value={limDraft[k].max} onchange={() => commitLimit(k)} />
+                    </span>
                   {/if}
                 {/if}
               </div>
