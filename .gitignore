@@ -2,8 +2,15 @@
 /sessions
 /tune-journal*.txt
 /tune-session*.txt
+.env
 
-# telemetry collection (plan 009): received bundles + credentials stay local
+# local working notes
+/CLAUDE.md
+/HANDOVER.md
+/docs/plans/
+/docs/data_requests.md
+
+# telemetry collection: received bundles + credentials stay local
 /inbox
 /receive-tokens.txt
 /outbox
