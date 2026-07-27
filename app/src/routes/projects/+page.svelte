@@ -1,28 +1,24 @@
 <script lang="ts">
   import { app, errMsg, loadAdvice, loadSession, loadStints } from "$lib/app.svelte";
-  import { commands, type SessionsView, type SharingView } from "$lib/bindings";
+  import { commands, type SessionsView } from "$lib/bindings";
   import { COMPOUNDS, FACT_FIELDS, label } from "$lib/fields";
-  import { UNITS, UNIT_DIMS, UNIT_PRESETS, toCanon, toDisp, unitLabel, unitPrefs } from "$lib/units";
-  import { alertDialog, confirmDialog } from "$lib/ui/dialogs.svelte";
+  import { toCanon, toDisp, unitLabel } from "$lib/units";
+  import { alertDialog } from "$lib/ui/dialogs.svelte";
   import Button from "$lib/ui/Button.svelte";
 
   let formOpen = $state(false);
 
-  // --- project form state (facts + units) ---
+  // --- project form state (facts; display units live in Settings) ---
   let ssName = $state("");
   let ssDescription = $state("");
   let ssCar = $state("");
   let ssCarManual = $state("");
   let ssFacts: Record<string, string> = $state({});
   let ssChecks: Record<string, boolean> = $state({});
-  let ssUnits: Record<string, string> = $state({});
 
-  // --- library + sharing state ---
+  // --- library state ---
   let list: SessionsView | null = $state(null);
   let listError = $state("");
-  let sharing: SharingView | null = $state(null);
-  let sharingError = $state("");
-  let sharingOverride = $state("");
   let newName = $state("");
 
   let cars = $derived.by(() => {
@@ -42,7 +38,6 @@
 
   $effect(() => {
     refreshList();
-    refreshSharing();
   });
 
   async function refreshList() {
@@ -52,15 +47,6 @@
     } catch (e) {
       list = null;
       listError = String(e);
-    }
-  }
-  async function refreshSharing() {
-    try {
-      sharing = await commands.sharing();
-      sharingError = "";
-    } catch (e) {
-      sharing = null;
-      sharingError = String(e);
     }
   }
 
@@ -77,34 +63,13 @@
       if (type === "check") ssChecks[k] = v === "on";
       else ssFacts[k] = type === "number" ? toDisp(k, v) : v;
     }
-    ssUnits = {};
-    for (const [dim] of UNIT_DIMS) ssUnits[dim] = unitPrefs[dim];
     formOpen = true;
-  }
-
-  // Unit pickers apply live: values re-convert through canonical so nothing
-  // drifts; save persists, cancel reloads the saved prefs.
-  function refreshFormUnits() {
-    const canon: Record<string, string> = {};
-    for (const [k, , type] of FACT_FIELDS) if (type === "number") canon[k] = toCanon(k, ssFacts[k] ?? "");
-    for (const [dim] of UNIT_DIMS) unitPrefs[dim] = ssUnits[dim];
-    for (const [k, , type] of FACT_FIELDS) if (type === "number") ssFacts[k] = toDisp(k, canon[k]);
-    app.unitsTick++;
-  }
-  function applyPreset(preset: string) {
-    for (const [dim, u] of Object.entries(UNIT_PRESETS[preset])) ssUnits[dim] = u;
-    refreshFormUnits();
   }
 
   async function saveProject() {
     const facts: [string, string][] = [];
     facts.push(["name", ssName.trim()]);
     facts.push(["description", ssDescription.trim()]);
-    // Units first, so toCanon below converts under the prefs being saved.
-    for (const [dim] of UNIT_DIMS) {
-      unitPrefs[dim] = ssUnits[dim];
-      facts.push([`unit_${dim}`, ssUnits[dim]]);
-    }
     for (const [k, , type] of FACT_FIELDS) {
       facts.push([k, type === "check" ? (ssChecks[k] ? "on" : "off") : toCanon(k, ssFacts[k] ?? "")]);
     }
@@ -142,82 +107,6 @@
     await loadAdvice();
     await loadStints(true);
   }
-
-  async function toggleSharing() {
-    try {
-      const d = await commands.sharing();
-      let discard = false;
-      if (
-        d.enabled &&
-        d.queued &&
-        (await confirmDialog({
-          title: "Telemetry sharing",
-          body: `${d.queued} bundle(s) are still queued.\n\nDelete them, or keep them? Kept bundles upload if you re-enable.`,
-          verb: "Delete queued",
-          cancel: "Keep queued",
-          danger: true,
-        }))
-      ) {
-        discard = true;
-      }
-      const r = await commands.setSharing(!d.enabled, null, discard);
-      if (r.status === "error") {
-        await alertDialog("Telemetry sharing", errMsg(r.error));
-        return;
-      }
-      await refreshSharing();
-    } catch (e) {
-      await alertDialog("Telemetry sharing", `toggle failed: ${e}`);
-    }
-  }
-
-  async function shareHistory() {
-    try {
-      const p = await commands.sharingHistoryPlan();
-      const skipped: string[] = [];
-      if (p.already) skipped.push(`${p.already} already shared/queued`);
-      if (p.unjournaled) skipped.push(`${p.unjournaled} without setup history`);
-      if (!p.stints) {
-        await alertDialog("Share existing recordings", `Nothing new to share${skipped.length ? ` — skipped: ${skipped.join(", ")}` : ""}.`);
-        return;
-      }
-      const msg =
-        `Share ${p.stints} recording${p.stints === 1 ? "" : "s"} from ` +
-        `${p.campaigns} project${p.campaigns === 1 ? "" : "s"} (~${(p.mb ?? 0).toFixed(1)} MB raw)` +
-        ` recorded before sharing was enabled?\n\n` +
-        `Same rules as live sharing: raw telemetry, setup values, and setup deltas only` +
-        ` — names, descriptions, and notes are stripped. Uploads happen in the` +
-        ` background while telemetry is idle.` +
-        (skipped.length ? `\n\n(Skipped: ${skipped.join(", ")}.)` : "");
-      if (!(await confirmDialog({ title: "Share existing recordings", body: msg, verb: "Share", cancel: "Cancel" }))) return;
-      const r = await commands.shareHistory();
-      if (r.status === "error") {
-        await alertDialog("Share existing recordings", errMsg(r.error));
-        return;
-      }
-      sharingOverride = `bundling ${r.data} recording(s) in the background…`;
-      setTimeout(() => {
-        sharingOverride = "";
-        refreshSharing();
-      }, 4000);
-    } catch (e) {
-      await alertDialog("Share existing recordings", `failed: ${e}`);
-    }
-  }
-
-  let sharingStatus = $derived.by(() => {
-    if (!sharing) return sharingError ? `status unavailable (${sharingError})` : "";
-    const bits: string[] = [];
-    if (sharing.enabled) {
-      bits.push(`on — sender ${sharing.sender}`);
-      bits.push(`${sharing.queued} bundle${sharing.queued === 1 ? "" : "s"} queued`);
-      if (sharing.rejected) bits.push(`${sharing.rejected} rejected (see outbox/rejected)`);
-    } else {
-      bits.push("off");
-      if (sharing.queued) bits.push(`${sharing.queued} still queued from before`);
-    }
-    return bits.join(" · ");
-  });
 
   const rowName = (r: { name: string | null; carName: string | null; car: number | null }) =>
     r.name || r.carName || (r.car != null ? `car #${r.car}` : "(no car)");
@@ -321,30 +210,9 @@
               </div>
             {/if}
           {/each}
-          <div style="grid-column:1/-1;margin-top:6px;display:flex;gap:8px;align-items:baseline">
-            <span style="font-size:12px;color:var(--muted)">units</span>
-            <Button onclick={() => applyPreset("imperial")}>imperial</Button>
-            <Button onclick={() => applyPreset("metric")}>metric</Button>
-            <Button onclick={() => applyPreset("uk")}>UK</Button>
-            <span style="font-size:12px;color:var(--muted)">display only — values are stored in the game's native units, switch any time</span>
+          <div style="grid-column:1/-1;font-size:12px;color:var(--muted)">
+            display units moved to <a href="/settings">Settings</a>
           </div>
-          {#each UNIT_DIMS as [dim, l] (dim)}
-            <div>
-              <label for="up-{dim}">{dim === "temp" ? "temperature" : l}</label>
-              {#if dim === "temp"}
-                <select id="up-{dim}" bind:value={ssUnits[dim]} onchange={refreshFormUnits}>
-                  <option value="f">°F</option>
-                  <option value="c">°C</option>
-                </select>
-              {:else}
-                <select id="up-{dim}" bind:value={ssUnits[dim]} onchange={refreshFormUnits}>
-                  {#each Object.entries(UNITS[dim]) as [u, d] (u)}
-                    <option value={u}>{d.l}</option>
-                  {/each}
-                </select>
-              {/if}
-            </div>
-          {/each}
         </div>
         <div style="margin-top:10px;display:flex;gap:8px">
           <Button go onclick={saveProject}>save project</Button>
@@ -385,24 +253,4 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
-      <h2 style="margin:0">Telemetry sharing</h2>
-      <span style="color:var(--muted);font-size:13px">{sharingOverride || sharingStatus}</span>
-      <span style="flex:1"></span>
-      <Button
-        disabled={!sharing?.enabled}
-        title={sharing?.enabled
-          ? "bundle recordings from before sharing was enabled (asks first)"
-          : "turn on sharing first"}
-        onclick={shareHistory}>share existing recordings…</Button>
-      <Button onclick={toggleSharing}>{sharing?.enabled ? "turn off" : "turn on sharing"}</Button>
-    </div>
-    <div style="color:var(--muted);font-size:12px;margin-top:6px;max-width:640px">
-      When on, each finished run is bundled and uploaded (only while telemetry is idle) to help develop this
-      tool: raw driving telemetry, setup values, and setup deltas. No names, no free text — project names,
-      descriptions, and notes are stripped before anything leaves this machine. Off by default; turn it
-      off any time. Quote your sender id to have your data deleted.
-    </div>
-  </div>
 </div>

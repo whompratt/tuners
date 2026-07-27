@@ -218,7 +218,7 @@
           <Button onclick={() => applyUnits("metric")}>metric</Button>
           <Button onclick={() => applyUnits("uk")}>UK</Button>
           <span style="font-size:12px;color:var(--muted)">
-            switching re-converts anything already typed; per-field prefs live in Projects
+            switching re-converts anything already typed; per-field prefs live in Settings
           </span>
         </div>
       </div>

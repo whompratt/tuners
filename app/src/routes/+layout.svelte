@@ -19,6 +19,7 @@
     ["/setup", "Setup"],
     ["/analysis", "Analysis"],
     ["/projects", "Projects"],
+    ["/settings", "Settings"],
   ] as const;
 
   onMount(() => {
