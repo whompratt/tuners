@@ -139,7 +139,7 @@ jobs:
           sed -i "s|tuners_[0-9][^_]*_amd64\.deb|$DEB|" flatpak/io.github.whompratt.tuners.yml
           cd flatpak
           flatpak-builder --user --force-clean --disable-rofiles-fuse --repo flatpak-repo build-dir io.github.whompratt.tuners.yml
-          flatpak build-bundle flatpak-repo "${DEB%.deb}.flatpak" io.github.whompratt.tuners
+          flatpak build-bundle flatpak-repo "${DEB%.deb}.flatpak" io.github.whompratt.tuners stable
 
       - name: attach bundle to the release
         uses: actions/github-script@v9

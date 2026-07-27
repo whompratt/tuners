@@ -6,6 +6,9 @@
 # Deb internals use the crate name: usr/bin/tuners-app, tuners-app.png
 # icons, desktop Exec/Icon/StartupWMClass=tuners-app.
 id: io.github.whompratt.tuners
+# flatpak ref branch (release channel), not a git branch; "stable" is the
+# ecosystem convention. build-bundle must name it explicitly.
+branch: stable
 runtime: org.gnome.Platform
 runtime-version: '49'
 sdk: org.gnome.Sdk
