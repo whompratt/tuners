@@ -4,10 +4,13 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { confirmDialog } from "$lib/ui/dialogs.svelte";
+import { commands } from "$lib/bindings";
 
 export async function checkForUpdate(): Promise<void> {
   if (import.meta.env.DEV) return;
   try {
+    // Flatpak installs can't self-update (/app is immutable); flatpak does it.
+    if (await commands.inFlatpak()) return;
     const update = await check();
     if (!update) return;
     const ok = await confirmDialog({

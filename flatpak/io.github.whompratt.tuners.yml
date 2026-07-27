@@ -1,0 +1,35 @@
+# Flatpak manifest (deb-based, self-distribution). Local iteration builds
+# from the deb produced by `pnpm tauri build --bundles deb`; a release
+# manifest swaps the path source for the GitHub asset url + sha256.
+# The flatpak id is independent of the app's internal identifier
+# (com.whompratt.tuners) — data lands in ~/.var/app/<this id>/.
+# Deb internals use the crate name: usr/bin/tuners-app, tuners-app.png
+# icons, desktop Exec/Icon/StartupWMClass=tuners-app.
+id: io.github.whompratt.tuners
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+command: tuners-app
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --share=ipc
+  # UDP telemetry listen + collect uploads + (gated) updater feed
+  - --share=network
+modules:
+  - name: tuners
+    buildsystem: simple
+    sources:
+      - type: file
+        path: ../target/release/bundle/deb/tuners_0.1.1_amd64.deb
+        dest-filename: tuners.deb
+    build-commands:
+      - ar -x tuners.deb
+      - tar -xf data.tar.gz
+      - install -Dm755 usr/bin/tuners-app /app/bin/tuners-app
+      - install -Dm644 usr/share/applications/tuners.desktop /app/share/applications/io.github.whompratt.tuners.desktop
+      - desktop-file-edit --set-icon=io.github.whompratt.tuners /app/share/applications/io.github.whompratt.tuners.desktop
+      - install -Dm644 usr/share/icons/hicolor/128x128/apps/tuners-app.png /app/share/icons/hicolor/128x128/apps/io.github.whompratt.tuners.png
+      - install -Dm644 usr/share/icons/hicolor/32x32/apps/tuners-app.png /app/share/icons/hicolor/32x32/apps/io.github.whompratt.tuners.png
+      - install -Dm644 usr/share/icons/hicolor/256x256@2/apps/tuners-app.png /app/share/icons/hicolor/256x256@2/apps/io.github.whompratt.tuners.png

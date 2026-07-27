@@ -272,6 +272,15 @@ fn lan_ip() -> Option<String> {
     (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
 }
 
+/// True when running inside a flatpak sandbox, where the tauri updater
+/// cannot replace the app (/app is immutable; updates come via flatpak).
+/// The frontend skips the startup update check when this is set.
+#[tauri::command]
+#[specta::specta]
+fn in_flatpak() -> bool {
+    std::env::var_os("FLATPAK_ID").is_some() || std::path::Path::new("/.flatpak-info").exists()
+}
+
 // -------------------------------------------------------------------- shell
 
 pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
@@ -300,6 +309,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             effect_fields,
             pending,
             lan_ip,
+            in_flatpak,
         ])
         .events(tauri_specta::collect_events![
             LiveStateEvent,

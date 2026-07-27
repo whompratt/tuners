@@ -41,6 +41,12 @@ export const commands = {
 	 *  None when offline or loopback-only; the wizard then shows 127.0.0.1 alone.
 	 */
 	lanIp: () => __TAURI_INVOKE<string | null>("lan_ip"),
+	/**
+	 *  True when running inside a flatpak sandbox, where the tauri updater
+	 *  cannot replace the app (/app is immutable; updates come via flatpak).
+	 *  The frontend skips the startup update check when this is set.
+	 */
+	inFlatpak: () => __TAURI_INVOKE<boolean>("in_flatpak"),
 };
 
 /** Events */

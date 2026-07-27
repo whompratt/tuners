@@ -10,6 +10,12 @@
 /docs/plans/
 /docs/data_requests.md
 
+# flatpak build artifacts (manifest is tracked)
+/flatpak/build-dir/
+/flatpak/flatpak-repo/
+/flatpak/.flatpak-builder/
+/flatpak/*.flatpak
+
 # telemetry collection: received bundles + credentials stay local
 /inbox
 /receive-tokens.txt
