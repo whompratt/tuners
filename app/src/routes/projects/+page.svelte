@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, loadAdvice, loadSession, loadStints } from "$lib/app.svelte";
+  import { app, errMsg, loadAdvice, loadSession, loadStints } from "$lib/app.svelte";
   import { commands, type SessionsView, type SharingView } from "$lib/bindings";
   import { COMPOUNDS, FACT_FIELDS, label } from "$lib/fields";
   import { UNITS, UNIT_DIMS, UNIT_PRESETS, toCanon, toDisp, unitLabel, unitPrefs } from "$lib/units";
@@ -108,9 +108,10 @@
     for (const [k, , type] of FACT_FIELDS) {
       facts.push([k, type === "check" ? (ssChecks[k] ? "on" : "off") : toCanon(k, ssFacts[k] ?? "")]);
     }
-    const r = await commands.updateSession(false, ssCarManual || ssCar, facts);
+    // bind:value on the number input stores a number — the IPC arg is a string.
+    const r = await commands.updateSession(false, String(ssCarManual || ssCar), facts);
     if (r.status === "error") {
-      await alertDialog("Save failed", r.error.message);
+      await alertDialog("Save failed", errMsg(r.error));
       return;
     }
     formOpen = false;
@@ -121,7 +122,7 @@
   async function newProject() {
     const r = await commands.newSession(null, newName.trim() || null, null);
     if (r.status === "error") {
-      await alertDialog("New project failed", r.error.message);
+      await alertDialog("New project failed", errMsg(r.error));
       return;
     }
     newName = "";
@@ -133,7 +134,7 @@
   async function resumeProject(id: string) {
     const r = await commands.resumeSession(id);
     if (r.status === "error") {
-      await alertDialog("Resume failed", r.error.message);
+      await alertDialog("Resume failed", errMsg(r.error));
       return;
     }
     await loadSession();
@@ -161,7 +162,7 @@
       }
       const r = await commands.setSharing(!d.enabled, null, discard);
       if (r.status === "error") {
-        await alertDialog("Telemetry sharing", r.error.message);
+        await alertDialog("Telemetry sharing", errMsg(r.error));
         return;
       }
       await refreshSharing();
@@ -191,7 +192,7 @@
       if (!(await confirmDialog({ title: "Share existing recordings", body: msg, verb: "Share", cancel: "Cancel" }))) return;
       const r = await commands.shareHistory();
       if (r.status === "error") {
-        await alertDialog("Share existing recordings", r.error.message);
+        await alertDialog("Share existing recordings", errMsg(r.error));
         return;
       }
       sharingOverride = `bundling ${r.data} recording(s) in the background…`;

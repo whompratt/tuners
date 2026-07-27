@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { app, loadSession } from "$lib/app.svelte";
+  import { app, errMsg, loadSession } from "$lib/app.svelte";
   import { commands } from "$lib/bindings";
   import { finishOnboarding } from "$lib/onboarding.svelte";
   import { alertDialog } from "$lib/ui/dialogs.svelte";
@@ -38,13 +38,14 @@
   const carLabel = (c: { car: number; name: string | null }) => c.name || `car #${c.car}`;
 
   async function createProject() {
-    const car = manualCar.trim() || (chosen ? String(chosen.car) : "");
+    // bind:value on the number input stores a number — stringify before IPC.
+    const car = String(manualCar ?? "").trim() || (chosen ? String(chosen.car) : "");
     if (!car) return;
     creating = true;
     const r = await commands.updateSession(false, car, [["name", name.trim()]]);
     creating = false;
     if (r.status === "error") {
-      await alertDialog("Create project failed", r.error.message);
+      await alertDialog("Create project failed", errMsg(r.error));
       return;
     }
     await loadSession();
@@ -137,7 +138,7 @@
       </div>
       <div class="wiz-actions">
         <Button onclick={() => (step = 1)}>back</Button>
-        <Button go disabled={creating || (!chosen && !manualCar.trim())} onclick={createProject}>
+        <Button go disabled={creating || (!chosen && !String(manualCar ?? "").trim())} onclick={createProject}>
           {creating ? "creating…" : "create project"}
         </Button>
         <button class="wiz-skip" onclick={finishOnboarding}>skip setup</button>

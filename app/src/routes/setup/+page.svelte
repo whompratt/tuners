@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, loadAdvice, loadPending, loadSession } from "$lib/app.svelte";
+  import { app, errMsg, loadAdvice, loadPending, loadSession } from "$lib/app.svelte";
   import { AREA_GROUP, isAccepted, isHold, primaryRec } from "$lib/advice";
   import { advanced } from "$lib/advanced.svelte";
   import { commands, type RecommendationView } from "$lib/bindings";
@@ -55,7 +55,7 @@
     }
     const r = await commands.saveTune([[k, toCanon(k, v)]], true);
     if (r.status === "error") {
-      await alertDialog("Save failed", r.error.message);
+      await alertDialog("Save failed", errMsg(r.error));
       return;
     }
     await loadSession();
@@ -89,7 +89,7 @@
     }
     const r = await commands.saveTune(values, false);
     if (r.status === "error") {
-      msg = r.error.message;
+      msg = errMsg(r.error);
       return;
     }
     msg = "baseline saved — advice unlocks after your first run";
@@ -127,7 +127,7 @@
   async function accept(apply: [string, string][]) {
     const r = await commands.saveTune(apply, true);
     if (r.status === "error") {
-      await alertDialog("Apply failed", r.error.message);
+      await alertDialog("Apply failed", errMsg(r.error));
       return;
     }
     await loadSession();

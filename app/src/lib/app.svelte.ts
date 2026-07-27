@@ -65,7 +65,11 @@ export const app = $state({
   pending: null as PendingView | null,
 });
 
-export const errMsg = (e: ApiError): string => e.message;
+// Failures reaching the frontend are usually typed ApiErrors, but an invoke
+// can also reject with a plain string (e.g. argument deserialization) — a
+// dialog must never render an empty body.
+export const errMsg = (e: ApiError | string | unknown): string =>
+  typeof e === "string" ? e : ((e as ApiError)?.message ?? String(e));
 
 export async function loadAdvice() {
   app.adviceLoading = true;
@@ -78,7 +82,7 @@ export async function loadAdvice() {
   app.adviceLoading = false;
   if (r.status === "error") {
     app.advice = null;
-    app.adviceError = r.error.message;
+    app.adviceError = errMsg(r.error);
     return;
   }
   app.advice = r.data;
@@ -119,7 +123,7 @@ export async function show(file: string) {
   app.reportPlaceholder = false;
   app.report = "analyzing…";
   const [report, laps] = await Promise.all([commands.report(file), commands.laps(file)]);
-  app.report = report.status === "ok" ? report.data : report.error.message;
+  app.report = report.status === "ok" ? report.data : errMsg(report.error);
   app.lapData = laps.status === "ok" && laps.data.laps.length ? sanitizeLaps(laps.data) : null;
 }
 
@@ -144,7 +148,7 @@ export async function deleteStint(file: string) {
     // (the step is skipped, its note merged forward) but loses a measurement.
     const force = await confirmDialog({
       title: "Run is in the history",
-      body: `${r.error.message}\n\nDelete anyway?`,
+      body: `${errMsg(r.error)}\n\nDelete anyway?`,
       verb: "Delete anyway",
       cancel: "Keep",
       danger: true,
@@ -153,7 +157,7 @@ export async function deleteStint(file: string) {
     r = await commands.deleteStint(name, true);
   }
   if (r.status === "error") {
-    await alertDialog("Delete failed", r.error.message);
+    await alertDialog("Delete failed", errMsg(r.error));
     return;
   }
   if (app.selA === file) app.selA = null;
@@ -172,5 +176,5 @@ export async function exportBundle(file: string) {
   const dest = await save({ defaultPath: name.replace(/\.ftel$/, ".tar.zst") });
   if (!dest) return;
   const r = await commands.exportStint(name, dest);
-  if (r.status === "error") await alertDialog("Export failed", r.error.message);
+  if (r.status === "error") await alertDialog("Export failed", errMsg(r.error));
 }

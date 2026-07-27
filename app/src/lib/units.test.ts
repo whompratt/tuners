@@ -33,6 +33,14 @@ describe("toDisp/toCanon", () => {
     expect(toCanon("final_drive", "3.95")).toBe("3.95");
   });
 
+  it("stringifies numbers (bind:value on number inputs stores numbers)", () => {
+    // Regression: a raw number reaching the IPC boundary fails Rust-side
+    // deserialization (Vec<(String, String)>) with an opaque reject.
+    expect(toCanon("front_weight_pct", 50 as unknown as string)).toBe("50");
+    expect(toCanon("weight", 2622 as unknown as string)).toBe("2622");
+    expect(toDisp("arb_f", 18.5 as unknown as string)).toBe("18.5");
+  });
+
   it("round-trips every dimensioned field under metric prefs", () => {
     Object.assign(unitPrefs, UNIT_PRESETS.metric);
     for (const [key, canonical] of [

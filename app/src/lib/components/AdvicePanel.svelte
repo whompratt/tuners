@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, loadAdvice, loadPending, show } from "$lib/app.svelte";
+  import { app, errMsg, loadAdvice, loadPending, show } from "$lib/app.svelte";
   import { isAccepted } from "$lib/advice";
   import { advanced } from "$lib/advanced.svelte";
   import { commands } from "$lib/bindings";
@@ -43,7 +43,7 @@
   async function accept(apply: [string, string][]) {
     const r = await commands.saveTune(apply, true);
     if (r.status === "error") {
-      acceptNote = ` · ${r.error.message}`;
+      acceptNote = ` · ${errMsg(r.error)}`;
       return;
     }
     // Recompute against the new version: the accepted suggestion comes back

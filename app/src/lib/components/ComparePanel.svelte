@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app } from "$lib/app.svelte";
+  import { app, errMsg } from "$lib/app.svelte";
   import { commands, type CompareView } from "$lib/bindings";
   import { SPD, fmtLap } from "$lib/units";
   import {
@@ -48,7 +48,7 @@
         error = null;
       } else {
         cmpData = null;
-        error = r.error.message;
+        error = errMsg(r.error);
       }
     });
   });

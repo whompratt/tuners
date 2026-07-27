@@ -53,16 +53,19 @@ export const unitOf = (key: string): UnitDef | null => {
 
 const trimZeros = (s: string) => s.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 
-// canonical string -> display string (for form/summary), and back
-export const toDisp = (key: string, v: string): string => {
+// canonical string -> display string (for form/summary), and back.
+// Accepts numbers too: Svelte's bind:value on type="number" inputs stores
+// numbers at runtime, and the IPC contract is strings — everything that
+// crosses the boundary must come through here already stringified.
+export const toDisp = (key: string, v: string | number): string => {
   const u = unitOf(key);
-  const n = parseFloat(v);
-  return !u || isNaN(n) ? v : trimZeros((n * u.k).toFixed(u.dp));
+  const n = parseFloat(String(v));
+  return !u || isNaN(n) ? String(v ?? "") : trimZeros((n * u.k).toFixed(u.dp));
 };
-export const toCanon = (key: string, v: string): string => {
+export const toCanon = (key: string, v: string | number): string => {
   const u = unitOf(key);
-  const n = parseFloat(v);
-  return !u || isNaN(n) ? v : String(Math.round((n / u.k) * 1e4) / 1e4);
+  const n = parseFloat(String(v));
+  return !u || isNaN(n) ? String(v ?? "") : String(Math.round((n / u.k) * 1e4) / 1e4);
 };
 export const unitLabel = (key: string): string => {
   const u = unitOf(key);
