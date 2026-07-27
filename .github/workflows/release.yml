@@ -1,7 +1,7 @@
 # Release builds: push a `v*` tag to build the desktop app
-# for Windows (NSIS + MSI) and Linux (AppImage + deb + rpm) and attach the
-# installers plus signed updater artifacts (latest.json) to a GitHub release
-# with auto-generated notes. The release is created as a draft and published
+# for Windows (NSIS + MSI) and Linux (AppImage + deb + rpm + flatpak) and
+# attach the installers plus signed updater artifacts (latest.json) to a
+# GitHub release with auto-generated notes. The release is created as a draft and published
 # automatically only after BOTH platform builds succeed: the updater feed
 # reads releases/latest, which must never see a half-uploaded release.
 # Signing needs the TAURI_SIGNING_PRIVATE_KEY secret (keypair at
@@ -36,6 +36,7 @@ jobs:
               `| Windows (recommended) | ${dl(`tuners_${version}_x64-setup.exe`)} |`,
               `| Windows (MSI) | ${dl(`tuners_${version}_x64_en-US.msi`)} |`,
               `| Linux (portable) | ${dl(`tuners_${version}_amd64.AppImage`)} |`,
+              `| Linux (Flatpak) | ${dl(`tuners_${version}_amd64.flatpak`)} |`,
               `| Linux (Debian/Ubuntu) | ${dl(`tuners_${version}_amd64.deb`)} |`,
               `| Linux (Fedora) | ${dl(`tuners-${version}-1.x86_64.rpm`)} |`,
               '',
@@ -101,8 +102,61 @@ jobs:
           projectPath: app
           releaseId: ${{ needs.create-release.outputs.release_id }}
 
-  publish:
+      - name: hand the deb to the flatpak job
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v7
+        with:
+          name: deb
+          path: target/release/bundle/deb/*.deb
+
+  # Repackages the Linux deb as a flatpak bundle and attaches it to the
+  # release. The manifest builds from the deb by relative path, so the
+  # artifact is dropped in the same spot the local build uses.
+  flatpak:
     needs: [create-release, build]
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: deb
+          path: target/release/bundle/deb
+
+      - name: install flatpak tooling and runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//49 org.gnome.Sdk//49
+
+      - name: build flatpak bundle
+        run: |
+          DEB=$(basename target/release/bundle/deb/tuners_*_amd64.deb)
+          # the manifest pins the versioned deb filename; point it at this build's
+          sed -i "s|tuners_[0-9][^_]*_amd64\.deb|$DEB|" flatpak/io.github.whompratt.tuners.yml
+          cd flatpak
+          flatpak-builder --user --force-clean --disable-rofiles-fuse --repo flatpak-repo build-dir io.github.whompratt.tuners.yml
+          flatpak build-bundle flatpak-repo "${DEB%.deb}.flatpak" io.github.whompratt.tuners
+
+      - name: attach bundle to the release
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const name = fs.readdirSync('flatpak').find(f => f.endsWith('.flatpak'));
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              name,
+              data: fs.readFileSync(`flatpak/${name}`),
+            });
+
+  publish:
+    needs: [create-release, build, flatpak]
     permissions:
       contents: write
     runs-on: ubuntu-22.04
