@@ -207,6 +207,10 @@ pub struct RecorderStatus {
     pub mode: RecorderMode,
     pub file: Option<PathBuf>,
     pub packets: u64,
+    /// When the last raw datagram hit the socket — menus included, which are
+    /// never recorded. Lets onboarding confirm the Data Out wiring before any
+    /// race telemetry exists.
+    pub last_udp: Option<std::time::Instant>,
     pub split_requested: bool,
     /// Tune-change note from the dashboard, journaled against the NEXT stint
     /// that opens (journal lines describe the change since the previous stint).
@@ -225,6 +229,7 @@ pub fn new_shared() -> SharedRecorder {
         mode: RecorderMode::Waiting,
         file: None,
         packets: 0,
+        last_udp: None,
         split_requested: false,
         pending_note: None,
         pending_base_rev: None,
@@ -314,7 +319,10 @@ pub fn run_recorder(
         };
         let mut actions = if split { cutter.split() } else { Vec::new() };
         match socket.recv_from(&mut buf) {
-            Ok((len, _)) => actions.extend(cutter.feed(unix_micros(), &buf[..len])),
+            Ok((len, _)) => {
+                shared.lock().unwrap().last_udp = Some(std::time::Instant::now());
+                actions.extend(cutter.feed(unix_micros(), &buf[..len]));
+            }
             Err(e)
                 if matches!(
                     e.kind(),

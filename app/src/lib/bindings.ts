@@ -270,6 +270,13 @@ export type RecorderView = {
 	mode: string,
 	file: string | null,
 	packets: number,
+	/**
+	 *  Milliseconds since ANY datagram hit the socket — menu packets count,
+	 *  though they are never recorded. The onboarding wiring check: fresh
+	 *  here + no frame = hooked up, just not driving yet. None in external
+	 *  mode (another capture owns the socket) or before the first packet.
+	 */
+	udpAgeMs: number | null,
 };
 
 export type RowAnchorView = {

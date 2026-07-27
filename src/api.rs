@@ -101,6 +101,11 @@ pub struct RecorderView {
     pub mode: String,
     pub file: Option<String>,
     pub packets: u32,
+    /// Milliseconds since ANY datagram hit the socket — menu packets count,
+    /// though they are never recorded. The onboarding wiring check: fresh
+    /// here + no frame = hooked up, just not driving yet. None in external
+    /// mode (another capture owns the socket) or before the first packet.
+    pub udp_age_ms: Option<u32>,
 }
 
 /// The `live-state` event payload (was the SSE `state` event).
@@ -156,6 +161,9 @@ pub fn recorder_view(r: &crate::record::RecorderStatus) -> RecorderView {
         mode: mode.to_string(),
         file: file_name(r.file.as_deref()),
         packets: r.packets.min(u32::MAX as u64) as u32,
+        udp_age_ms: r
+            .last_udp
+            .map(|t| t.elapsed().as_millis().min(u32::MAX as u128) as u32),
     }
 }
 

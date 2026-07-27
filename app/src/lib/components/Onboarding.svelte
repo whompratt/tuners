@@ -13,11 +13,15 @@
   let manualCar = $state("");
   let creating = $state(false);
 
-  // Live hookup status: the game streams zeroed packets in menus (raceOn
-  // off), so "receiving" means the wiring works and "car detected" needs an
-  // actual driving frame.
+  // Live hookup status: udpAgeMs counts RAW datagrams (the game streams
+  // zeroed packets even in menus), so "receiving" confirms the wiring from
+  // the menu screen; "car detected" needs an actual driving frame, which is
+  // when anything gets recorded.
   let fresh = $derived(app.live?.ageMs != null && app.live.ageMs < STALE_MS);
-  let receiving = $derived(fresh && !!app.live?.frame);
+  let receiving = $derived.by(() => {
+    const u = app.live?.recorder.udpAgeMs;
+    return (u != null && u < STALE_MS) || (fresh && !!app.live?.frame);
+  });
   let liveCar = $derived.by(() => {
     const f = app.live?.frame;
     if (!fresh || !f?.raceOn || !f.car) return null;
@@ -96,7 +100,7 @@
         {:else if liveCar || detected}
           ✓ receiving — car detected: <b>{carLabel((liveCar ?? detected)!)}</b>
         {:else}
-          ✓ receiving — now drive (menus send empty packets; the car shows up on the first driving frame)
+          ✓ receiving — the wiring works. Now drive: the car shows up on the first driving frame
         {/if}
       </div>
       {#if app.live?.recorder.mode === "external"}
