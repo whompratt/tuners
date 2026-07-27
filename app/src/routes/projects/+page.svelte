@@ -210,9 +210,6 @@
               </div>
             {/if}
           {/each}
-          <div style="grid-column:1/-1;font-size:12px;color:var(--muted)">
-            display units moved to <a href="/settings">Settings</a>
-          </div>
         </div>
         <div style="margin-top:10px;display:flex;gap:8px">
           <Button go onclick={saveProject}>save project</Button>
