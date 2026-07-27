@@ -1,7 +1,7 @@
 //! Effect vectors: per-stint setup-sensitive behavioural
 //! scalars, and pairwise deltas attached to campaign measurements.
 //!
-//! Purely empirical — fields are recorded, never interpreted here. The 2026-07
+//! Purely empirical: fields are recorded, never interpreted here. The 2026-07
 //! evidence: sustained averaged metrics move above noise but are
 //! drift-contaminated (the Ford GT ARB series' balance index tracked the
 //! session clock, not the slider), so consumers must read deltas against the
@@ -49,7 +49,7 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
 
 /// Per-field library noise floor: largest same-setup stint-mean movement we
 /// should shrug at. Calibrated 2026-07-26 on the real recording library
-/// (examples/effect_scan.rs — same-setup cross-stint pairs plus lap-to-lap
+/// (examples/effect_scan.rs: same-setup cross-stint pairs plus lap-to-lap
 /// spread). Campaign-measured floors, when a
 /// campaign has same-setup pairs, take the max with these.
 pub fn noise_floor(key: &str) -> f32 {
@@ -59,7 +59,7 @@ pub fn noise_floor(key: &str) -> f32 {
         "balance_on" => 0.04,
         "balance_off" | "balance_brake" => 0.05,
         "entry_balance" | "exit_balance" => 0.05,
-        "apex_speed" => 5.0, // m/s — corner-mix dominated at stint level
+        "apex_speed" => 5.0, // m/s; corner-mix dominated at stint level
         "front_slip" | "rear_slip" => 0.04,
         "countersteer" => 0.010,
         "os_flash" => 0.015,
@@ -186,7 +186,7 @@ pub fn fold_floor(floor: &mut Effects, d: &Effects) {
 
 /// Fields of a delta that moved at or above their floor (library default,
 /// raised by the campaign's own same-setup floor when one exists), strongest
-/// first by floor multiples. The display cut for CLI/dashboard lines —
+/// first by floor multiples. The display cut for CLI/dashboard lines;
 /// consumers wanting the raw vector read `Effects` directly.
 pub fn movers(d: &Effects, campaign_floor: Option<&Effects>) -> Effects {
     let floor_of = |k: &str| {
@@ -206,7 +206,7 @@ pub fn movers(d: &Effects, campaign_floor: Option<&Effects>) -> Effects {
     out.into_iter().map(|(k, v, _)| (k, v)).collect()
 }
 
-/// "counter-steer share +2.1%, balance on throttle +0.07" — human form of a
+/// "counter-steer share +2.1%, balance on throttle +0.07": human form of a
 /// (sub)set of effect fields, in the given order.
 pub fn describe(fields: &Effects) -> String {
     fields

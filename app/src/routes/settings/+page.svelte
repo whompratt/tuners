@@ -85,15 +85,15 @@
       if (p.already) skipped.push(`${p.already} already shared/queued`);
       if (p.unjournaled) skipped.push(`${p.unjournaled} without setup history`);
       if (!p.stints) {
-        await alertDialog("Share existing recordings", `Nothing new to share${skipped.length ? ` — skipped: ${skipped.join(", ")}` : ""}.`);
+        await alertDialog("Share existing recordings", `Nothing new to share${skipped.length ? ` (skipped: ${skipped.join(", ")})` : ""}.`);
         return;
       }
       const msg =
         `Share ${p.stints} recording${p.stints === 1 ? "" : "s"} from ` +
         `${p.campaigns} project${p.campaigns === 1 ? "" : "s"} (~${(p.mb ?? 0).toFixed(1)} MB raw)` +
         ` recorded before sharing was enabled?\n\n` +
-        `Same rules as live sharing: raw telemetry, setup values, and setup deltas only` +
-        ` — names, descriptions, and notes are stripped. Uploads happen in the` +
+        `Same rules as live sharing: raw telemetry, setup values, and setup deltas only;` +
+        ` names, descriptions, and notes are stripped. Uploads happen in the` +
         ` background while telemetry is idle.` +
         (skipped.length ? `\n\n(Skipped: ${skipped.join(", ")}.)` : "");
       if (!(await confirmDialog({ title: "Share existing recordings", body: msg, verb: "Share", cancel: "Cancel" }))) return;
@@ -116,7 +116,7 @@
     if (!sharing) return sharingError ? `status unavailable (${sharingError})` : "";
     const bits: string[] = [];
     if (sharing.enabled) {
-      bits.push(`on — sender ${sharing.sender}`);
+      bits.push(`on, sender ${sharing.sender}`);
       bits.push(`${sharing.queued} bundle${sharing.queued === 1 ? "" : "s"} queued`);
       if (sharing.rejected) bits.push(`${sharing.rejected} rejected (see outbox/rejected)`);
     } else {
@@ -137,7 +137,7 @@
     <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px">
       <h2 style="margin:0">Display units</h2>
       <span style="color:var(--muted);font-size:13px">
-        display only — values are stored in the game's native units, switch any time
+        display only: values are stored in the game's native units, switch any time
       </span>
     </div>
     <div style="display:flex;gap:8px;align-items:baseline;margin-bottom:10px">
@@ -181,7 +181,7 @@
     </div>
     <div style="color:var(--muted);font-size:12px;margin-top:6px;max-width:640px">
       When on, each finished run is bundled and uploaded (only while telemetry is idle) to help develop this
-      tool: raw driving telemetry, setup values, and setup deltas. No names, no free text — project names,
+      tool: raw driving telemetry, setup values, and setup deltas. No names, no free text: project names,
       descriptions, and notes are stripped before anything leaves this machine. Off by default; turn it
       off any time. Quote your sender id to have your data deleted.
     </div>
@@ -191,7 +191,7 @@
     <h2 style="margin:0 0 8px">Interface</h2>
     <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink-2);cursor:pointer">
       <input type="checkbox" style="width:auto" checked={advanced.on} onchange={toggleAdvanced} />
-      advanced mode — expand expert detail (evidence, measurements, slider ranges) by default
+      advanced mode: expand expert detail (evidence, measurements, slider ranges) by default
     </label>
     <div style="margin-top:12px">
       <Button onclick={openGuide}>show the first-time setup guide again</Button>

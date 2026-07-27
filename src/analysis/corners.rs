@@ -7,7 +7,7 @@
 use super::TimedFrame;
 use super::metrics::BandBalance;
 
-/// |lateral accel| (m/s²) that opens a corner event — matches the cornering
+/// |lateral accel| (m/s²) that opens a corner event. Matches the cornering
 /// threshold used by the whole-stint balance metrics.
 const ENTER_LAT: f32 = 4.0;
 /// Hysteresis: an open corner only closes once |lat| stays below this...
@@ -25,7 +25,7 @@ pub struct CornerEvent {
     /// Race-time bounds of the event (kept-timeline clock).
     pub start_s: f32,
     pub end_s: f32,
-    /// Minimum speed in the event (m/s) — the apex.
+    /// Minimum speed in the event (m/s), i.e. the apex.
     pub apex_speed: f32,
     /// Balance over samples before / after the apex.
     pub entry: BandBalance,

@@ -6,13 +6,13 @@ below is transcribed from the official Forza Support documentation (link at bott
 
 ## Transport
 
-- **One-way UDP** to a configurable IP/port, sent at the game's frame rate (variable —
+- **One-way UDP** to a configurable IP/port, sent at the game's frame rate (variable:
   resample using `TimestampMS`, not receive time). Nothing is ever received by the game.
 - Enabled under **Settings → HUD and Gameplay → Data Out** (toggle + IP + port).
   `127.0.0.1` works same-PC; a LAN IP works for console → PC.
-- **Avoid listening on ports 5200–5300** — the game binds its outgoing socket in that
+- **Avoid listening on ports 5200–5300**: the game binds its outgoing socket in that
   range.
-- Data is sent **only while actively driving** — nothing during menus, pauses, replays,
+- Data is sent **only while actively driving**: nothing during menus, pauses, replays,
   rewinds, or after finishing a race. `IsRaceOn` additionally distinguishes race-on
   from race-stopped packets.
 - Single fixed packet format; no format selector (unlike Forza Motorsport).
@@ -20,7 +20,7 @@ below is transcribed from the official Forza Support documentation (link at bott
 ## Packet layout
 
 Total packet size: **324 bytes**, little-endian (byte order assumed from prior Forza
-titles — verify). Types: `S`/`U`/`F` = signed int / unsigned int / float, number = bits.
+titles; verify). Types: `S`/`U`/`F` = signed int / unsigned int / float, number = bits.
 Wheel quads are ordered FL, FR, RL, RR.
 
 | Offset | Type | Field | Notes |
@@ -55,7 +55,7 @@ Wheel quads are ordered FL, FR, RL, RR.
 | 256 | F32 | Speed | m/s |
 | 260 | F32 | Power | watts |
 | 264 | F32 | Torque | newton-meters |
-| 268 | F32 ×4 | TireTemp | units unspecified in doc (°F in prior titles — verify) |
+| 268 | F32 ×4 | TireTemp | units unspecified in doc (°F in prior titles; verify) |
 | 284 | F32 | Boost | PSI above atmospheric |
 | 288 | F32 | Fuel | 0.0–1.0 |
 | 292 | F32 | DistanceTraveled | meters |
@@ -75,13 +75,13 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 ## Verified against a real capture (2026-07-19, `fixtures/real-01.ftel`)
 
 - Every datagram is exactly **324 bytes**; the undocumented trailing byte (offset 323)
-  is always **0** — treat as padding.
+  is always **0**; treat as padding.
 - **Little-endian** confirmed; **tire temps are °F** (~200 peak under load).
 - **The official "data is only sent while driving" note is wrong in practice**: the
   game keeps streaming packets in menus/pauses with `IsRaceOn = 0` and everything
   except `TimestampMS` zeroed. Filter on `IsRaceOn`, not on packet presence.
 - **`Gear` = 0 is reverse, and 11 appears transiently mid-drive** (a handful of
-  frames, likely a neutral/mid-shift sentinel) — analysis must not treat 11 as a
+  frames, likely a neutral/mid-shift sentinel). Analysis must not treat 11 as a
   real gear.
 - Send rate matches frame rate as documented (~168 Hz observed on a 165 Hz setup).
 - Setup gotcha: the game only starts honouring a newly configured Data Out target
@@ -91,13 +91,13 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   everywhere.
 - **`DistanceTraveled` is route-spline progress, not an odometer**: it can snap
   forward 10-21 m in a single frame with zero world-position change (observed on a
-  dirt route, at the same route sections every lap — likely where the driven line
+  dirt route, at the same route sections every lap, likely where the driven line
   diverges from the route spline). Snap points are lap-consistent, so distance
   binning stays aligned, but bins crossed by a snap get no frames and must be
   back-filled (profile binning spreads the hop across the crossed bins).
 - **Lap semantics (verified in a rivals session)**: `LapNumber` is 0-based and lap 0
   is the standing-start out lap (~6.5s slower than flying laps in the observed
-  session — never compare it to them). `CurrentLap` resets to 0 at each boundary;
+  session; never compare it to them). `CurrentLap` resets to 0 at each boundary;
   `LastLap`/`BestLap` update exactly at the boundary, so a finished lap's
   authoritative time is read from the first frames of the *next* lap.
 
@@ -115,7 +115,7 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   through pauses and rewinds).
 - **Analysis reconstructs the kept timeline**: frames superseded by a rewind (race
   clock ≥ the resume point) are erased and the retry splices on. A rewind restores
-  exact car state, so the result is one continuous, physically consistent lap — the
+  exact car state, so the result is one continuous, physically consistent lap: the
   game itself performs equal-state splicing. Rewound laps are therefore kept as
   real laps (leaderboard validity is irrelevant to tune evaluation).
 - Race-start artifacts: `DistanceTraveled` goes briefly **negative** (spawn is ~27 m
@@ -123,12 +123,12 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   (~3 s after launch).
 - **Smashable collisions** (breakables: trees, cones) are directly telemetered via
   `SmashableVelDiff`/`SmashableMass`, but observed values are tiny (0.0–0.2 m/s,
-  mass often 0) — a weak, informational signal.
+  mass often 0), a weak, informational signal.
 - **Wall/barrier hits are not telemetered** (they invalidate laps in-game). Not
   currently inferred; candidate heuristic is single-frame accel spikes beyond
   braking capability. Splicing self-protects on time (collisions cost speed), but a
   route where wall-bouncing is net-faster would make a spliced ideal
-  leaderboard-illegal — revisit if observed in practice.
+  leaderboard-illegal; revisit if observed in practice.
 
 ## Still to verify
 
@@ -138,7 +138,7 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 
 - Car identity (`CarOrdinal`), class/PI, **drivetrain type**, cylinder count.
 - Redline (`EngineMaxRpm`), observed peak power/torque (watts/Nm, live).
-- Gear count and **effective gear ratios** — derivable from `CurrentEngineRpm` vs
+- Gear count and **effective gear ratios**, derivable from `CurrentEngineRpm` vs
   `WheelRotationSpeed` per `Gear`.
 - Full behaviour set for tuning analysis: per-corner suspension travel (normalized
   *and* meters), slip ratio/angle/combined, tire temps, G-forces, inputs.
@@ -146,11 +146,11 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 ## What is NOT in the packet
 
 - Weight, weight distribution, fitted upgrades, tune settings, tire compound,
-  suspension type — must come from user input or a community car dataset.
+  suspension type: must come from user input or a community car dataset.
 - Tire wear, track/route identifier.
 - **Inner/middle/outer tire temps**: the packet carries a single temp per tire,
   although the in-game telemetry HUD displays IMO temps. Camber advice therefore
-  needs manual IMO input (planned for the web UI) — see design.md for the
+  needs manual IMO input (planned for the web UI); see design.md for the
   asymmetric-track caveat that comes with it.
 
 ## Practical notes
@@ -162,6 +162,6 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 ## Sources
 
 - [Official FH6 Data Out documentation (Forza Support)](https://support.forza.net/hc/en-us/articles/51744149102611-Forza-Horizon-6-Data-Out-Documentation)
-  — layout above transcribed from the full text as of 2026-07-19.
-- [fh6-tel — Rust/Tauri FH6 telemetry dashboard](https://github.com/TheBanHammer/fh6-tel)
+  (layout above transcribed from the full text as of 2026-07-19).
+- [fh6-tel, a Rust/Tauri FH6 telemetry dashboard](https://github.com/TheBanHammer/fh6-tel)
 - [MOZA FH6 telemetry setup guide](https://support.mozaracing.com/en/support/solutions/articles/70000683812-forza-horizon-6-telemetry-settings-control-mapping-setup-guide)

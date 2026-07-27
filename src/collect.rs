@@ -2,7 +2,7 @@
 //! config, the outbox spool, and the idle-gated drainer.
 //!
 //! Consent lives in `tune-collect.txt` (default OFF; the dashboard toggle
-//! writes it). The token is generated CLIENT-side at first opt-in — identity,
+//! writes it). The token is generated CLIENT-side at first opt-in: identity,
 //! not authentication: the endpoint namespaces senders by sha256(token)[..16]
 //! and issues nothing. On stint finalization the recorder calls
 //! `maybe_enqueue`, which bundles into `outbox/` on a spawned thread; capture
@@ -13,7 +13,7 @@
 //! effectively all Linux): TLS without growing the dependency tree, and the
 //! exact invocation was validated against the live endpoint. Hard gate: the
 //! caller passes a liveness probe and the drainer refuses to touch the
-//! network while telemetry is fresh — driving must never compete with
+//! network while telemetry is fresh. Driving must never compete with
 //! uploads.
 
 use crate::tuning::TuningSession;
@@ -65,7 +65,7 @@ impl CollectConfig {
             format!(
                 "# tuners telemetry collection\n\
                  # enabled = on shares stint bundles (raw driving telemetry, setup\n\
-                 # values, tune deltas — no names, no free text) for tool development.\n\
+                 # values, tune deltas; no names, no free text) for tool development.\n\
                  enabled = {}\nendpoint = {}\ntoken = {}\n",
                 if self.enabled { "on" } else { "off" },
                 self.endpoint,
@@ -80,14 +80,14 @@ impl CollectConfig {
     }
 }
 
-/// The pseudonymous identity the endpoint derives — shown in the dashboard so
+/// The pseudonymous identity the endpoint derives, shown in the dashboard so
 /// delete-on-request has something to quote.
 pub fn sender_id(token: &str) -> String {
     crate::util::sha256_hex(token.to_ascii_lowercase().as_bytes())[..16].to_string()
 }
 
 /// 64-hex client token. /dev/urandom where it exists; elsewhere a hash of
-/// volatile process state — weaker, but the token is pseudonymous identity,
+/// volatile process state. Weaker, but the token is pseudonymous identity,
 /// not a defended credential (worst case is polluting your own namespace).
 pub fn generate_token() -> String {
     let mut bytes = [0u8; 32];
@@ -108,7 +108,7 @@ pub fn generate_token() -> String {
 }
 
 /// Bundle a finalized stint into the outbox if collection is on and the stint
-/// belongs to the session car. Runs on its own thread — the recorder loop
+/// belongs to the session car. Runs on its own thread; the recorder loop
 /// must never wait on bundling. Failures are printed, never fatal.
 pub fn maybe_enqueue(stint_path: PathBuf, session_file: PathBuf, car: i32) {
     let cfg = CollectConfig::load(&crate::util::data_path(CONFIG_PATH));
@@ -119,7 +119,7 @@ pub fn maybe_enqueue(stint_path: PathBuf, session_file: PathBuf, car: i32) {
         let session = TuningSession::load(&session_file);
         if session.car != Some(car) {
             println!(
-                "collect: {} is car {car}, session car {:?} — not bundled",
+                "collect: {} is car {car}, session car {:?}; not bundled",
                 stint_path.display(),
                 session.car
             );
@@ -219,23 +219,23 @@ pub fn drain(
                 }
                 log.push(format!("uploaded {name}"));
             }
-            // Permanent rejections: retrying forever would spin — park them
+            // Permanent rejections: retrying forever would spin, so park them
             // where a human can look.
             Ok(code @ (400 | 401 | 403 | 413 | 422)) => {
                 let rejected = outbox.join("rejected");
                 let _ = std::fs::create_dir_all(&rejected);
                 let _ = std::fs::rename(&path, rejected.join(&name));
                 log.push(format!(
-                    "{name}: endpoint says {code} — moved to outbox/rejected"
+                    "{name}: endpoint says {code}, moved to outbox/rejected"
                 ));
             }
             // Caps, server trouble, offline: everything waits for the next pass.
             Ok(code) => {
-                log.push(format!("{name}: endpoint says {code} — will retry later"));
+                log.push(format!("{name}: endpoint says {code}, will retry later"));
                 break;
             }
             Err(e) => {
-                log.push(format!("{name}: {e} — will retry later"));
+                log.push(format!("{name}: {e}; will retry later"));
                 break;
             }
         }
@@ -257,7 +257,7 @@ fn sent_names(outbox: &Path) -> std::collections::BTreeSet<String> {
 }
 
 /// What "share existing recordings" would do: historic
-/// stints are shared per CAMPAIGN — each journaled stint pairs with its own
+/// stints are shared per CAMPAIGN: each journaled stint pairs with its own
 /// campaign's session + journal, so archived campaigns ship with honest
 /// context instead of the active session's. Unjournaled recordings have no
 /// campaign to interpret them with and are only counted.
@@ -274,7 +274,7 @@ pub struct HistoryPlan {
 }
 
 /// Campaign pairs under `root`: the active session + its car's journal, plus
-/// every archived pair (tune-session-<id>.txt / tune-journal-<id>.txt —
+/// every archived pair (tune-session-<id>.txt / tune-journal-<id>.txt;
 /// covers both the stamped and the legacy car-switch naming).
 fn campaign_pairs(root: &Path) -> Vec<(PathBuf, PathBuf)> {
     let mut out = Vec::new();

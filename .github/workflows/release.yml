@@ -2,7 +2,7 @@
 # for Windows (NSIS + MSI) and Linux (AppImage + deb + rpm) and attach the
 # installers plus signed updater artifacts (latest.json) to a GitHub release
 # with auto-generated notes. The release is created as a draft and published
-# automatically only after BOTH platform builds succeed — the updater feed
+# automatically only after BOTH platform builds succeed: the updater feed
 # reads releases/latest, which must never see a half-uploaded release.
 # Signing needs the TAURI_SIGNING_PRIVATE_KEY secret (keypair at
 # ~/.tauri/tuners.key on the dev machine; losing it orphans shipped installs).
@@ -39,7 +39,7 @@ jobs:
               `| Linux (Debian/Ubuntu) | ${dl(`tuners_${version}_amd64.deb`)} |`,
               `| Linux (Fedora) | ${dl(`tuners-${version}-1.x86_64.rpm`)} |`,
               '',
-              'The `.sig` files and `latest.json` are used by the in-app updater — no need to download them.',
+              'The `.sig` files and `latest.json` are used by the in-app updater; no need to download them.',
               '',
             ].join('\n');
             const { data } = await github.rest.repos.createRelease({

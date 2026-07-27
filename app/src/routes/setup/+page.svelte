@@ -26,7 +26,7 @@
 
   // Re-seed the draft from the saved version whenever it (or units) change.
   // In baseline mode the draft IS the user's in-progress transcription and
-  // there is no saved version to reseed from — seed once per car and never
+  // there is no saved version to reseed from: seed once per car and never
   // clobber it (applyUnits re-expresses it in place instead).
   let baselineSeededFor = $state<number | null>(null);
   $effect(() => {
@@ -51,7 +51,7 @@
 
   /** Baseline units: re-express the in-progress draft under the new preset
    * (via canonical, so nothing drifts) and persist the prefs to the project.
-   * Getting this right BEFORE saving matters — save interprets the numbers
+   * Getting this right BEFORE saving matters, since save interprets the numbers
    * under the active prefs. */
   async function applyUnits(preset: string) {
     const canon: Record<string, string> = {};
@@ -107,7 +107,7 @@
   async function commitLimit(k: string) {
     const mn = String(limDraft[k]?.min ?? "").trim();
     const mx = String(limDraft[k]?.max ?? "").trim();
-    // Half-entered = mid-typing (or mid-clearing) — commit when both settle.
+    // Half-entered = mid-typing (or mid-clearing); commit when both settle.
     if ((mn === "") !== (mx === "")) return;
     const canon = mn === "" ? "" : limToCanon(k, `${mn}..${mx}`);
     if (mn !== "" && canon === "") {
@@ -184,7 +184,7 @@
 
   let hasPending = $derived(!!app.pending);
 
-  // Baseline entry shows every card at once — the cards mirror the game's
+  // Baseline entry shows every card at once: the cards mirror the game's
   // tuning screens in order, so transcription is one tab-through of the
   // whole form (a per-group stepper was tried and felt tedious).
   let baselineEntered = $derived(
@@ -198,14 +198,14 @@
   {:else if !app.session || app.session.car == null}
     <div class="hero">No project yet.</div>
     <div style="margin-top:8px;color:var(--muted)">
-      <a href="/projects">Set up your project</a> first — then copy your tune in here.
+      <a href="/projects">Set up your project</a> first, then copy your tune in here.
     </div>
   {:else}
     {#if baselineMode}
       <div class="pending-bar">
         <b>Baseline entry</b>
         <span style="color:var(--ink-2)">
-          the cards mirror the game's tuning screens in order — tab through and copy your tune exactly;
+          the cards mirror the game's tuning screens in order. Tab through and copy your tune exactly;
           leave a field empty when the car can't tune it
         </span>
         <span style="flex:1"></span>
@@ -213,7 +213,7 @@
         <Button go onclick={saveBaseline}>save baseline tune</Button>
         {#if msg}<span style="color:var(--accent)">{msg}</span>{/if}
         <div style="flex-basis:100%;display:flex;gap:8px;align-items:baseline;margin-top:6px">
-          <span style="font-size:12px;color:var(--muted)">units — match what the game shows you:</span>
+          <span style="font-size:12px;color:var(--muted)">units (match what the game shows you):</span>
           <Button onclick={() => applyUnits("imperial")}>imperial</Button>
           <Button onclick={() => applyUnits("metric")}>metric</Button>
           <Button onclick={() => applyUnits("uk")}>UK</Button>
@@ -226,7 +226,7 @@
       <div class="pending-bar">
         <b style="color:var(--ok)">baseline saved</b>
         <span style="color:var(--ink-2)">
-          now go drive — recording is armed. Start a race, rivals lap, or route event
+          now go drive, recording is armed. Start a race, rivals lap, or route event
           (free roam isn't recorded); your first run unlocks advice.
         </span>
         <span style="flex:1"></span>
@@ -238,7 +238,7 @@
         <b>{app.pending.changes.length} change{app.pending.changes.length === 1 ? "" : "s"} pending</b>
         <span style="color:var(--ink-2)">next run tests: {app.pending.note}</span>
         <span style="flex:1"></span>
-        <span style="color:var(--muted)">drive to lock it into the history — or edit a value back to cancel it</span>
+        <span style="color:var(--muted)">drive to lock it into the history, or edit a value back to cancel it</span>
       </div>
     {/if}
     {#if msg && !baselineMode}<div class="banner">{msg}</div>{/if}
@@ -253,7 +253,7 @@
           <h3>
             {group}
             {#if isPriority}<span class="badge" style="color:var(--accent)">next priority</span>{/if}
-            {#if hold}<span class="badge" style="color:var(--ok)">bracketed — hold</span>{/if}
+            {#if hold}<span class="badge" style="color:var(--ok)">bracketed: hold</span>{/if}
           </h3>
           {#each fields as [k, l] (k)}
             {#key app.unitsTick}
@@ -288,17 +288,17 @@
               {@const accepted = isAccepted(r.apply as [string, string][], latest)}
               <div class="fam-sub" class:muted={r !== primary}>
                 {#if r !== primary && !isHold(r)}
-                  <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em">alternative — one change at a time</span><br />
+                  <span style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em">alternative (one change at a time)</span><br />
                 {/if}
-                {#if r.suggestion}<b>{r.suggestion}</b> — {/if}{r.advice}
+                {#if r.suggestion}<b>{r.suggestion}</b>: {/if}{r.advice}
                 {#if r.apply.length}
                   {#if accepted}
-                    <div style="margin-top:4px;color:var(--muted)">saved — drive a run</div>
+                    <div style="margin-top:4px;color:var(--muted)">saved; drive a run</div>
                   {:else}
                     <div style="margin-top:6px">
                       <Button
                         go={r === primary}
-                        title={hasPending && r !== primary ? "adds a 2nd change — the next run can't separate them" : undefined}
+                        title={hasPending && r !== primary ? "adds a 2nd change; the next run can't separate them" : undefined}
                         onclick={() => accept(r.apply as [string, string][])}
                       >
                         {r === primary ? "apply" : hasPending ? "adds a 2nd change" : "apply instead"}

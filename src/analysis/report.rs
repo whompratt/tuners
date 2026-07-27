@@ -1,4 +1,4 @@
-//! Text rendering of stint metrics. Observations only — no advice.
+//! Text rendering of stint metrics. Observations only, no advice.
 
 use super::metrics::{StintMetrics, stint_metrics};
 use super::{GapKind, LapSlice, Stint, classify_gaps, driving_segments, split_laps};
@@ -36,7 +36,7 @@ pub fn full_session_report(path: &Path) -> Result<String, String> {
                 race_t_after,
             } => writeln!(
                 out,
-                "note: rewind on lap {} (race clock {:.1}s -> {:.1}s) — superseded \
+                "note: rewind on lap {} (race clock {:.1}s -> {:.1}s): superseded \
                  driving erased, the kept retry counts",
                 gap.resume_lap + 1,
                 race_t_before,
@@ -62,16 +62,12 @@ pub fn full_session_report(path: &Path) -> Result<String, String> {
 pub fn render_recommendations(recs: &[super::recommend::Recommendation]) -> String {
     let mut out = String::new();
     if recs.is_empty() {
-        writeln!(
-            out,
-            "no recommendations — nothing in this session stood out"
-        )
-        .unwrap();
+        writeln!(out, "no recommendations: nothing in this session stood out").unwrap();
         return out;
     }
     for r in recs {
         match &r.suggestion {
-            Some(sg) => writeln!(out, "[{}] {} — {}", r.confidence.label(), sg, r.advice).unwrap(),
+            Some(sg) => writeln!(out, "[{}] {} - {}", r.confidence.label(), sg, r.advice).unwrap(),
             None => writeln!(out, "[{}] {}: {}", r.confidence.label(), r.area, r.advice).unwrap(),
         }
         for e in &r.evidence {
@@ -82,7 +78,7 @@ pub fn render_recommendations(recs: &[super::recommend::Recommendation]) -> Stri
 }
 
 /// Lap table for a stint. Standing-start laps (rivals out laps) are labelled and
-/// excluded from the best-lap comparison — they are not comparable to flying laps.
+/// excluded from the best-lap comparison; they are not comparable to flying laps.
 pub fn render_laps(laps: &[LapSlice]) -> String {
     let mut out = String::new();
     let best_flying = laps
@@ -239,7 +235,7 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     }
     let band = |b: &crate::analysis::metrics::BandBalance| match b.index {
         Some(idx) => format!("{idx:+.2} ({} samples)", b.samples),
-        None => "—".into(),
+        None => "–".into(),
     };
     // The 85 mph band boundary, in display units (38.02 m/s canonical).
     let band_mph = speed_val(38.02);
@@ -276,7 +272,7 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         .unwrap();
         writeln!(
             out,
-            "    counter-steer: {} of cornering ({} episodes) — the driver's own \
+            "    counter-steer: {} of cornering ({} episodes), the driver's own \
              slide corrections",
             pct(os.countersteer_frac),
             os.countersteer_episodes,
@@ -328,7 +324,7 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         writeln!(
             out,
             "    brake dive: front travel {dive:+.2} vs on-throttle (uncalibrated \
-             measurement — front aero also compresses at braking speeds)",
+             measurement; front aero also compresses at braking speeds)",
         )
         .unwrap();
     }
@@ -373,7 +369,7 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     if m.gears.limiter_detected {
         writeln!(
             out,
-            "    detected rev cut at {:.0} rpm ({:.0}% of the reported {:.0} redline) — \
+            "    detected rev cut at {:.0} rpm ({:.0}% of the reported {:.0} redline); \
              gearing stats use the detected value",
             m.gears.effective_redline,
             100.0 * m.gears.effective_redline / m.redline.max(1.0),
@@ -388,7 +384,7 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         writeln!(
             out,
             "    drag model: flat-out top speed {:.0} {su} (longest run here reaches \
-             ~{:.0} {su}) | rev cut arrives at {:.0} {su} in gear {} — final drive \
+             ~{:.0} {su}) | rev cut arrives at {:.0} {su} in gear {}: final drive \
              {} for this aero (ideal ≈ current × {:.2})",
             speed_val(d.vmax_flat),
             speed_val(d.vmax_track),

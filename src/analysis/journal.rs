@@ -1,5 +1,5 @@
 //! Tuning journal: history-aware advice without knowing absolute setup values.
-//! Blind mode stays blind to numbers — hill-climbing only needs the *direction* of
+//! Blind mode stays blind to numbers: hill-climbing only needs the *direction* of
 //! each past change plus the measured outcome.
 
 use super::recommend::{Confidence, Recommendation};
@@ -19,7 +19,7 @@ pub enum Family {
     /// in the car). `softer` = LESS lock.
     DiffAccel,
     /// Deceleration lock. `softer` = LESS lock. Behaviourally invisible per
-    /// the 2026-07-21 A/B (driver masks it) — outcome-led advice only.
+    /// the 2026-07-21 A/B (driver masks it), so outcome-led advice only.
     DiffDecel,
     /// Brake balance / pressure. `softer` = the value decreased (balance:
     /// more rearward).
@@ -93,7 +93,7 @@ pub fn parse_journal(text: &str) -> Vec<Entry> {
 
 /// Extract a change from a note: direction words ("front arb softer") or v2
 /// slider deltas ("front arb -2", negative = softer). None when it doesn't
-/// parse — the note still shows in the trajectory, it just can't modulate
+/// parse; the note still shows in the trajectory, it just can't modulate
 /// advice. A direction word wins over the number's sign ("softened front arb
 /// by 2" → -2); a bare unsigned number with no direction word stays unparsed.
 pub fn parse_change(note: &str) -> Option<Change> {
@@ -106,7 +106,7 @@ pub fn parse_change(note: &str) -> Option<Change> {
     parse_clause(note)
 }
 
-/// All parseable clauses of a (possibly compound) note — "front arb -1;
+/// All parseable clauses of a (possibly compound) note: "front arb -1;
 /// final drive +0.28" yields the arb change even though attribution refuses it.
 pub fn parse_clauses(note: &str) -> Vec<Change> {
     note.split(';')
@@ -279,7 +279,7 @@ fn parse_clause(note: &str) -> Option<Change> {
 /// Slider positions relative to baseline after each entry: (front, rear).
 /// Each entry may carry several clauses (compound steps still move sliders);
 /// a clause without a magnitude makes that family's position unknown from
-/// there on — direction alone can't say where you ended up.
+/// there on; direction alone can't say where you ended up.
 pub fn track_positions(changes: &[Vec<Change>]) -> Vec<(Option<f32>, Option<f32>)> {
     let (mut front, mut rear) = (Some(0.0f32), Some(0.0f32));
     changes
@@ -365,10 +365,10 @@ impl Outcome {
 
 /// Fold the last step's measured outcome into the blind recommendations. A
 /// recommendation pointing the same direction as a step that just LOST time gets
-/// replaced by "revert half" — the behavioural signal alone would push past the
+/// replaced by "revert half": the behavioural signal alone would push past the
 /// optimum forever (some understeer is lap-time-optimal).
 /// `attributed`: evidence line when the outcome was channel-attributed out of
-/// a compound step (corner/straight split) rather than measured directly — it
+/// a compound step (corner/straight split) rather than measured directly; it
 /// is attached to every touched recommendation and caps confidence at Medium.
 pub fn reconcile(
     recs: &mut [Recommendation],
@@ -391,7 +391,7 @@ pub fn reconcile(
         if weak {
             r.evidence.push(format!(
                 "last step (\"{note}\") measured {} but against a single flying \
-                 lap — outcome not trusted; drive more laps to corroborate",
+                 lap, so the outcome is not trusted; drive more laps to corroborate",
                 outcome_word(outcome),
             ));
             continue;
@@ -424,7 +424,7 @@ pub fn reconcile(
             }
             (true, Outcome::Improved(d)) => {
                 r.evidence.push(format!(
-                    "last step in this direction gained {:.2}s — a similar or smaller \
+                    "last step in this direction gained {:.2}s; a similar or smaller \
                      step is reasonable",
                     -d,
                 ));
@@ -432,18 +432,18 @@ pub fn reconcile(
             (true, Outcome::Unclear(d)) => {
                 r.confidence = Confidence::Low;
                 r.evidence.push(format!(
-                    "last step in this direction was inconclusive ({d:+.2}s ideal) — \
+                    "last step in this direction was inconclusive ({d:+.2}s ideal); \
                      match lap counts or run A-B-A before stepping again"
                 ));
             }
             // The last step moved AGAINST this advice and gained: the optimum is
             // bracketed. The behavioural signal will keep pointing the same way
-            // forever — the residual behaviour is likely the fast setup.
+            // forever; the residual behaviour is likely the fast setup.
             (false, Outcome::Improved(d)) => {
                 r.advice = format!(
                     "hold: the optimum is likely bracketed. The last change \
                      (\"{note}\") moved against this advice and still gained \
-                     {:.2}s — the remaining behaviour may simply be what the \
+                     {:.2}s. The remaining behaviour may simply be what the \
                      fast setup feels like",
                     -d,
                 );
@@ -453,14 +453,14 @@ pub fn reconcile(
                      trust the measured outcomes here"
                         .into(),
                 );
-                // "Hold" advises no direction — clear implied so nothing
+                // "Hold" advises no direction: clear implied so nothing
                 // downstream pushes either way.
                 r.implied = None;
             }
             (false, Outcome::Worsened(d)) => {
                 r.evidence.push(format!(
                     "last change (\"{note}\") moved against this advice and lost \
-                     {d:.2}s — stepping back this way (smaller step) is supported by \
+                     {d:.2}s; stepping back this way (smaller step) is supported by \
                      both behaviour and history",
                 ));
                 r.confidence = Confidence::High;
@@ -529,7 +529,7 @@ pub fn family_area(f: Family) -> &'static str {
 /// History-only advice for a step that measurably LOST time on a family no
 /// behavioural rule currently speaks for. Behaviour rules only see problems
 /// the driver can't mask (a locked diff reads near-neutral in the throttle
-/// bands because the driver adapts) — the outcome measurement catches what
+/// bands because the driver adapts); the outcome measurement catches what
 /// behaviour hides, and a loss with no behavioural case for the change means
 /// revert it fully, not halfway (there is no signal placing the optimum
 /// in between).
@@ -757,7 +757,7 @@ mod tests {
             recs[0].advice
         );
         // The implied change follows the rewritten advice: flipped direction,
-        // half the measured magnitude — resolvable to a concrete target value.
+        // half the measured magnitude, resolvable to a concrete target value.
         let implied = recs[0].implied.unwrap();
         assert!(!implied.softer);
         assert_eq!(implied.magnitude, Some(1.0));
@@ -849,7 +849,7 @@ mod tests {
     }
 
     /// The convergence case from the real trajectory: advice says soften, the last
-    /// step stiffened and GAINED — the optimum is bracketed, so hold.
+    /// step stiffened and GAINED: the optimum is bracketed, so hold.
     #[test]
     fn opposite_direction_gain_means_hold() {
         let mut recs = vec![balance_rec()];
@@ -895,7 +895,7 @@ mod tests {
     }
 
     /// The McLaren diff A/B: max diff lock measured WORSE but the driver adapted
-    /// so no behavioural rec carries DiffAccel — history alone must say revert,
+    /// so no behavioural rec carries DiffAccel; history alone must say revert,
     /// fully (no signal places the optimum in between), with flipped direction
     /// so a follow-up step reconciles against it.
     #[test]
@@ -993,7 +993,7 @@ mod tests {
 
     /// The McLaren diff A-B-A: "front diff accel +71; rear diff accel +40"
     /// followed by "front diff accel -71; rear diff accel -40" is a reverse
-    /// pair — same-family clauses must pair off by magnitude, not just family.
+    /// pair; same-family clauses must pair off by magnitude, not just family.
     #[test]
     fn reverse_pairs_detected_by_magnitude_and_direction() {
         let a = parse_clauses("front diff accel +71; rear diff accel +40");

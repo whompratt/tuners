@@ -1,5 +1,5 @@
 //! Phase 2 end-to-end: outbox enqueue + the curl drainer against a
-//! real local `tuners receive` (open mode) — the same protocol the deployed
+//! real local `tuners receive` (open mode). It is the same protocol the deployed
 //! Worker speaks, so a green drain here is the whole sender pipeline working.
 
 use std::net::TcpListener;
@@ -103,7 +103,7 @@ fn enqueue_then_drain_uploads_and_clears() {
     // would dedupe server-side anyway.
     assert!(collect::drain(&outbox, &cfg, &|| false).is_empty());
 
-    // The upload landed in the sent ledger — history backfill's memory.
+    // The upload landed in the sent ledger (history backfill's memory).
     let sent = std::fs::read_to_string(outbox.join("sent.txt")).unwrap();
     assert_eq!(sent.trim(), "bundle-4165-real-01.tar.zst");
     let _ = std::fs::remove_dir_all(&dir);
@@ -188,7 +188,7 @@ fn permanent_rejection_parks_the_bundle() {
     let dir = temp_dir("reject");
     let outbox = dir.join("outbox");
     let (endpoint, root) = start_receiver(&dir);
-    // 'z'*64 is not hex: open mode answers 401 — a permanent rejection, so
+    // 'z'*64 is not hex: open mode answers 401, a permanent rejection, so
     // the bundle parks in outbox/rejected instead of retrying forever.
     let cfg = CollectConfig {
         enabled: true,

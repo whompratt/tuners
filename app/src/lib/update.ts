@@ -21,6 +21,6 @@ export async function checkForUpdate(): Promise<void> {
     // On Windows the installer exits the app itself; elsewhere we relaunch.
     await relaunch();
   } catch {
-    // ignore — try again next launch
+    // ignore; try again next launch
   }
 }

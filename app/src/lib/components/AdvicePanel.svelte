@@ -25,7 +25,7 @@
   let acceptNote = $state("");
   let histSel = $state(0);
 
-  // f32 crosses IPC as `number | null` (NaN honesty) — formatters tolerate it.
+  // f32 crosses IPC as `number | null` (NaN honesty); formatters tolerate it.
   const N = (v: number | null | undefined) => v ?? 0;
   const sgn = (v: number | null) => `${N(v) > 0 ? "+" : ""}${N(v).toFixed(2)}s`;
   const dcol = (v: number | null) => (N(v) > 0.02 ? "#e66767" : N(v) < -0.02 ? "#199e70" : "var(--muted)");
@@ -51,7 +51,7 @@
     const note = r.data.note;
     await loadPending();
     await loadAdvice();
-    if (note) acceptNote = ` · recorded: ${note} — attaches to the next run`;
+    if (note) acceptNote = ` · recorded: ${note} (attaches to the next run)`;
   }
 
   let asks = $derived.by(() =>
@@ -91,7 +91,7 @@
       {#if a}
         {a.journal
           ? `history: ${a.journal}`
-          : "no history yet — it starts with your first setup change"}{acceptNote}
+          : "no history yet; it starts with your first setup change"}{acceptNote}
       {/if}
     </span>
     <span style="flex:1"></span>
@@ -190,13 +190,13 @@
       {/if}
       {#if a.inProgress}
         <div style="margin-top:6px;font-size:13px;color:var(--muted)">
-          {base(a.inProgress)} is in the history but has no completed laps yet — its step joins the trajectory once a lap
+          {base(a.inProgress)} is in the history but has no completed laps yet. Its step joins the trajectory once a lap
           completes
         </div>
       {/if}
       {#each a.missing as p (p)}
         <div style="margin-top:6px;font-size:13px;color:var(--muted)">
-          {base(p)} is in the history but its recording was deleted — skipped; its setup change merged into the next step
+          {base(p)} is in the history but its recording was deleted: skipped, its setup change merged into the next step
         </div>
       {/each}
       {#if a.anchor}
@@ -209,19 +209,19 @@
             <span style="color:{OUTCOME_COLOR[a.anchor.word] || 'inherit'}">{a.anchor.word} {sgn(a.anchor.deltaS)}</span>
             <span title="where the time moved: corner entry / corner exit / straights">
               entry {sgn(a.anchor.split[0])} / exit {sgn(a.anchor.split[1])} / straights {sgn(a.anchor.split[2])}
-            </span>{a.anchor.weak ? " — single-lap side" : ""}{a.anchor.reconciled ? "" : " (multi-area — informational)"}
+            </span>{a.anchor.weak ? " (single-lap side)" : ""}{a.anchor.reconciled ? "" : " (multi-area, informational)"}
           {:else}
-            step {a.anchor.vsStep} has the same setup — {sgn(a.anchor.deltaS)} ideal is pure driver/track drift
+            step {a.anchor.vsStep} has the same setup: {sgn(a.anchor.deltaS)} ideal is pure driver/track drift
           {/if}
         </div>
       {/if}
       {#if a.driftFloor}
         <div
           style="margin-top:6px;font-size:13px;color:var(--muted)"
-          title="largest ideal-lap difference measured between stints with identical setups — the campaign's own noise floor"
+          title="largest ideal-lap difference measured between stints with identical setups: the campaign's own noise floor"
         >
           measured drift floor: ±{N(a.driftFloor[1]).toFixed(2)}s across {a.driftFloor[0]} same-setup pair{a.driftFloor[0] === 1 ? "" : "s"}
-          — single-comparison margins below this are noise
+          (single-comparison margins below this are noise)
         </div>
       {/if}
       {#if a.aba}
@@ -239,7 +239,7 @@
           <select bind:value={histSel}>
             {#each a.landscapes as l, i (l.area + l.phrase)}
               <option value={i}>
-                {l.phrase}{l.vertex != null ? ` (optimum ≈ ${l.vertex})` : ""} — {l.measurements.length}
+                {l.phrase}{l.vertex != null ? ` (optimum ≈ ${l.vertex})` : ""}, {l.measurements.length}
                 measurement{l.measurements.length === 1 ? "" : "s"}
               </option>
             {/each}
@@ -268,7 +268,7 @@
                     {:else}
                       <td></td><td></td><td></td>
                     {/if}
-                    <td style="color:var(--muted)">{m.direct ? "direct" : "attributed"}{m.weak ? " — single-lap" : ""}</td>
+                    <td style="color:var(--muted)">{m.direct ? "direct" : "attributed"}{m.weak ? " (single-lap)" : ""}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -279,8 +279,8 @@
       <div style="margin-top:12px;font-size:13px;color:var(--muted)">
         advice for {base(a.adviceFor)}:
         {#if asks > 1}
-          <span title="applying several suggested values at once cannot be separated afterwards — especially probes">
-            suggestions are alternatives — apply ONE per run, drive, refresh
+          <span title="applying several suggested values at once cannot be separated afterwards, especially probes">
+            suggestions are alternatives: apply ONE per run, drive, refresh
           </span>
         {/if}
       </div>
@@ -289,16 +289,16 @@
           <details class="adv-rec" open={advanced.on}>
             <summary style="cursor:pointer">
               <span class="adv-conf" style="color:{CONF_COLOR[r.confidence]}">[{r.confidence}]</span>
-              {#if r.suggestion}<b>{r.suggestion}</b> — {r.advice}{:else}<b>{r.area}</b>: {r.advice}{/if}
+              {#if r.suggestion}<b>{r.suggestion}</b>: {r.advice}{:else}<b>{r.area}</b>: {r.advice}{/if}
               {#if r.apply.length}
                 {#if isAccepted(r.apply as [string, string][], app.session?.latest)}
                   <span
                     style="color:var(--muted);font-size:12px"
-                    title="this value is saved on the setup and records against the next run">saved — drive a run</span>
+                    title="this value is saved on the setup and records against the next run">saved; drive a run</span>
                 {:else}
                   <button
                     class="btn"
-                    title="save this value onto the current setup — applies before the next run net into one history entry"
+                    title="save this value onto the current setup; applies before the next run net into one history entry"
                     onclick={(e) => { e.preventDefault(); e.stopPropagation(); accept(r.apply); }}>apply</button>
                 {/if}
               {/if}
@@ -311,7 +311,7 @@
           </details>
         {/each}
       {:else}
-        <div class="adv-rec">no recommendations — nothing in this run stood out</div>
+        <div class="adv-rec">no recommendations: nothing in this run stood out</div>
       {/if}
     {/if}
   </div>

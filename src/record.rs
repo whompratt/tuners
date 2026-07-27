@@ -2,10 +2,10 @@
 //! into session files automatically, so the user runs one binary, opens the
 //! dashboard, and drives. Session boundaries come from the Cutter state machine
 //! plus the dashboard's "new session" button (tune edits are invisible in
-//! telemetry — the button is the tune separator; the rest are safety nets).
+//! telemetry, so the button is the tune separator; the rest are safety nets).
 //!
 //! Recording is gated on race mode: `IsRaceOn` with a live `DistanceTraveled`
-//! (exactly 0.0 in free roam, nonzero — even negative at spawn — in race modes,
+//! (exactly 0.0 in free roam; nonzero, even negative at spawn, in race modes,
 //! see telemetry.md). Menu/pause frames inside a session are buffered and
 //! flushed when racing resumes, preserving the race-off gaps that gap
 //! classification (pause/rewind/restart) depends on.
@@ -29,7 +29,7 @@ const FREEROAM_CLOSE_US: u64 = 5_000_000;
 const SILENCE_CLOSE_US: u64 = 30_000_000;
 /// Free-roam detection needs the car actually moving (~11 mph, same as analysis).
 const FREEROAM_MIN_SPEED_MPS: f32 = 5.0;
-/// This many consecutive undecodable packets open a raw failsafe recording —
+/// This many consecutive undecodable packets open a raw failsafe recording:
 /// if a game patch breaks the format, we still capture raw data to fix later.
 const UNDECODABLE_FAILSAFE_RUN: u32 = 100;
 
@@ -39,8 +39,8 @@ pub enum Action {
     Close,
 }
 
-/// Decides where session files begin and end. Pure over (recv_us, payload) —
-/// no I/O, no wall clock — so every boundary rule is unit-testable.
+/// Decides where session files begin and end. Pure over (recv_us, payload),
+/// no I/O, no wall clock, so every boundary rule is unit-testable.
 #[derive(Default)]
 pub struct Cutter {
     active: bool,
@@ -174,7 +174,7 @@ impl Cutter {
             .is_some_and(|(us, _)| now_us.saturating_sub(*us) >= GAP_CLOSE_US)
     }
 
-    /// The dashboard's "new session" button — the tune-change separator.
+    /// The dashboard's "new session" button, i.e. the tune-change separator.
     pub fn split(&mut self) -> Vec<Action> {
         let mut out = Vec::new();
         if self.active {
@@ -196,7 +196,7 @@ impl Cutter {
 /// What the recorder is doing, for the dashboard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecorderMode {
-    /// UDP port taken (external `tuners capture` or another instance) — view-only.
+    /// UDP port taken (external `tuners capture` or another instance): view-only.
     External(String),
     /// Listening; no race telemetry yet (menus / free roam are not recorded).
     Waiting,
@@ -207,22 +207,22 @@ pub struct RecorderStatus {
     pub mode: RecorderMode,
     pub file: Option<PathBuf>,
     pub packets: u64,
-    /// When the last raw datagram hit the socket — menus included, which are
+    /// When the last raw datagram hit the socket, menus included, which are
     /// never recorded. Lets onboarding confirm the Data Out wiring before any
     /// race telemetry exists.
     pub last_udp: Option<std::time::Instant>,
     /// Car ordinal seen in raw packets. Free roam carries it while never
     /// being recorded (DistanceTraveled stays 0 there, so the cutter never
-    /// opens) — onboarding detects the car without requiring an event.
+    /// opens), so onboarding detects the car without requiring an event.
     pub udp_car: Option<i32>,
     pub split_requested: bool,
     /// Tune-change note from the dashboard, journaled against the NEXT stint
     /// that opens (journal lines describe the change since the previous stint).
     pub pending_note: Option<String>,
-    /// Revision index the pending note diffs from (the last DRIVEN revision) —
+    /// Revision index the pending note diffs from (the last DRIVEN revision);
     /// lets consecutive saves with no stint between them net into one note.
     pub pending_base_rev: Option<usize>,
-    /// Most recently closed session — the baseline seed for an empty journal.
+    /// Most recently closed session: the baseline seed for an empty journal.
     pub last_closed: Option<PathBuf>,
 }
 
@@ -287,7 +287,7 @@ fn unix_micros() -> u64 {
 }
 
 /// Bind the UDP port and record forever. On bind failure, marks the status
-/// External and returns — the caller's tailer still serves the live view of
+/// External and returns; the caller's tailer still serves the live view of
 /// whatever an external capture writes.
 pub fn run_recorder(
     port: u16,
@@ -300,7 +300,7 @@ pub fn run_recorder(
         Ok(s) => s,
         Err(e) => {
             shared.lock().unwrap().mode = RecorderMode::External(e.to_string());
-            println!("udp port {port} busy ({e}) — view-only mode, run `tuners capture` yourself");
+            println!("udp port {port} busy ({e}): view-only mode, run `tuners capture` yourself");
             return;
         }
     };

@@ -15,7 +15,7 @@
   let f = $derived(app.live?.frame ?? null);
 
   // Confidence card: dimmed in menus/idle, full opacity as soon as the car
-  // is on a recorded track (out lap included — it shows "–" until a flying
+  // is on a recorded track (out lap included; it shows "–" until a flying
   // lap produces a value). External capture counts via live race frames.
   let onTrack = $derived(!stale && (rec.mode === "recording" || !!f?.raceOn));
 
@@ -26,7 +26,7 @@
   }
 
   // The rare manual cut (auto-cutting handles car changes and idle; saving a
-  // changed setup cuts too). Nothing here takes a note — setup changes are
+  // changed setup cuts too). Nothing here takes a note: setup changes are
   // captured in Setup, where the history entry comes from the diff.
   async function cutRun() {
     await commands.recordSplit(null);
@@ -41,7 +41,7 @@
       {#if rec.mode === "recording"}
         <span class="rec-dot" style="color:var(--danger)">●</span> recording ({rec.packets.toLocaleString()} pkts)
       {:else if rec.mode === "waiting"}
-        armed — waiting for race telemetry
+        armed, waiting for race telemetry
       {:else}
         view-only (another capture owns the telemetry port)
       {/if}
@@ -52,18 +52,18 @@
       keep window on top
     </label>
     {#if rec.mode === "recording" || rec.mode === "waiting"}
-      <Button onclick={cutRun} title="close this run now — the next race-mode frame starts a fresh one">cut run</Button>
+      <Button onclick={cutRun} title="close this run now; the next race-mode frame starts a fresh one">cut run</Button>
     {/if}
   </div>
 
   {#if !f && rec.udpAgeMs != null && rec.udpAgeMs < STALE_MS}
     <div class="banner" style="margin-top:12px">
-      receiving telemetry{rec.udpCarName ? ` from the ${rec.udpCarName}` : ""} — menus and free roam
+      receiving telemetry{rec.udpCarName ? ` from the ${rec.udpCarName}` : ""}. Menus and free roam
       aren't recorded; start a race, rivals lap, or route event to record a run
     </div>
   {:else if !f && app.booted}
     <div class="banner" style="margin-top:12px">
-      no telemetry yet — in FH6: Settings → HUD and Gameplay → Data Out → ON, IP 127.0.0.1, port 20440.
+      no telemetry yet. In FH6: Settings → HUD and Gameplay → Data Out → ON, IP 127.0.0.1, port 20440.
       The game only honours new Data Out settings after a full restart.
     </div>
   {:else if f && stale}

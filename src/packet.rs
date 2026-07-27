@@ -1,6 +1,6 @@
 //! FH6 "Data Out" packet decoding/encoding.
 //!
-//! Layout is transcribed from docs/telemetry.md — field order and widths must match
+//! Layout is transcribed from docs/telemetry.md; field order and widths must match
 //! it exactly. Any quirk discovered against real captures gets recorded there first.
 
 /// Total datagram size the game sends.
@@ -71,7 +71,7 @@ pub struct TelemetryFrame {
     pub power: f32,
     /// Newton-meters.
     pub torque: f32,
-    /// Units unverified — assumed °F (see telemetry.md).
+    /// Units unverified, assumed °F (see telemetry.md).
     pub tire_temp: Corners<f32>,
     /// PSI above atmospheric.
     pub boost: f32,

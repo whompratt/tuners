@@ -15,7 +15,7 @@ const BALANCE_CLEAR: f32 = 0.10;
 const PHASE_GAP: f32 = 0.10;
 /// Braking-band index confirming the front burns its grip budget under
 /// braking (entry-understeer card: brake bias is a lever). Healthy tarmac
-/// reads <= +0.25; tarmac-only — dirt trail-brake rotation is technique and
+/// reads <= +0.25; tarmac-only, since dirt trail-brake rotation is technique and
 /// reads +0.22..+0.67 even on reference tunes.
 const BRAKE_PUSH: f32 = 0.30;
 /// Transient-oversteer counter-signal gates (tarmac only; dirt reads 12-23%
@@ -32,7 +32,7 @@ const OS_COUNTERSTEER_FRAC: f32 = 0.03;
 /// Working tire temperature band (°F) per compound; outside it pressures
 /// likely need adjusting. The slick band is the in-game-validated anchor
 /// (160-210°F reads right on real FH6 sessions); the rest are offset from it
-/// using real-world relative operating windows — street compounds run their
+/// using real-world relative operating windows: street compounds run their
 /// best grip cooler than race rubber, loose-surface compounds far cooler,
 /// snow coldest. Heuristic: the game publishes no per-compound numbers, so
 /// these are extrapolations, not measurements.
@@ -61,7 +61,7 @@ const WHEELSPIN_HIGH: f32 = 0.15;
 /// Time on the rev limiter worth reacting to.
 const LIMITER_FRAC: f32 = 0.02;
 /// Minimum cornering samples in a conditioned band (speed / throttle) before
-/// band rules speak — ~8s of cornering at 60 Hz.
+/// band rules speak (~8s of cornering at 60 Hz).
 const BAND_MIN_SAMPLES: usize = 500;
 /// High-speed-only imbalance (aero signature): the high band must read at
 /// least this while the low band stays under BALANCE_MILD. Calibrated on the
@@ -84,7 +84,7 @@ const POWER_INDEX_LOOSE: f32 = 0.12;
 /// in top gear without ever climbing into the top of the rev range. The optimum
 /// between them is route-dependent, so only the extremes are flagged.
 /// Top gear must carry at least this share of grounded time before the "too
-/// long" side speaks — a route that barely reaches top gear says nothing about
+/// long" side speaks: a route that barely reaches top gear says nothing about
 /// the stack (converged Ford GT tune: 3-4.6%; the long-geared Ferrari: 17-50%).
 const TOP_GEAR_TIME_FRAC: f32 = 0.10;
 /// "Too long" fires when less than this share of top-gear time is spent above
@@ -99,11 +99,11 @@ const TOPPING_FRAC: f32 = 0.10;
 /// dirt, so thresholds are per-surface.
 const UNDERDAMPED_REV_TARMAC: f32 = 7.0;
 /// Raised from 0.05 after the McLaren F1 measured HEALTHY at 8.2 rev/s with
-/// 4.1% topped — healthy reversal rates span 4.1-8.4/s across cars/tracks,
+/// 4.1% topped; healthy reversal rates span 4.1-8.4/s across cars/tracks,
 /// so the topped conjunct carries the discrimination.
 const UNDERDAMPED_TOPPED_TARMAC: f32 = 0.08;
 /// Loose-surface underdamping calibrated from a dirt min-damping capture:
-/// healthy axle averages read 11.8-16.2 rev/s, min damping 17.6-19.5 — tight
+/// healthy axle averages read 11.8-16.2 rev/s, min damping 17.6-19.5. Tight
 /// separation (one car), hence Medium confidence when it fires.
 const UNDERDAMPED_REV_LOOSE: f32 = 17.0;
 const UNDERDAMPED_TOPPED_LOOSE: f32 = 0.15;
@@ -115,7 +115,7 @@ const OVERDAMPED_TOPPED_FRAC: f32 = 0.40;
 const OVERDAMPED_REV_TARMAC: f32 = 3.0;
 /// Bump-heavy overdamping (measured on the bump-only-max A/B): articulation
 /// suppressed AND the wheel parked at full extension a large share of the
-/// time. Both conjuncts required — healthy low-rev cars (Acura 3.5-4.5/s,
+/// time. Both conjuncts required: healthy low-rev cars (Acura 3.5-4.5/s,
 /// topped <3%) must stay silent.
 const OVERDAMPED_BUMP_REV: f32 = 5.5;
 const OVERDAMPED_BUMP_TOPPED: f32 = 0.10;
@@ -157,7 +157,7 @@ pub struct Recommendation {
 }
 
 /// What the car's setup tells us beyond telemetry: rules must not suggest
-/// sliders the build doesn't have. None = unknown (blind mode) — rules keep
+/// sliders the build doesn't have. None = unknown (blind mode); rules keep
 /// their default phrasing.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Context<'a> {
@@ -217,7 +217,7 @@ fn balance_rule(
     // Where in the corner the imbalance lives decides WHICH end/system to
     // touch (forza.guide fix-it cards): entry and mid-corner imbalance are
     // roll-stiffness problems, but exit imbalance under power is a driveline/
-    // load-transfer problem — softening the loaded end would dull turn-in
+    // load-transfer problem: softening the loaded end would dull turn-in
     // without fixing it. Uniform imbalance keeps the classic bar advice.
     let phase_split =
         overall
@@ -249,7 +249,7 @@ fn balance_rule(
     let (advice, family, softer): (String, _, _) = match (understeer, lean) {
         (true, PhaseLean::Entry) => (
             "reduce front roll stiffness: soften the front anti-roll bar first \
-             (springs second). The push concentrates at corner entry — if a \
+             (springs second). The push concentrates at corner entry; if a \
              softer front end doesn't clear it, shift brake balance rearward \
              or reduce rear diff decel next"
                 .into(),
@@ -258,7 +258,7 @@ fn balance_rule(
         ),
         (true, PhaseLean::Exit) if on_power && front_driven => (
             "reduce front diff accel lock: the front washes out under power on \
-             corner exit — softening the front end would dull turn-in without \
+             corner exit, so softening the front end would dull turn-in without \
              fixing the power-on push. Stiffening the rear (springs/arb) is \
              the second lever"
                 .into(),
@@ -268,14 +268,14 @@ fn balance_rule(
         (true, PhaseLean::Exit) if on_power => (
             "stiffen the rear (anti-roll bar or springs) to shift grip \
              forward: the push appears under power on corner exit, not at \
-             turn-in — softening the front would dull entry without fixing it"
+             turn-in; softening the front would dull entry without fixing it"
                 .into(),
             Family::RearRoll,
             false,
         ),
         (false, PhaseLean::Entry) => (
             "increase rear diff decel lock: the rear steps out into corners \
-             (braking / lift-off) — decel lock stabilises entry. Softening \
+             (braking / lift-off), and decel lock stabilises entry. Softening \
              the rear arb or springs is the second lever, brake balance \
              forward the third"
                 .into(),
@@ -285,7 +285,7 @@ fn balance_rule(
         (false, PhaseLean::Exit) if on_power => (
             "reduce rear roll stiffness: soften the rear anti-roll bar first \
              (springs second). The slide concentrates on corner exit under \
-             throttle — if softer rear roll doesn't clear it, reduce rear \
+             throttle; if softer rear roll doesn't clear it, reduce rear \
              diff accel next"
                 .into(),
             Family::RearRoll,
@@ -308,13 +308,13 @@ fn balance_rule(
     };
     // Phase-redirected driveline primaries rest on the newer corner-phase
     // signal and on families whose behavioural evidence is historically weak
-    // (deliberate min/max A/Bs) — never High on the split alone.
+    // (deliberate min/max A/Bs): never High on the split alone.
     let mut confidence = confidence;
     if matches!(family, Family::DiffAccel | Family::DiffDecel) {
         confidence = confidence.min(Confidence::Medium);
     }
     // Transient counter-signal: a net-understeer car that flashes real
-    // oversteer in bursts (power-on, at speed) is compromise-limited — the
+    // oversteer in bursts (power-on, at speed) is compromise-limited: the
     // average says soften the front, but that sharpens the snaps. Cap the
     // averaged advice and note why.
     let os = &overall.transient_oversteer;
@@ -368,7 +368,7 @@ fn balance_rule(
     {
         evidence.push(if (lo - hi) * idx.signum() >= AERO_BAND_GAP / 2.0 {
             format!(
-                "concentrated at low speed ({lo:+.2} below 85 mph vs {hi:+.2} above) — \
+                "concentrated at low speed ({lo:+.2} below 85 mph vs {hi:+.2} above): \
                  mechanical grip, so bars/springs over aero"
             )
         } else {
@@ -379,8 +379,8 @@ fn balance_rule(
         && let (Some(entry), Some(exit)) = supported_pair(&c.entry, &c.exit)
     {
         let mark = match lean {
-            PhaseLean::Entry => " — concentrated at entry",
-            PhaseLean::Exit => " — concentrated at exit",
+            PhaseLean::Entry => ", concentrated at entry",
+            PhaseLean::Exit => ", concentrated at exit",
             PhaseLean::Uniform => "",
         };
         evidence.push(format!(
@@ -391,7 +391,7 @@ fn balance_rule(
     }
     if matches!(lean, PhaseLean::Exit) && on_power {
         evidence.push(format!(
-            "on-throttle index {:+.2} — the imbalance rides the power",
+            "on-throttle index {:+.2}: the imbalance rides the power",
             overall.balance_on_throttle.index.unwrap_or(0.0),
         ));
     }
@@ -401,7 +401,7 @@ fn balance_rule(
             "counter-signal: {:.1}% of cornering time flashes clear oversteer \
              ({} episodes; {:.1}% on power, {:.1}% at speed, rear-first at \
              limit {:.1}%) and the driver counter-steers {:.1}% of cornering \
-             ({} corrections) — softening the front sharpens these moments",
+             ({} corrections); softening the front sharpens these moments",
             os.clear_frac * 100.0,
             os.episodes,
             os.on_power_frac * 100.0,
@@ -426,7 +426,7 @@ fn balance_rule(
     });
 
     // The transients get their own rear-grip lever: aero when they live at
-    // speed, drive-line when they ride the throttle. Low — the stat is new
+    // speed, drive-line when they ride the throttle. Low: the stat is new
     // and single-library calibrated.
     if snappy {
         let at_speed = os.high_speed_frac >= os.on_power_frac;
@@ -435,9 +435,9 @@ fn balance_rule(
             apply: Vec::new(),
             area: "stability",
             advice: if aero {
-                "add rear aero: the oversteer flashes concentrate at high speed \
-                 — the rear runs out of downforce before the front runs out of \
-                 grip"
+                "add rear aero: the oversteer flashes concentrate at high speed, \
+                 where the rear runs out of downforce before the front runs out \
+                 of grip"
                     .into()
             } else if at_speed {
                 "soften the rear a step (arb or springs) or lower rear ride \
@@ -446,7 +446,7 @@ fn balance_rule(
                     .into()
             } else {
                 "reduce rear diff accel lock (or soften the rear a step): the \
-                 oversteer flashes ride the throttle — the rear breaks away \
+                 oversteer flashes ride the throttle; the rear breaks away \
                  under power"
                     .into()
             },
@@ -474,7 +474,7 @@ fn balance_rule(
         });
     }
 
-    // Entry-understeer corroborated by the braking band (tarmac only — dirt
+    // Entry-understeer corroborated by the braking band (tarmac only; dirt
     // trail-brake rotation is technique): brake balance is its own lever on
     // the entry card, worth a separate journalable recommendation. Single-car
     // calibration so far (one brake A/B), hence Low.
@@ -533,7 +533,7 @@ fn supported_pair(
 }
 
 /// Imbalance that lives ONLY in the high-speed band is an aero problem, not a
-/// bars problem — mechanical imbalance shows at every speed (and on the real
+/// bars problem: mechanical imbalance shows at every speed (and on the real
 /// library, mechanical understeer reads STRONGER at low speed).
 fn aero_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendation>) {
     let (Some(lo), Some(hi)) =
@@ -546,7 +546,7 @@ fn aero_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendatio
     }
     let understeer = hi > 0.0;
     // No aero fitted: the speed-only imbalance is real but downforce isn't a
-    // lever — ride height (rake) is the closest one this build has.
+    // lever; ride height (rake) is the closest one this build has.
     let no_aero = ctx.aero_tunable == Some(false);
     let advice = match (understeer, no_aero) {
         (true, false) => {
@@ -574,7 +574,7 @@ fn aero_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendatio
         advice: advice.into(),
         evidence: vec![format!(
             "{} at speed only: index {hi:+.2} above 85 mph vs {lo:+.2} below \
-             (neutral) — a bars change would upset the low-speed balance that is \
+             (neutral); a bars change would upset the low-speed balance that is \
              currently fine",
             if understeer {
                 "understeer"
@@ -672,7 +672,7 @@ fn tire_pressure_rule(
 ) {
     let (low, high, band_name) = temp_band(compound);
     let band_label = if band_name.is_empty() {
-        "working band (no tire compound on file — assuming slick)".to_string()
+        "working band (no tire compound on file, assuming slick)".to_string()
     } else {
         format!("{band_name} working band")
     };
@@ -683,7 +683,7 @@ fn tire_pressure_rule(
     ] {
         let (advice, margin) = if avg > high {
             (
-                format!("raise {axle} tire pressures a step — {axle} tires run hot"),
+                format!("raise {axle} tire pressures a step: {axle} tires run hot"),
                 avg - high,
             )
         } else if avg < low {
@@ -705,7 +705,7 @@ fn tire_pressure_rule(
         if scrub_heated && avg > high {
             confidence = Confidence::Low;
             evidence.push(
-                "heat is partly scrub from the balance issue above — fix balance first".into(),
+                "heat is partly scrub from the balance issue above; fix balance first".into(),
             );
         }
         recs.push(Recommendation {
@@ -765,7 +765,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     if g.limiter_frac >= LIMITER_FRAC {
         let mut evidence = vec![if g.limiter_detected {
             format!(
-                "on the rev limiter {:.1}% of the stint — the ACTUAL rev cut sits at \
+                "on the rev limiter {:.1}% of the stint. The ACTUAL rev cut sits at \
                  {:.0} rpm ({:.0}% of the reported {:.0} redline; 3+ gears max out \
                  there)",
                 g.limiter_frac * 100.0,
@@ -804,7 +804,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
 
     // The "too long" extreme: the car lives in top gear but never climbs into
     // the top of the rev range, so every gear is longer than the route needs.
-    // Judged on the time-share of top-gear frames near redline — a single
+    // Judged on the time-share of top-gear frames near redline: a single
     // downhill burst can push the max near redline, but it cannot fake
     // sustained use of the rev range.
     if g.top_gear == 0 || overall.redline <= 0.0 {
@@ -816,7 +816,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             apply: Vec::new(),
             area: "gearing",
             advice: "shorten the final drive: the car lives in top gear but the top of \
-                     the rev range goes unused — shorter gearing gives more acceleration \
+                     the rev range goes unused; shorter gearing gives more acceleration \
                      everywhere at no real top-speed cost"
                 .into(),
             evidence: vec![
@@ -835,7 +835,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                     g.top_gear_max_rpm,
                 ),
                 "check the shorter gearing doesn't put the longest straight on the \
-                 limiter — that is the opposite extreme of the same tradeoff"
+                 limiter: that is the opposite extreme of the same tradeoff"
                     .into(),
             ],
             confidence: Confidence::Medium,
@@ -850,7 +850,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     }
 
     // Model-based check (the aero–gearing coupling): the fitted drag curve
-    // says where the rev cut SHOULD arrive — the speed the longest flat-out
+    // says where the rev cut SHOULD arrive: the speed the longest flat-out
     // run actually reaches. Behavioural rules above see only gross extremes;
     // this catches the mismatch an aero change silently introduces.
     if let Some(d) = &overall.driveline
@@ -864,17 +864,17 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             advice: if short {
                 "lengthen the final drive to match this aero: the fitted drag \
                  model says the longest run reaches past the current rev-cut \
-                 speed — the engine runs out before the car does"
+                 speed; the engine runs out before the car does"
                     .into()
             } else {
                 "shorten the final drive to match this aero: the rev cut sits \
-                 well past what the longest run can reach — unused top end \
+                 well past what the longest run can reach; unused top end \
                  traded for acceleration everywhere"
                     .into()
             },
             evidence: vec![format!(
                 "drag model: longest flat-out run reaches ~{:.0} mph, rev cut \
-                 arrives at {:.0} mph (gear {}) — ideal final drive ≈ current × {:.2}",
+                 arrives at {:.0} mph (gear {}): ideal final drive ≈ current × {:.2}",
                 d.vmax_track * crate::util::MPS_TO_MPH,
                 d.redline_speed(g.effective_redline) * crate::util::MPS_TO_MPH,
                 d.top_gear,
@@ -927,7 +927,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 apply: Vec::new(),
                 area: "suspension",
                 advice: format!(
-                    "{axle} suspension spends long at full extension — if the route is \
+                    "{axle} suspension spends long at full extension: if the route is \
                      smooth this can mean over-stiff {axle} springs or too much rebound; \
                      over crests and jumps it is normal"
                 ),
@@ -971,7 +971,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             )];
             if loose && let Some(flutter) = overall.rpm_flutter {
                 evidence.push(format!(
-                    "rpm flutter {flutter:.0} rpm/s on throttle — skipping drive \
+                    "rpm flutter {flutter:.0} rpm/s on throttle: skipping drive \
                      wheels (roughly doubles vs healthy damping on the same surface)"
                 ));
             }
@@ -993,7 +993,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 area: "damping",
                 advice: format!(
                     "increase {axle} damping (rebound especially): the {axle} wheels \
-                     oscillate and spend long stretches at full extension — bouncing \
+                     oscillate and spend long stretches at full extension; bouncing \
                      off the surface costs grip everywhere"
                 ),
                 evidence: vec![
@@ -1025,7 +1025,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 suggestion: None,
                 advice: format!(
                     "reduce {axle} bump damping: articulation is suppressed and \
-                     the {axle} wheels spend long stretches at full extension — \
+                     the {axle} wheels spend long stretches at full extension; \
                      the compression stroke is fighting the surface"
                 ),
                 evidence: vec![
@@ -1243,8 +1243,8 @@ mod tests {
 
     /// Entry-concentrated understeer keeps the front-arb primary (entry card
     /// leads with it) but names the entry levers, and a hot braking band adds
-    /// the brake-balance secondary — on tarmac only, dirt trail-braking is
-    /// technique.
+    /// the brake-balance secondary (on tarmac only, dirt trail-braking is
+    /// technique).
     #[test]
     fn entry_understeer_names_entry_levers_and_brakes() {
         let mut overall = base_metrics();
@@ -1368,7 +1368,7 @@ mod tests {
         assert_eq!(stab.implied.unwrap().family, Family::RearAero);
 
         // Same at-speed shape on a build with NO aero fitted: downforce is
-        // not a lever — mechanical rear grip takes its place.
+        // not a lever, mechanical rear grip takes its place.
         let no_aero = Context {
             aero_tunable: Some(false),
             ..Default::default()
@@ -1388,7 +1388,7 @@ mod tests {
         assert_eq!(implied.family, Family::DiffAccel);
         assert!(implied.softer);
 
-        // Dirt: rotation is technique — no counter-signal, no rec.
+        // Dirt: rotation is technique, so no counter-signal, no rec.
         overall.surface_loose = true;
         let recs = recommend(&overall, &laps, &Default::default());
         assert!(recs.iter().all(|r| r.area != "stability"));
@@ -1521,7 +1521,7 @@ mod tests {
 
     /// Understeer only above 85 mph with neutral low-speed balance = aero, and
     /// the balance rule must stay quiet (overall index diluted below MILD is
-    /// not required — here overall is neutral so only aero speaks).
+    /// not required; here overall is neutral so only aero speaks).
     #[test]
     fn high_speed_only_understeer_fires_aero_not_bars() {
         let mut overall = base_metrics();
@@ -1547,7 +1547,7 @@ mod tests {
         assert_eq!(aero.implied.unwrap().family, Family::RearAero);
 
         // No aero fitted: same signal, but the advice must not name a slider
-        // the build doesn't have — ride height (rake) takes its place, Low.
+        // the build doesn't have; ride height (rake) takes its place, Low.
         let no_aero = Context {
             aero_tunable: Some(false),
             ..Default::default()
@@ -1560,7 +1560,7 @@ mod tests {
     }
 
     /// The real tarmac signature (Ford GT / McLaren): understeer at EVERY speed,
-    /// stronger below 85 mph. Mechanical — aero must stay quiet and the balance
+    /// stronger below 85 mph. Mechanical: aero must stay quiet and the balance
     /// rec must say the imbalance is concentrated at low speed.
     #[test]
     fn uniform_understeer_is_mechanical_not_aero() {
@@ -1631,7 +1631,7 @@ mod tests {
     }
 
     /// The real dirt pattern (Fiesta/Audi): big on-off shift but on-throttle
-    /// index near zero — throttle rotation as technique, not a diff problem.
+    /// index near zero: throttle rotation as technique, not a diff problem.
     #[test]
     fn dirt_throttle_rotation_stays_quiet() {
         let mut overall = base_metrics();
@@ -1643,7 +1643,7 @@ mod tests {
     }
 
     /// Understeer everywhere with a small on-off shift (the healthy tarmac
-    /// signature) must NOT read as power understeer — the shift gate protects it.
+    /// signature) must NOT read as power understeer; the shift gate protects it.
     #[test]
     fn uniform_understeer_is_not_power_understeer() {
         let mut overall = base_metrics();
@@ -1705,7 +1705,7 @@ mod tests {
     }
 
     /// A route that barely reaches top gear says nothing about the stack: the
-    /// converged Ford GT tune reads 3-4.6% top-gear time at mid revs — silent.
+    /// converged Ford GT tune reads 3-4.6% top-gear time at mid revs, so silent.
     #[test]
     fn marginal_top_gear_time_stays_quiet() {
         let mut overall = base_metrics();
@@ -1719,7 +1719,7 @@ mod tests {
     }
 
     /// Healthy tunes rev out in top gear (Fiesta GRC: 17.7% of time in top,
-    /// 8.7% of it above 90% redline) — silent even with heavy top-gear use.
+    /// 8.7% of it above 90% redline): silent even with heavy top-gear use.
     #[test]
     fn healthy_rev_usage_stays_quiet() {
         let mut overall = base_metrics();
@@ -1806,7 +1806,7 @@ mod tests {
     }
 
     /// Regression from the real dirt captures: healthy dirt reads 12-16 rev/s and
-    /// up to ~26% topped — tarmac thresholds must not fire on it.
+    /// up to ~26% topped; tarmac thresholds must not fire on it.
     #[test]
     fn healthy_dirt_damping_stays_quiet() {
         let mut overall = base_metrics();

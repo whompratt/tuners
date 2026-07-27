@@ -24,7 +24,7 @@
     <text class="q-pct" x="50" y="50">{q ? `${Math.round(qPct)}%` : "–"}</text>
   </svg>
   <div class="q-label">
-    confidence — {{ good: "enough for A/B", ok: "nearly there", low: "keep driving" }[qBand] ?? "keep driving"}
+    confidence: {{ good: "enough for A/B", ok: "nearly there", low: "keep driving" }[qBand] ?? "keep driving"}
   </div>
   {#if q}
     <div style="font-size:13px;color:var(--muted)">

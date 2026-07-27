@@ -8,7 +8,7 @@
 //! - corner vs straight: bins where the baseline ran the tires at a
 //!   meaningful share of the slip limit are cornering road.
 //! - entry vs exit within each corner: split at the corner's minimum-speed
-//!   bin (the apex). Phase location is the driver-mask-proof fingerprint —
+//!   bin (the apex). Phase location is the driver-mask-proof fingerprint:
 //!   adapting around a bad setting converts its behaviour into time, and the
 //!   time still lands in the phase the setting hurts (diff decel / brake
 //!   balance -> entry; diff accel -> exit; roll/aero -> throughout).
@@ -25,7 +25,7 @@ use super::profile::StintProfile;
 /// cornering across stints.
 pub const CORNER_SLIP_THRESHOLD: f32 = 0.4;
 /// Sub-threshold gaps up to this many bins (x10 m) inside a corner run are
-/// bridged — mid-corner slip dips must not split one corner into two.
+/// bridged; mid-corner slip dips must not split one corner into two.
 const GAP_BINS: usize = 2;
 
 #[derive(Debug, Clone, Copy)]

@@ -55,7 +55,7 @@ const trimZeros = (s: string) => s.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "
 
 // canonical string -> display string (for form/summary), and back.
 // Accepts numbers too: Svelte's bind:value on type="number" inputs stores
-// numbers at runtime, and the IPC contract is strings — everything that
+// numbers at runtime, and the IPC contract is strings: everything that
 // crosses the boundary must come through here already stringified.
 export const toDisp = (key: string, v: string | number): string => {
   const u = unitOf(key);
@@ -109,5 +109,5 @@ export const fmtLap = (s: number): string => {
 export const fmtClock = (s: number): string =>
   s >= 60 ? `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}` : `${s.toFixed(1)}s`;
 
-// reference dark categorical palette (validated, fixed order — never cycled)
+// reference dark categorical palette (validated, fixed order, never cycled)
 export const SERIES = ["#3987e5", "#008300", "#d55181", "#c98500", "#199e70", "#d95926", "#9085e9", "#e66767"];

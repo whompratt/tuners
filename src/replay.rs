@@ -1,4 +1,4 @@
-//! Replay a recorded session through the decoder and summarize it — the headless
+//! Replay a recorded session through the decoder and summarize it: the headless
 //! check that a capture is intact and the decoder handles every packet in it.
 
 use crate::packet::{self, TelemetryFrame};

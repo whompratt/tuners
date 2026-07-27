@@ -5,7 +5,7 @@ pub const MPS_TO_MPH: f32 = 2.236_936_3;
 /// Single data root: sessions, tune files, journals, archives,
 /// outbox, and collection config all resolve under one directory. Resolution
 /// order: `TUNERS_DATA` env, then a root installed by the app shell
-/// (app_data_dir), then the current directory — which keeps CLI behavior in
+/// (app_data_dir), then the current directory, which keeps CLI behavior in
 /// a repo checkout identical to before the root existed.
 static DATA_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 

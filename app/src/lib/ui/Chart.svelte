@@ -2,7 +2,7 @@
   import type { Snippet } from "svelte";
 
   // The blessed chart pattern: THIS host is the only code
-  // that ever sizes the canvas — sizing clears it, so draw functions must be
+  // that ever sizes the canvas. Sizing clears it, so draw functions must be
   // pure renderers. `draw` closes over data + hover state; a new closure
   // identity (or a resize) triggers a full re-render.
   let {

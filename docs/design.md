@@ -5,7 +5,7 @@
 Help a Forza Horizon 6 player improve a car's tune without needing to be a suspension
 engineer. The app observes how the car behaves via the game's telemetry stream and turns
 that into concrete, explained suggestions: "front tire pressures are running 4 psi over
-optimal temp range — drop cold pressure", "car understeers on corner entry at high speed —
+optimal temp range: drop cold pressure", "car understeers on corner entry at high speed:
 soften front ARB or add front downforce", etc.
 
 ## What makes this viable
@@ -17,7 +17,7 @@ platform (PC or console) since the game just needs a LAN IP to send to.
 
 ## What is fundamentally NOT possible (constraints)
 
-These shape the whole design — the app is an *advisor*, not an *autotuner*:
+These shape the whole design: the app is an *advisor*, not an *autotuner*.
 
 - **Telemetry does not include the current tune settings.** We can see the car's
   behaviour but not the spring rates / pressures / gearing that produced it. Either the
@@ -28,8 +28,8 @@ These shape the whole design — the app is an *advisor*, not an *autotuner*:
   edits tune → drive again.
 - **Telemetry is one-way and send-only.** The packet does identify the car
   (`CarOrdinal`, class, PI) and its drivetrain type, but **weight, weight
-  distribution, fitted upgrades, tire compound, and suspension type are not exposed**
-  — those need user input or a community car dataset.
+  distribution, fitted upgrades, tire compound, and suspension type are not exposed**;
+  those need user input or a community car dataset.
 - **Send rate = frame rate**, so sample spacing is irregular. Analysis must use the
   packet's timestamp field and resample, not assume fixed dt.
 
@@ -48,10 +48,10 @@ UDP listener → packet decoder → session recorder (raw + decoded)
 ```
 
 - **Capture**: bind UDP socket, receive packets, no interpretation. Must never drop the
-  raw bytes — record them so decoding bugs can be fixed retroactively.
+  raw bytes: record them so decoding bugs can be fixed retroactively.
 - **Decode**: map the fixed FH6 packet layout to typed fields. Isolated so a layout
   correction touches one module.
-- **Record**: sessions on disk (format TBD — likely raw packet log + derived parquet/CSV).
+- **Record**: sessions on disk (format TBD, likely raw packet log + derived parquet/CSV).
   Recorded sessions also serve as test fixtures, so analysis can be developed headlessly
   without the game running.
 - **Analyse**: segment into laps/corners, compute tuning-relevant metrics (tire temp
@@ -70,20 +70,20 @@ UDP listener → packet decoder → session recorder (raw + decoded)
 
 - Generating complete tunes from scratch for arbitrary cars.
 - Live in-race coaching / overlay (analysis is post-drive to start with).
-- Anything requiring memory reading or game modification — Data Out only.
+- Anything requiring memory reading or game modification. Data Out only.
 
 ## Primary workflow: rivals iteration
 
 The core use case is a **rivals session**: restartable with guaranteed-identical
-conditions, so it is the natural tune-test loop — drive laps, restart, adjust the
+conditions, so it is the natural tune-test loop: drive laps, restart, adjust the
 tune, drive again, compare. Analysis must respect two rivals facts: lap 1 is always
-a **standing start** (out lap, much slower on circuits — excluded from lap
+a **standing start** (out lap, much slower on circuits, excluded from lap
 comparisons), and tracks may be **lap-based or point-to-point** (point-to-point has
 no flying laps at all, so every run is a standing start and runs compare only to
-other runs of the same route). Cross-session comparison — same car/track, tune A vs
-tune B — is where recommendations get their evidence.
+other runs of the same route). Cross-session comparison (same car/track, tune A vs
+tune B) is where recommendations get their evidence.
 
-**Leaderboard validity is irrelevant — the kept drive is the data.** Rewinds
+**Leaderboard validity is irrelevant; the kept drive is the data.** Rewinds
 invalidate laps for the leaderboard, but a rewind-and-retry is the driver choosing
 better data: the game restores exact car state, so the kept lap is physically
 consistent and its time is real. Analysis reconstructs this kept timeline (erasing
@@ -92,7 +92,7 @@ superseded driving) rather than discarding rewound laps.
 **Balance is the real coordinate system.** Setup changes act on lap time *through*
 behaviour (setting → balance → pace), and the first real trajectory showed the
 measured balance tracks the *driver's* preferred operating point more than the
-hardware — drivers adapt inputs to the feel they like. Long-term direction:
+hardware: drivers adapt inputs to the feel they like. Long-term direction:
 per-driver balance priors and per-setting
 effect maps learned across cars, used as informed starting points and validated
 per car. Preferred balance differs by driver and surface; there is no universal
@@ -114,7 +114,7 @@ driven back-to-back on a fresh track/car combo.
 - A **stint** is one continuous recording (.ftel file), cut automatically by the
   recorder (race-mode gating, car change, long idle, or a tune save).
 - A **(tuning) session** is the user-level unit of work: one *explicitly chosen*
-  car being tuned — car facts telemetry can't see, the tune itself revision by
+  car being tuned: car facts telemetry can't see, the tune itself revision by
   revision (tune-session.txt), and the stints driven along the way (tied to tune
   changes by the journal). Stints from other cars are still recorded but live
   outside the session; the dashboard scopes to the session's car.
@@ -131,15 +131,15 @@ field is optional and recommendation quality degrades gracefully:
   via cylinder count. Pre-fill these; let the user correct.
 - **High-value manual inputs**: tuning goal, weight, front weight %, tire compound,
   suspension type, current tune values, slider limits (springs, ride height, aero),
-  assists in use (ABS/TCS/stability — invisible in telemetry but they reshape what
+  assists in use (ABS/TCS/stability: invisible in telemetry but they reshape what
   slip observations mean; e.g. with ABS, sustained braking slip is normal, not lockup).
 - **Nice-to-have**: engine position, body type.
 - **Manual IMO tire temps (future, for camber)**: telemetry only carries one temp
-  per tire, but the in-game HUD shows inner/middle/outer — the signal camber
+  per tire, but the in-game HUD shows inner/middle/outer, the signal camber
   advice needs, so the UI should accept them as manual input. Big caveat when
   interpreting: **corner-direction asymmetry**. On a tight track with mostly
   right-handers, the mostly-loaded side (front-left) develops a meaningful IMO
-  spread while the rarely-loaded side (front-right) reads "strange" — near-ideal
+  spread while the rarely-loaded side (front-right) reads "strange": near-ideal
   camber on the loaded side can coexist with odd numbers on the other, and
   symmetric-looking targets would misadvise. IMO interpretation must weight by
   which side actually got worked (turn-direction balance is derivable from
@@ -147,7 +147,7 @@ field is optional and recommendation quality degrades gracefully:
 
 **Units**: values are stored in canonical imperial (FH6's internal units: psi,
 lb/in, in, lb, °F, m/s from telemetry); unit preferences are a pure display
-layer, per field rather than per system — the UK mix (psi + kgf/mm + cm + kgf +
+layer, per field rather than per system. The UK mix (psi + kgf/mm + cm + kgf +
 kg + mph + °C) is the proof that "unit system" is really a bundle of per-field
 defaults. Imperial/Metric/UK presets quick-fill the per-field pickers; switching
 is safe at any time because storage never changes. Journal notes carry the
@@ -155,10 +155,10 @@ canonical unit suffix ("front springs -28 lb/in") so the hill-climb math stays
 in one unit forever; a per-field epsilon (half a display step) keeps unit
 round-trips from journaling phantom diffs.
 
-**Baseline tune**: a session starts from whatever tune the car currently has —
-stock counts; the baseline revision is simply "what's in the sliders now" and
+**Baseline tune**: a session starts from whatever tune the car currently has.
+Stock counts; the baseline revision is simply "what's in the sliders now" and
 iteration proceeds from there. Suggesting a starting tune from car stats
-(weight, drivetrain, PI — the way community tuning calculators do) is a
+(weight, drivetrain, PI, the way community tuning calculators do) is a
 deliberate stretch goal: collect common recommendations and reverse-engineer
 existing calculators first. Recorded under Open questions.
 
@@ -172,11 +172,11 @@ the user fills in more.
 
 ## Open questions
 
-- **Car metadata**: car *identity* is solved — a community, telemetry-verified
+- **Car metadata**: car *identity* is solved; a community, telemetry-verified
   `CarOrdinal` → name dataset is bundled (`assets/car-ordinals.tsv`, source and
   date in its header; factual ID mapping, attribution kept). Still open: specs
   (weight, weight distribution, stock gearing) keyed by ordinal.
-- Packet-layout residuals (trailing byte, byte order, tire temp units) — tracked in
+- Packet-layout residuals (trailing byte, byte order, tire temp units), tracked in
   [telemetry.md](telemetry.md).
 - **Suggested baseline tunes** from car stats for cars the user has no tune for
   (stretch): gather community rules of thumb / reverse-engineer existing tuning

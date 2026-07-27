@@ -129,14 +129,14 @@ export function drawCompare(
     ctx.fillRect(x0 + 1, y0, Math.max(1, x1 - x0 - 2), Math.max(1, y1 - y0));
   });
   ctx.fillStyle = pal.muted; ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  ctx.fillText("Δ per 250 m — bar in the color of the faster setup there", pad.l, pad.t + speedH + gapH / 2);
+  ctx.fillText("Δ per 250 m: bar in the color of the faster setup there", pad.l, pad.t + speedH + gapH / 2);
   ctx.textAlign = "right";
   ctx.fillText(`±${segMax.toFixed(2)}s`, pad.l - 8, bars0);
 
   // Cumulative gap: A is the flat reference line; the curve is B relative to it
   // (above the line = B ahead). Fill tinted by whoever is ahead.
   ctx.fillStyle = pal.muted; ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  ctx.fillText("cumulative gap — A flat, curve = B (above line: B ahead)", pad.l, cumTop - gapH / 2);
+  ctx.fillText("cumulative gap: A flat, curve = B (above line: B ahead)", pad.l, cumTop - gapH / 2);
   ctx.strokeStyle = A_COLOR; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(pad.l, cum0); ctx.lineTo(cssW - pad.r, cum0); ctx.stroke();
   ctx.fillStyle = pal.muted; ctx.textAlign = "right"; ctx.textBaseline = "middle";

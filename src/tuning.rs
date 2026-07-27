@@ -1,10 +1,10 @@
 //! The tuning session: the user-level unit of work. One session = one
-//! explicitly chosen car being tuned across stints — car facts telemetry can't
+//! explicitly chosen car being tuned across stints: car facts telemetry can't
 //! see (front weight %, compound, assists), plus the tune itself as absolute
 //! slider values, revision by revision (docs/design.md "tune input model").
 //!
 //! Saving a new revision diffs it against the previous one and produces the
-//! journal note automatically — the ideal workflow is "enter the new tune",
+//! journal note automatically; the ideal workflow is "enter the new tune",
 //! not "describe what changed". Stored as a human-editable text file
 //! (default tune-session.txt), same ethos as tune-journal.txt:
 //!
@@ -34,7 +34,7 @@ pub struct Revision {
 
 #[derive(Debug, Clone, Default)]
 pub struct TuningSession {
-    /// Explicitly chosen car ordinal — stints from other cars are outside the session.
+    /// Explicitly chosen car ordinal; stints from other cars are outside the session.
     pub car: Option<i32>,
     /// Car facts telemetry can't provide: front_weight_pct, weight, compound,
     /// abs/tcs/stability, plus anything else the user records. Free key set.
@@ -45,13 +45,13 @@ pub struct TuningSession {
 /// Tune fields the dashboard form offers, with the journal phrase used when the
 /// field changes. Order matches the in-game tuning menu.
 ///
-/// An EMPTY (absent) field means "not tunable on this car" — upgrade choices
+/// An EMPTY (absent) field means "not tunable on this car": upgrade choices
 /// decide what the game exposes (e.g. only rear diff fields filled = RWD diff;
 /// front+rear+center = AWD). Absence is never treated as a reset in diffs.
 ///
 /// VALUES ARE STORED IN CANONICAL IMPERIAL UNITS (what FH6 uses internally):
 /// psi, lb/in, in, lb. Unit preferences are a pure display/formatting layer in
-/// the dashboard — the file, the diffs, and the journal never change units.
+/// the dashboard; the file, the diffs, and the journal never change units.
 pub const FIELDS: &[(&str, &str)] = &[
     ("tire_pressure_f", "front tire pressure"),
     ("tire_pressure_r", "rear tire pressure"),
@@ -133,7 +133,7 @@ pub fn pinned(value: f32, (min, max): (f32, f32), softer: bool, key: &str) -> bo
     }
 }
 
-/// Coarse experiment area for a tune field — the granularity at which two
+/// Coarse experiment area for a tune field: the granularity at which two
 /// setups "differ by one experiment". Setup-state comparison (advise anchor)
 /// treats a stint whose setup differs from an ancestor's in exactly one area
 /// as a clean single-family A/B, however compound the step notes in between.
@@ -186,7 +186,7 @@ pub fn journal_path_for(car: Option<i32>, base: &str) -> String {
     }
 }
 
-/// `base` with `-<id>` spliced in before the extension — the shared naming
+/// `base` with `-<id>` spliced in before the extension: the shared naming
 /// scheme for per-car journals ("tune-journal-2793.txt") and archived session
 /// pairs ("tune-session-2793-20260724-163848.txt").
 pub fn suffixed_path(base: &str, id: &str) -> String {
@@ -216,7 +216,7 @@ pub fn canonical_unit(key: &str) -> Option<&'static str> {
     }
 }
 
-/// Format a canonical value in the session's display units (unit_* facts) —
+/// Format a canonical value in the session's display units (unit_* facts):
 /// "11591.4436" (lb/in) becomes "207.0 kgf/mm" for a kgfmm session. Fields
 /// without units (or unparseable values) pass through unchanged.
 pub fn display_value(key: &str, canon: &str, facts: &BTreeMap<String, String>) -> String {
@@ -249,7 +249,7 @@ pub fn display_value(key: &str, canon: &str, facts: &BTreeMap<String, String>) -
     format!("{:.dp$} {label}", v * k, dp = dp)
 }
 
-/// Smallest delta worth journaling, per field, in canonical units — half a
+/// Smallest delta worth journaling, per field, in canonical units: half a
 /// sensible display step. Guards against phantom diffs from unit-conversion
 /// round-trips (enter 700 lb/in, display 12.5 kgf/mm, re-save → 699.96).
 fn diff_epsilon(key: &str) -> f32 {
@@ -333,7 +333,7 @@ impl TuningSession {
 
 /// The journal note for a new revision: signed deltas for changed numeric
 /// fields ("front arb -2"), old→new for the rest. Multiple changes join with
-/// "; " — the advice parser attributes single-family steps only, which is the
+/// "; ". The advice parser attributes single-family steps only, which is the
 /// honest limit (a multi-parameter step's outcome can't be attributed anyway).
 /// Empty when nothing changed.
 pub fn diff_note(prev: &Revision, next: &Revision) -> String {
@@ -499,7 +499,7 @@ mod tests {
     }
 
     /// The unit round-trip case: 700 lb/in shown as 12.5 kgf/mm re-enters as
-    /// 699.96 lb/in — below the display step, so no phantom journal entry.
+    /// 699.96 lb/in, below the display step, so no phantom journal entry.
     #[test]
     fn sub_step_conversion_noise_is_not_a_change() {
         let a = rev("t1", &[("springs_f", "700")]);

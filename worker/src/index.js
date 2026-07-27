@@ -1,5 +1,5 @@
-// Telemetry bundle collector — the deployed twin of `tuners
-// receive`. A dumb authenticated PUT into R2 — never parses telemetry;
+// Telemetry bundle collector: the deployed twin of `tuners
+// receive`. A dumb authenticated PUT into R2. Never parses telemetry;
 // validation/quarantine happen in `tuners ingest` after the bucket is synced
 // down. The protocol (and every status code) is pinned by tests/receive.rs
 // in the main repo; keep the two implementations in lockstep.
@@ -10,18 +10,18 @@
 //   -> 200 {"ok":true,"stored":"<sender>/<name>-<hash16>.tar.zst","duplicate":bool}
 //
 // Auth is OPEN by default (strangers-scale opt-in): the app generates its own
-// 64-hex token at opt-in and the sender id is sha256(token)[..16] — stable
+// 64-hex token at opt-in and the sender id is sha256(token)[..16]: stable
 // pseudonymous identity without issuance. Misbehaving senders go in the
 // BLOCKLIST secret (JSON array of sender ids). Setting the TOKENS secret
 // (JSON {"<token>":"<sender-id>"}) flips the endpoint back to allowlist-only
-// mode — the abuse circuit breaker.
+// mode, the abuse circuit breaker.
 //
-// Cost protection (the wallet is the thing to defend — data hygiene is
+// Cost protection (the wallet is the thing to defend; data hygiene is
 // ingest's job): per-IP rate limit binding, per-sender rolling-24h byte cap,
 // and a GLOBAL bucket-size ceiling so hostile uploads can pin storage at a
 // known worst case instead of growing it. Checks run cheap-to-expensive so
 // rejected requests cost headers, not R2 operations. R2 itself verifies the
-// claimed hash (put option `sha256`) — the Worker never buffers a body.
+// claimed hash (put option `sha256`); the Worker never buffers a body.
 //
 // Bindings: BUNDLES (R2), IP_LIMIT (ratelimit), TOKENS / BLOCKLIST (secrets,
 // both optional), MAX_BUNDLE_MB / DAILY_CAP_MB / GLOBAL_CAP_GB (vars).
@@ -32,7 +32,7 @@ const RATE_LIMIT = 30;
 const RATE_PERIOD_MS = 60_000;
 
 // In-isolate sliding-window throttle: the enforced rate limit. Per-isolate,
-// so it's a bound on a single noisy client, not a global guarantee — the
+// so it's a bound on a single noisy client, not a global guarantee: the
 // hard cost bounds are the storage ceilings and the free plan's fail-closed
 // request cap, not this.
 const rlWindow = new Map();
@@ -70,7 +70,7 @@ async function senderId(token) {
     .slice(0, 16);
 }
 
-/// Bytes this sender stored in the last 24h, from object metadata — same
+/// Bytes this sender stored in the last 24h, from object metadata: same
 /// no-database cap derivation as the Rust receiver uses on the filesystem.
 async function recentBytes(bucket, sender) {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -88,7 +88,7 @@ async function recentBytes(bucket, sender) {
 
 // Whole-bucket size, cached per isolate for 60s (and bumped on accepted
 // uploads) so a bucket-full attack costs ~zero list operations per request.
-// Best-effort across isolates — set GLOBAL_CAP_GB with margin, it is a
+// Best-effort across isolates; set GLOBAL_CAP_GB with margin, it is a
 // storage ceiling, not an accounting ledger.
 let globalCache = null;
 
@@ -124,10 +124,10 @@ export default {
       // non-enforcing on this account 2026-07-25/26 (fresh namespace, 8x
       // sustained load, success:true throughout). Honored if it ever counts.
       const { success } = await env.IP_LIMIT.limit({ key: ip });
-      if (!success) return fail(429, "rate limited — slow down");
+      if (!success) return fail(429, "rate limited, slow down");
     }
     if (isolateThrottled(ip, RATE_LIMIT, RATE_PERIOD_MS)) {
-      return fail(429, "rate limited — slow down");
+      return fail(429, "rate limited, slow down");
     }
 
     const auth = request.headers.get("authorization") ?? "";
@@ -168,12 +168,12 @@ export default {
 
     const globalCap = parseFloat(env.GLOBAL_CAP_GB ?? "20") * 1024 * 1024 * 1024;
     if ((await globalBytes(env.BUNDLES)) + len > globalCap) {
-      return fail(507, "collection storage is full — uploads paused, retry tomorrow");
+      return fail(507, "collection storage is full; uploads paused, retry tomorrow");
     }
 
     const dailyCap = parseFloat(env.DAILY_CAP_MB ?? "512") * 1024 * 1024;
     if ((await recentBytes(env.BUNDLES, sender)) + len > dailyCap) {
-      return fail(429, "daily upload cap reached — the outbox can retry tomorrow");
+      return fail(429, "daily upload cap reached; the outbox can retry tomorrow");
     }
 
     // Hash-suffixed key: retries of the same content dedupe to one object,

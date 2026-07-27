@@ -30,19 +30,19 @@
     if (!st?.outcome) return null;
     const runN = app.advice!.steps.length;
     if ("error" in st.outcome) {
-      return { tone: "meh", text: `Run ${runN}: not comparable — ${st.outcome.error}` };
+      return { tone: "meh", text: `Run ${runN}: not comparable: ${st.outcome.error}` };
     }
     const d = Math.abs(st.outcome.deltaS ?? 0).toFixed(2);
     const word = st.outcome.word;
     if (word === "improved")
-      return { tone: "ok", text: `Run ${runN}: ${d}s faster than run ${runN - 1} — your last change worked` };
+      return { tone: "ok", text: `Run ${runN}: ${d}s faster than run ${runN - 1}. Your last change worked` };
     if (word === "WORSE")
-      return { tone: "bad", text: `Run ${runN}: ${d}s slower than run ${runN - 1} — your last change hurt` };
-    return { tone: "meh", text: `Run ${runN}: within noise of run ${runN - 1} (${d}s) — inconclusive` };
+      return { tone: "bad", text: `Run ${runN}: ${d}s slower than run ${runN - 1}. Your last change hurt` };
+    return { tone: "meh", text: `Run ${runN}: within noise of run ${runN - 1} (${d}s), inconclusive` };
   });
 
-  // Consequence display for compound runs: several families changed at once —
-  // say where the time moved and which change that points at. Directional,
+  // Consequence display for compound runs where several families changed at
+  // once: say where the time moved and which change that points at. Directional,
   // never absolute (effect vectors may separate these later).
   let consequence = $derived.by(() => {
     const st = lastStep;
@@ -101,7 +101,7 @@
     </div>
     <div style="margin-top:6px;color:var(--muted)">
       {app.session.revisions
-        ? `setup version ${app.session.revisions} — pick up where you left off`
+        ? `setup version ${app.session.revisions}; pick up where you left off`
         : "no setup on file yet"}
     </div>
     <div class="next-action">
@@ -113,22 +113,22 @@
   {:else if !app.session || app.session.car == null}
     <div class="hero">No project yet.</div>
     <div class="next-action">
-      Set up your car first — pick it and note what the telemetry can't see (weight, compound, assists).
+      Set up your car first: pick it and note what the telemetry can't see (weight, compound, assists).
       <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
         <Button go onclick={() => reopenOnboarding()}>first-time setup guide</Button>
         <Button onclick={() => goto("/projects")}>set up your project</Button>
       </div>
     </div>
   {:else if !app.session.latest}
-    <div class="hero">{app.session.carName || `car #${app.session.car}`} — no tune on file.</div>
+    <div class="hero">{app.session.carName || `car #${app.session.car}`}: no tune on file.</div>
     <div class="next-action">
-      Copy your tune in from the game's tuning screens. Advice starts from your baseline —
+      Copy your tune in from the game's tuning screens. Advice starts from your baseline;
       it can't reason about a setup it can't see.
       <div style="margin-top:10px"><Button go onclick={() => goto("/setup")}>enter your tune</Button></div>
     </div>
   {:else}
-    <!-- The dashboard: the whole loop on one screen — drive status, last
-         verdict, next action, project. Screens behind the cards carry the
+    <!-- The dashboard: the whole loop on one screen (drive status, last
+         verdict, next action, project). Screens behind the cards carry the
          depth. -->
     <div class="dash-grid">
       <div class="panel dash-card">
@@ -140,9 +140,9 @@
           {#if rec.mode === "recording"}
             <span style="color:var(--danger)">●</span> recording ({rec.packets.toLocaleString()} pkts)
           {:else if rec.mode === "waiting"}
-            {receiving ? "receiving — armed, waiting for an event (free roam isn't recorded)" : "armed — no telemetry"}
+            {receiving ? "receiving: armed, waiting for an event (free roam isn't recorded)" : "armed, no telemetry"}
           {:else}
-            view-only — another capture owns the telemetry port
+            view-only: another capture owns the telemetry port
           {/if}
         </div>
         <div style="display:flex;gap:clamp(20px,2vw,44px);align-items:center;flex-wrap:wrap;padding-top:clamp(10px,1vw,22px)">
@@ -155,7 +155,7 @@
               </div>
             {:else if receiving && rec.udpCarName}
               <div class="dash-big" style="font-size:24px">{rec.udpCarName}</div>
-              <div class="dash-line">in the garage — start an event to record</div>
+              <div class="dash-line">in the garage. Start an event to record</div>
             {:else}
               <div class="dash-line dim">waiting for the game</div>
             {/if}
@@ -171,7 +171,7 @@
         </div>
         <div>
           {#if driving}
-            <div class="dash-line">recording — the verdict lands here when the run ends</div>
+            <div class="dash-line">recording; the verdict lands here when the run ends</div>
           {:else if verdict}
             <div class="dash-verdict {verdict.tone}">{verdict.text}</div>
             {#if consequence}
@@ -184,7 +184,7 @@
             <div class="dash-line">analyzing your runs…</div>
           {:else}
             <div class="dash-line">
-              no verdict yet — finish a few laps of a race, rivals lap, or route event
+              no verdict yet. Finish a few laps of a race, rivals lap, or route event
             </div>
             {#if app.adviceError}
               <div class="dash-line" style="font-size:12px">analysis said: {app.adviceError}</div>
@@ -218,8 +218,8 @@
         <div style="width:100%">
         {#if app.pending}
           <div style="font-size:14px;color:var(--ink)">
-            <b>{app.pending.changes.length} change{app.pending.changes.length === 1 ? "" : "s"} pending</b>
-            — go drive, recording is armed.
+            <b>{app.pending.changes.length} change{app.pending.changes.length === 1 ? "" : "s"} pending</b>.
+            Go drive, recording is armed.
           </div>
           <div class="dash-line">next run tests: <b style="color:var(--ink)">{app.pending.note}</b></div>
           <div style="margin-top:6px;font-size:13px;color:var(--ink-2)">
@@ -230,11 +230,11 @@
             {/each}
           </div>
           <div class="dash-line">
-            changed your mind? <a href="/setup">edit the setup</a> — reverting a value before you drive nets it out.
+            changed your mind? <a href="/setup">edit the setup</a>; reverting a value before you drive nets it out.
           </div>
         {:else if primary}
           <div style="font-size:14px">
-            {#if primary.suggestion}<b>{primary.suggestion}</b> — {primary.advice}{:else}<b>{primary.area}</b>: {primary.advice}{/if}
+            {#if primary.suggestion}<b>{primary.suggestion}</b>: {primary.advice}{:else}<b>{primary.area}</b>: {primary.advice}{/if}
           </div>
           <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             {#if primary.apply.length && !isAccepted(primary.apply as [string, string][], app.session?.latest)}
@@ -242,7 +242,7 @@
                 {applying ? "applying…" : "apply"}
               </Button>
             {:else if isHold(primary)}
-              <span style="color:var(--ok);font-size:13px">nothing to change here — drive to confirm</span>
+              <span style="color:var(--ok);font-size:13px">nothing to change here; drive to confirm</span>
             {/if}
             <details style="display:inline-block">
               <summary style="cursor:pointer;color:var(--muted);font-size:13px">why?</summary>
@@ -253,11 +253,11 @@
           </div>
           {#if others.length}
             <div class="dash-alt">
-              alternatives — one change at a time:
+              alternatives, one change at a time:
               {#each others.slice(0, 3) as r (r.area + r.advice)}
                 <div style="padding:3px 0">
                   <span style="opacity:.7">[{r.confidence}]</span>
-                  {#if r.suggestion}<b style="color:var(--ink-2)">{r.suggestion}</b> — {/if}{r.advice}
+                  {#if r.suggestion}<b style="color:var(--ink-2)">{r.suggestion}</b>: {/if}{r.advice}
                 </div>
               {/each}
               {#if others.length > 3}
@@ -266,7 +266,7 @@
             </div>
           {/if}
         {:else}
-          <div class="dash-line">no suggestion yet — verdicts and advice build up as you drive</div>
+          <div class="dash-line">no suggestion yet. Verdicts and advice build up as you drive</div>
         {/if}
         </div>
       </div>
@@ -298,7 +298,7 @@
     </div>
     {#if viewOnly}
       <div class="banner" style="margin-top:14px">
-        view-only — another capture owns the telemetry port, so driving won't record here.
+        view-only: another capture owns the telemetry port, so driving won't record here.
         Close the external capture to arm recording.
       </div>
     {/if}

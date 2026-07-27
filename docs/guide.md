@@ -1,7 +1,7 @@
 # User guide
 
 Practical notes on capturing good data and reading the tool's output. (Seed of the
-eventual frontend help — keep this written for users, not developers.)
+eventual frontend help; keep this written for users, not developers.)
 
 ## Rewinds: how the tool treats them
 
@@ -11,14 +11,14 @@ rewinding.**
 When you rewind, FH6 restores the car's exact state and lets you re-drive. The tool
 reconstructs what you kept: driving you rewound over is erased, and the retry
 counts as part of the lap. A rewound lap therefore shows up as a normal lap with a
-real time — the tool doesn't care that the leaderboard marks it invalid, because it
+real time. The tool doesn't care that the leaderboard marks it invalid, because it
 evaluates your *setup*, not your leaderboard eligibility. Each detected rewind is
 noted in the `analyze` output.
 
 Two things worth knowing:
 
 - **Rewinds can slightly reduce comparison confidence.** A lap finished via
-  rewind-retries reflects polished execution — mildly faster than your natural
+  rewind-retries reflects polished execution, mildly faster than your natural
   pace. That optimism cancels out when both sessions of an A/B are driven with a
   similar rewind habit, but comparing a heavily-rewound session against a
   no-rewind session tilts the verdict. Keep the habit roughly consistent across
@@ -27,11 +27,11 @@ Two things worth knowing:
   fine to just keep driving: comparisons are built from spliced "ideal" laps that
   take each stretch of road from whichever lap drove it best, so a botched corner
   in one lap is simply outvoted by your clean laps. Rewind when *you* want a clean
-  run — not to protect the data.
+  run, not to protect the data.
 
 ## The tuning journal: advice that remembers
 
-Keep a `tune-journal.txt` — one session per line, chronological, with what you
+Keep a `tune-journal.txt`: one session per line, chronological, with what you
 changed since the previous session:
 
 ```
@@ -43,8 +43,8 @@ sessions/session-C.ftel | front arb softer
 `tuners advise` then shows the trajectory (each step's measured outcome) and gives
 recommendations that know what was already tried. This matters because behaviour
 alone can't find the optimum: a car's fastest setup usually still understeers a
-little, so "the car understeers → soften the front" is eventually wrong advice —
-the journal notices when a repeated direction *stops paying* and tells you to
+little, so "the car understeers → soften the front" is eventually wrong advice.
+The journal notices when a repeated direction *stops paying* and tells you to
 revert half instead. The tool never needs your actual slider values, only the
 direction of each change.
 
@@ -76,4 +76,4 @@ read yourself):
   same way is a stronger setup signal than the ideal total.
 - When A/B-testing a tune change, remember the driver-learning confounder: you get
   faster at a track regardless of the tune. For a verdict you trust, re-run tune A
-  afterwards (A-B-A) — if it matches the first A run, the delta was the tune.
+  afterwards (A-B-A); if it matches the first A run, the delta was the tune.

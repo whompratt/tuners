@@ -51,12 +51,12 @@
 
 {#if app.lapData}
   <div class="panel">
-    <h2>Speed by distance — flying laps</h2>
+    <h2>Speed by distance, flying laps</h2>
     <div class="legend-row">
       {#each app.lapData.laps as lap, i (lap.lap)}
         <span>
           <span class="chip" style="background:{SERIES[i % SERIES.length]}"></span>
-          lap {lap.lap} — <span class="num">{fmtLap(lap.time)}</span>{lap.standing
+          lap {lap.lap}: <span class="num">{fmtLap(lap.time)}</span>{lap.standing
             ? " (standing start)"
             : lap.time === best
               ? " (best)"
@@ -78,7 +78,7 @@
             </div>
           {/each}
           {#if tipRows.uncorroborated}
-            <div style="color:var(--muted);font-size:11px">single-lap bin — uncorroborated</div>
+            <div style="color:var(--muted);font-size:11px">single-lap bin, uncorroborated</div>
           {/if}
         {/if}
       </Tooltip>

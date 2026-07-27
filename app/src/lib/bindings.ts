@@ -38,7 +38,7 @@ export const commands = {
 	/**
 	 *  Best-guess LAN IP for the Data Out hookup screen: a connected UDP socket
 	 *  reveals which local address routes outward, without sending a packet.
-	 *  None when offline or loopback-only — the wizard then shows 127.0.0.1 alone.
+	 *  None when offline or loopback-only; the wizard then shows 127.0.0.1 alone.
 	 */
 	lanIp: () => __TAURI_INVOKE<string | null>("lan_ip"),
 };
@@ -88,7 +88,7 @@ export type AnchorView = {
 
 /**
  *  Command failure with enough structure for the frontend to distinguish
- *  "confirm and retry with force" (Conflict) from plain errors — the typed
+ *  "confirm and retry with force" (Conflict) from plain errors: the typed
  *  replacement for the HTTP status codes the dashboard used to branch on.
  */
 export type ApiError = {
@@ -124,7 +124,7 @@ export type CompareView = {
 /**
  *  One entry of the effect-field registry: stable key, display label, unit
  *  hint ("" = plain number, "frac" = 0..1 shown as %), and the library noise
- *  floor. The engine owns this list (`effects::FIELDS`) — the frontend must
+ *  floor. The engine owns this list (`effects::FIELDS`); the frontend must
  *  never hand-copy it.
  */
 export type EffectFieldView = {
@@ -140,7 +140,7 @@ export type ErrorKind = "badRequest" | "forbidden" | "notFound" | "conflict" | "
 export type FrameView = {
 	raceOn: boolean,
 	/**
-	 *  Car ordinal from the packet (0 in menus — everything but the timestamp
+	 *  Car ordinal from the packet (0 in menus, where everything but the timestamp
 	 *  is zeroed while race is off). Lets onboarding show "car detected".
 	 */
 	car: number,
@@ -181,7 +181,7 @@ export type LandscapeView = {
 	measurements: MeasurementView[],
 };
 
-/**  Per-lap distance-binned speed traces — the lap chart's data. */
+/**  Per-lap distance-binned speed traces: the lap chart's data. */
 export type LapView = {
 	lap: number,
 	time: number | null,
@@ -194,7 +194,7 @@ export type LapsView = {
 	bestTime: number | null,
 	/**
 	 *  Per-bin corroboration of the spliced ideal: true = a second lap
-	 *  reproduces this bin's speed within splice tolerance — the confidence
+	 *  reproduces this bin's speed within splice tolerance. Drives the confidence
 	 *  strip under the speed chart.
 	 */
 	corroborated: boolean[],
@@ -274,12 +274,12 @@ export type RecommendationView = {
 };
 
 export type RecorderView = {
-	/**  "recording" | "waiting" | "external" (port busy or disabled — view-only). */
+	/**  "recording" | "waiting" | "external" (port busy or disabled: view-only). */
 	mode: string,
 	file: string | null,
 	packets: number,
 	/**
-	 *  Milliseconds since ANY datagram hit the socket — menu packets count,
+	 *  Milliseconds since ANY datagram hit the socket; menu packets count,
 	 *  though they are never recorded. The onboarding wiring check: fresh
 	 *  here + no frame = hooked up, just not driving yet. None in external
 	 *  mode (another capture owns the socket) or before the first packet.
@@ -299,7 +299,7 @@ export type RowAnchorView = {
 };
 
 /**
- *  A recording closed (the run auto-cut or the recorder stopped) — refresh
+ *  A recording closed (the run auto-cut or the recorder stopped): refresh
  *  verdicts.
  */
 export type RunFinishedEvent = {
@@ -307,7 +307,7 @@ export type RunFinishedEvent = {
 };
 
 /**
- *  The newest recording rotated (covers external capture too) — refresh run
+ *  The newest recording rotated (covers external capture too): refresh run
  *  lists.
  */
 export type RunsChangedEvent = {

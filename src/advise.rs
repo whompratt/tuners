@@ -2,7 +2,7 @@
 //! (`/api/advise`): journal trajectory with measured step outcomes, blind
 //! recommendations reconciled with the last step, and current-tune enrichment.
 //! With no journal yet (a session's first stint), falls back to blind
-//! recommendations on the latest stint of the session car — the journal
+//! recommendations on the latest stint of the session car; the journal
 //! starts with the first tune change.
 
 use crate::analysis::{self, effects, journal};
@@ -11,7 +11,7 @@ use std::path::Path;
 
 /// A changed family on a step, with the road its fingerprint is judged on
 /// (attribution's channel: gearing = straights, brakes = entry, everything
-/// else the corner total) — feeds the frontend's consequence sentence
+/// else the corner total). Feeds the frontend's consequence sentence
 /// without prose parsing.
 pub struct StepFamily {
     pub area: &'static str,
@@ -61,7 +61,7 @@ pub struct AbaView {
     /// Ideal-lap cost of the excursion with drift cancelled (positive = the
     /// excursion was slower).
     pub effect_s: f32,
-    /// Per-stint drift over the pair — the noise floor for outcome margins.
+    /// Per-stint drift over the pair: the noise floor for outcome margins.
     pub drift_s: f32,
     /// Drift-corrected behavioural movement of the excursion, per effect
     /// field ((exc − rev)/2).
@@ -106,7 +106,7 @@ pub struct MeasurementView {
     pub weak: bool,
     pub direct: bool,
     /// Behavioural movement of the underlying stint pair. For an
-    /// attributed compound clause this is the WHOLE pair's movement — the
+    /// attributed compound clause this is the WHOLE pair's movement; the
     /// vector belongs to the pair, siblings share it.
     pub effects: effects::Effects,
 }
@@ -146,7 +146,7 @@ pub struct AdviseView {
     pub missing: Vec<String>,
     /// Per-family measured landscapes (see LandscapeView).
     pub landscapes: Vec<LandscapeView>,
-    /// Largest |ideal delta| measured between SAME-setup stints — the
+    /// Largest |ideal delta| measured between SAME-setup stints: the
     /// campaign's own noise floor. (count of same-setup pairs, floor s).
     pub drift_floor: Option<(usize, f32)>,
     /// Per-field campaign noise floor: largest |effect delta| across the same
@@ -161,7 +161,7 @@ pub struct AdviseView {
 }
 
 /// A composite ideal dramatically faster than the stint's own best flying
-/// lap is an UNCORROBORATED splice — rewinds, drafting in a race, or route
+/// lap is an UNCORROBORATED splice: rewinds, drafting in a race, or route
 /// anomalies stitched segments that never co-occurred in one lap. Such a
 /// stint's comparisons cannot be trusted.
 fn splice_trusted(p: &analysis::profile::StintProfile) -> bool {
@@ -214,7 +214,7 @@ fn nodes_summary(nodes: &[(f32, f32, usize)]) -> String {
         .join(", ")
 }
 
-/// Metrics of a stint's longest driving segment — the basis for both the
+/// Metrics of a stint's longest driving segment: the basis for both the
 /// step balance display and the plan-011 effect vector.
 fn stint_overall_metrics(stint: &analysis::Stint) -> Option<analysis::metrics::StintMetrics> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
@@ -282,35 +282,35 @@ fn exhausted_flip(
     let (partner, text): (F, &str) = match (family, softer) {
         (F::FrontRoll, true) => (
             F::RearRoll,
-            "front roll sliders are at minimum — stiffen the rear instead (rear anti-roll bar first)",
+            "front roll sliders are at minimum; stiffen the rear instead (rear anti-roll bar first)",
         ),
         (F::FrontRoll, false) => (
             F::RearRoll,
-            "front roll sliders are at maximum — soften the rear instead",
+            "front roll sliders are at maximum; soften the rear instead",
         ),
         (F::RearRoll, true) => (
             F::FrontRoll,
-            "rear roll sliders are at minimum — stiffen the front instead (front anti-roll bar first)",
+            "rear roll sliders are at minimum; stiffen the front instead (front anti-roll bar first)",
         ),
         (F::RearRoll, false) => (
             F::FrontRoll,
-            "rear roll sliders are at maximum — soften the front instead",
+            "rear roll sliders are at maximum; soften the front instead",
         ),
         (F::FrontAero, false) => (
             F::RearAero,
-            "front aero is at maximum — reduce rear aero instead",
+            "front aero is at maximum; reduce rear aero instead",
         ),
         (F::FrontAero, true) => (
             F::RearAero,
-            "front aero is at minimum — add rear aero instead",
+            "front aero is at minimum; add rear aero instead",
         ),
         (F::RearAero, false) => (
             F::FrontAero,
-            "rear aero is at maximum — reduce front aero instead",
+            "rear aero is at maximum; reduce front aero instead",
         ),
         (F::RearAero, true) => (
             F::FrontAero,
-            "rear aero is at minimum — add front aero instead",
+            "rear aero is at minimum; add front aero instead",
         ),
         _ => return None,
     };
@@ -387,7 +387,7 @@ fn enrich_with_tune(
                 r.apply.clear();
             } else {
                 r.evidence.push(
-                    "every slider on this channel is already at the advised bound — \
+                    "every slider on this channel is already at the advised bound: \
                      direction exhausted"
                         .into(),
                 );
@@ -395,7 +395,7 @@ fn enrich_with_tune(
             }
         } else if primary_pinned && keys.len() > 1 {
             r.evidence.push(format!(
-                "{} is at its bound — work with {}",
+                "{} is at its bound; work with {}",
                 crate::tuning::field_phrase(keys[0]),
                 keys[1..]
                     .iter()
@@ -455,7 +455,7 @@ fn quad_fit(pts: &[(f32, f32)]) -> Option<(f64, f64, f64)> {
 }
 
 /// Where to probe next to extend a mapped landscape: past the best tried
-/// value, away from the worse side, by a quarter of the mapped span —
+/// value, away from the worse side, by a quarter of the mapped span,
 /// bracketing the optimum from the good side. None when the landscape is
 /// flat vs the noise floor, the best value is interior (the curve fit owns
 /// that case), or the slider's range allows no new point.
@@ -478,7 +478,7 @@ fn probe_value(nodes: &[(f32, f32, usize)], lim: Option<(f32, f32)>) -> Option<f
     let mut v = best.0 + dir * (last.0 - first.0) * 0.25;
     // A small mapped span must still ask for a NEW point: after a single
     // small improving step, a quarter-span probe rounds back onto the best
-    // tried value and the guard below would cancel the ask — step one
+    // tried value and the guard below would cancel the ask, so step one
     // display unit outward instead.
     if ((v * 10.0).round() - (best.0 * 10.0).round()).abs() < 0.5 {
         v = best.0 + dir * 0.1;
@@ -541,7 +541,7 @@ fn campaign_bound(journal_text: &str) -> CampaignBound {
 }
 
 /// A journaled stint whose file was deleted (dashboard delete) is skipped,
-/// but its note describes setup changes that really happened — it merges into
+/// but its note describes setup changes that really happened, so it merges into
 /// the NEXT entry's note so cumulative slider positions stay honest (that
 /// step honestly becomes a compound). A trailing deleted entry just drops:
 /// its changes have no driven stint. Returns (kept entries, missing paths).
@@ -603,11 +603,11 @@ pub fn advise(
 
     // Stints of the session car recorded AFTER the last journal entry join
     // the trajectory as implicit no-change steps. Journal lines are written
-    // on tune saves, so a stint driven without touching anything — the
-    // same-setup repeat that measures pure drift — would otherwise be
+    // on tune saves, so a stint driven without touching anything (the
+    // same-setup repeat that measures pure drift) would otherwise be
     // invisible to advice. Campaign boundaries bound the scan: a parked
     // (archived) journal accrues nothing, and a resumed one only takes
-    // stints newer than the resume — stints driven in ANOTHER campaign of
+    // stints newer than the resume; stints driven in ANOTHER campaign of
     // the same car while this one was parked must not leak in.
     let bound = campaign_bound(&text);
     if !matches!(bound, CampaignBound::Closed)
@@ -645,7 +645,7 @@ pub fn advise(
     if entries.is_empty() {
         // No journal yet: blind advice on the session car's latest stint.
         let path = latest_stint_for_car(stints_dir, session.car)
-            .ok_or("no stints recorded yet — drive first")?;
+            .ok_or("no stints recorded yet; drive first")?;
         let stint = analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
         let mut recs = blind_recommendations(&stint, &path, &rule_context(&session))?;
         let current_tune = enrich_with_tune(&mut recs, &session);
@@ -686,7 +686,7 @@ pub fn advise(
     (entries, missing) = drop_missing_entries(entries, |p| Path::new(p).exists());
     if entries.is_empty() {
         return Err(format!(
-            "{journal_path}: every journaled stint recording is missing — the files \
+            "{journal_path}: every journaled stint recording is missing; the files \
              were deleted"
         ));
     }
@@ -708,7 +708,7 @@ pub fn advise(
     }
     if loaded.is_empty() {
         return Err(format!(
-            "{}: no stints with completed laps in the journal yet — drive a lap first",
+            "{}: no stints with completed laps in the journal yet; drive a lap first",
             journal_path
         ));
     }
@@ -738,7 +738,7 @@ pub fn advise(
 
     // "suspect" in a journal note is the driver's own verdict on that stint
     // (unfamiliar car, chaotic drive, traffic): every measurement touching it
-    // is treated as weak — kept visible, never trusted alone.
+    // is treated as weak: kept visible, never trusted alone.
     let suspect: Vec<bool> = loaded
         .iter()
         .map(|(e, _, _)| {
@@ -825,7 +825,7 @@ pub fn advise(
     }
 
     // Setup state per step: the latest tune revision saved before the stint
-    // began. Only bound when the stint really is the session car's — an
+    // began. Only bound when the stint really is the session car's, since an
     // explicitly passed foreign journal must not inherit this car's tunes.
     let setups: Vec<Option<&crate::tuning::Revision>> = loaded
         .iter()
@@ -950,7 +950,7 @@ pub fn advise(
 
     // Trailing excursion-and-revert (A-B-A): the pair's deltas cancel drift.
     // effect = (d_exc − d_rev)/2, drift = (d_exc + d_rev)/2. Requires 2+
-    // flying laps on all three stints involved — single-lap ideals are the
+    // flying laps on all three stints involved; single-lap ideals are the
     // same trap this decomposition exists to avoid.
     let n = loaded.len();
     let aba = (n >= 3)
@@ -976,7 +976,7 @@ pub fn advise(
         .flatten();
 
     // ------ campaign measurements: every stint pair is evidence ------
-    // DIRECT: ordered pairs whose setups differ in exactly one area — a clean
+    // DIRECT: ordered pairs whose setups differ in exactly one area, a clean
     // A/B for that family regardless of how many steps lie between. NOTE-
     // BASED: adjacent steps via their journal note; single-family notes
     // measure on the total delta, compound notes get channel-attributed per
@@ -992,7 +992,7 @@ pub fn advise(
         i: usize,
         j: usize,
         direct: bool,
-        /// The single slider the measurement moved, when identifiable —
+        /// The single slider the measurement moved, when identifiable;
         /// lets advice resolve concrete target values.
         key: Option<String>,
         /// (entry, exit, straights) split of the pair's delta.
@@ -1090,7 +1090,7 @@ pub fn advise(
             let evidence = format!(
                 "outcome attributed from a compound step (\"{note}\"): corner entry \
                  {:+.2}s / exit {:+.2}s / straights {:+.2}s of {delta:+.2}s total \
-                 ({:.0}% of lap time is cornering) — inferred from where the time \
+                 ({:.0}% of lap time is cornering); inferred from where the time \
                  moved, not measured in isolation",
                 attr.entry_delta_s,
                 attr.exit_delta_s,
@@ -1179,7 +1179,7 @@ pub fn advise(
         }
     }
     // History-only reverts stay scoped to the LAST stint's own deviation from
-    // its anchor — a past experiment already reverted needs no advice. The
+    // its anchor: a past experiment already reverted needs no advice. The
     // suggestion is the anchor's own values: reverting fully means returning
     // to a measured state, not arithmetic.
     if let Some((change, outcome, note, weak)) = &anchor_change
@@ -1242,7 +1242,7 @@ pub fn advise(
     // Chained deltas from non-weak measurements build a cumulative curve over
     // a slider's tried values ("decaying improvement" reads as a curve shape,
     // not a single verdict). With 3+ points, meaningful spread, and an
-    // interior minimum, the fit's vertex becomes the suggestion —
+    // interior minimum, the fit's vertex becomes the suggestion:
     // interpolation over the mapped landscape instead of last-step bisection.
     // Every family's landscape is kept on the view for the history panel.
     let mut curve_fams: Vec<journal::Family> = Vec::new();
@@ -1345,7 +1345,7 @@ pub fn advise(
                 let vertex = (vertex * 10.0).round() / 10.0;
                 vertex_out = Some(vertex);
                 let phrase = crate::tuning::field_phrase(key);
-                // Already there? Then the ask is NOTHING — repeats tighten
+                // Already there? Then the ask is NOTHING; repeats tighten
                 // the estimate, but no change is being requested.
                 let at_optimum = setups
                     .last()
@@ -1398,7 +1398,7 @@ pub fn advise(
                         r.suggestion = Some(format!("{phrase}: hold {disp}"));
                         r.advice = format!(
                             "no change asked: the current setting is the \
-                             estimated optimum (bracketed — further narrowing \
+                             estimated optimum (bracketed; further narrowing \
                              is expected to gain less than the ±{floor:.2}s \
                              noise floor, which is not proof of convergence). \
                              Any stint driven here tightens the estimate for \
@@ -1412,7 +1412,7 @@ pub fn advise(
                         r.advice = match gain {
                             Some(g) if g < floor => format!(
                                 "probe the estimated optimum: the fit expects \
-                                 only {g:.2}s here — within the ±{floor:.2}s \
+                                 only {g:.2}s here, within the ±{floor:.2}s \
                                  noise floor, so holding the current value is \
                                  equally defensible and a stint at {vertex} \
                                  mainly tightens the map. Everything else \
@@ -1467,7 +1467,7 @@ pub fn advise(
                 r.advice = format!(
                     "return to the best measured setting: {phrase} {} beat the \
                      current value by {gap:.2}s. An interior optimum may exist \
-                     between the two — a midpoint stint is the exploratory \
+                     between the two; a midpoint stint is the exploratory \
                      alternative",
                     best.0,
                 );
@@ -1485,7 +1485,7 @@ pub fn advise(
             }
         }
 
-        // No interior optimum mapped: the workflow's data ask — one stint at
+        // No interior optimum mapped: the workflow's data ask. One stint at
         // a specific value past the good edge extends the landscape where it
         // matters. Not an optimization claim; explicitly a probe.
         if vertex_out.is_none()
@@ -1508,7 +1508,7 @@ pub fn advise(
                 advice: format!(
                     "probe: one stint here extends the map where it still \
                      improves. Set {phrase} to {v} with everything else \
-                     unchanged — probes are one at a time, two unexplored \
+                     unchanged; probes are one at a time, two unexplored \
                      changes in one stint cannot be separated"
                 ),
                 evidence: vec![format!(
@@ -1554,7 +1554,7 @@ pub fn advise(
                 r.evidence.push(format!(
                     "provisional: the deciding margin ({margin:.2}s) is under the \
                      measured same-setup drift (±{floor:.2}s over {pairs} repeat \
-                     pair{}) — corroborate before trusting it",
+                     pair{}); corroborate before trusting it",
                     if pairs == 1 { "" } else { "s" },
                 ));
                 if r.confidence == analysis::recommend::Confidence::High {
@@ -1567,7 +1567,7 @@ pub fn advise(
     // History-only recs arrive unsorted; keep most-confident-first for display.
     recs.sort_by_key(|r| std::cmp::Reverse(r.confidence));
     // Cite tune absolutes only when the journal's stints are the session
-    // car's — an explicitly passed foreign journal must not quote this car's
+    // car's; an explicitly passed foreign journal must not quote this car's
     // sliders as if they were its own.
     let current_tune = if car_of(last_stint) == session.car {
         enrich_with_tune(&mut recs, &session)
@@ -1578,8 +1578,8 @@ pub fn advise(
     // The suggestion headline: the concrete setting to try. With the last
     // stint's setup on file, an ABSOLUTE value ("front arb: 17.5"), clamped
     // to the slider's range; blind, the DELTA to apply ("front arb: +0.5").
-    // Values base on the last stint's setup — the state the advice was
-    // judged against — never a saved-but-undriven revision.
+    // Values base on the last stint's setup (the state the advice was
+    // judged against), never a saved-but-undriven revision.
     let round = |v: f32| (v * 1e4).round() / 1e4;
     let base = setups.last().copied().flatten();
     for r in recs.iter_mut() {
@@ -1758,7 +1758,7 @@ mod tests {
     }
 
     /// The user's worked example: front ARB 10..16 with lap times showing
-    /// decaying improvement then a slowdown — the fitted optimum sits between
+    /// decaying improvement then a slowdown: the fitted optimum sits between
     /// 14 and 15, not at the best tried value or a bisection of the last step.
     #[test]
     fn quad_fit_finds_the_interior_optimum() {
@@ -1809,7 +1809,7 @@ mod tests {
         let nodes = [(17.0, -0.16, 1), (18.0, -0.49, 1), (20.7, 0.0, 1)];
         assert_eq!(probe_value(&nodes, None), None);
         // One small improving step (the Ferrari final-drive case): a quarter
-        // span rounds onto the best value — probe one display step out instead.
+        // span rounds onto the best value, so probe one display step out instead.
         let nodes = [(3.95, 0.0, 1), (4.1, -0.27, 1)];
         assert_eq!(probe_value(&nodes, None), Some(4.2));
         // Flat landscape: nothing worth a stint.

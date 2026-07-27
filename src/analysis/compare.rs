@@ -1,5 +1,5 @@
 //! A/B session comparison over distance-binned profiles: which tune is faster,
-//! where on the road, and what changed in behaviour — on clean bins only.
+//! where on the road, and what changed in behaviour (clean bins only).
 
 use super::profile::{BIN_METERS, StintProfile};
 use crate::util::format_lap_time;
@@ -11,7 +11,7 @@ const SEGMENT_BINS: usize = 25;
 const ROUTE_LENGTH_TOLERANCE: f32 = 0.02;
 /// Route lengths can coincide across different tracks (DistanceTraveled is route
 /// units, and two routes measured ~5.95km while one drove in 50s and the other in
-/// 92s) — lap times are the tiebreaker. No tune change moves lap time this much.
+/// 92s), so lap times are the tiebreaker. No tune change moves lap time this much.
 const LAP_TIME_RATIO_LIMIT: f32 = 1.30;
 /// Segment deltas smaller than this aren't worth listing (seconds).
 const SEGMENT_NOISE_S: f32 = 0.05;
@@ -22,7 +22,7 @@ pub struct Comparison {
     pub bin_delta_s: Vec<f32>,
     pub ideal_delta_s: f32,
     pub best_lap_delta_s: f32,
-    /// Sessions were driven in different cars — a car comparison, not a tune A/B.
+    /// Sessions were driven in different cars: a car comparison, not a tune A/B.
     pub car_mismatch: bool,
 }
 
@@ -40,7 +40,7 @@ pub fn compare(a: &StintProfile, b: &StintProfile) -> Result<Comparison, String>
     }
     if a.standing_start_only != b.standing_start_only {
         return Err(
-            "one session has flying laps and the other only standing starts — \
+            "one session has flying laps and the other only standing starts; \
              lap times are not comparable"
                 .into(),
         );
@@ -100,7 +100,7 @@ pub fn render(a: &StintProfile, b: &StintProfile, cmp: &Comparison) -> String {
     if a.laps.len() != b.laps.len() {
         writeln!(
             out,
-            "note: unequal lap counts — the session with more laps gives its ideal \
+            "note: unequal lap counts. The session with more laps gives its ideal \
              more material, biasing the ideal comparison in its favor",
         )
         .unwrap();
@@ -108,7 +108,7 @@ pub fn render(a: &StintProfile, b: &StintProfile, cmp: &Comparison) -> String {
     if cmp.car_mismatch {
         writeln!(
             out,
-            "note: different cars (ordinal {} vs {}) — this compares cars, not tunes",
+            "note: different cars (ordinal {} vs {}): this compares cars, not tunes",
             a.car_ordinal, b.car_ordinal,
         )
         .unwrap();

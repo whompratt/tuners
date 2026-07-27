@@ -73,7 +73,7 @@
     for (const [k, , type] of FACT_FIELDS) {
       facts.push([k, type === "check" ? (ssChecks[k] ? "on" : "off") : toCanon(k, ssFacts[k] ?? "")]);
     }
-    // bind:value on the number input stores a number — the IPC arg is a string.
+    // bind:value on the number input stores a number, but the IPC arg is a string.
     const r = await commands.updateSession(false, String(ssCarManual || ssCar), facts);
     if (r.status === "error") {
       await alertDialog("Save failed", errMsg(r.error));
@@ -167,15 +167,15 @@
     <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">
         {active && s
-          ? `Project — ${s.facts.name ? `${s.facts.name} · ` : ""}${s.carName || `car #${s.car}`}`
+          ? `Project: ${s.facts.name ? `${s.facts.name} · ` : ""}${s.carName || `car #${s.car}`}`
           : "Project"}
       </h2>
       <span style="color:var(--muted);font-size:13px">
         {active && s
           ? s.revisions
             ? `setup version ${s.revisions}`
-            : "no setup on file yet — enter it in Setup"
-          : "none active — a project is one build of one car"}
+            : "no setup on file yet; enter it in Setup"
+          : "none active (a project is one build of one car)"}
       </span>
       <span style="flex:1"></span>
       <Button onclick={openForm}>{active ? "project settings" : "set up project"}</Button>
@@ -191,7 +191,7 @@
     {#if formOpen}
       <form style="margin-top:12px" onsubmit={(e) => e.preventDefault()}>
         <div style="font-size:13px;color:var(--muted);margin-bottom:8px">
-          Pick the car this project is about — runs from other cars are still recorded, but stay outside the project.
+          Pick the car this project is about. Runs from other cars are still recorded, but stay outside the project.
           Start a NEW project whenever the car itself changes (upgrades/drivetrain), not just the setup.
         </div>
         <div class="form-grid">
@@ -201,7 +201,7 @@
           </div>
           <div>
             <label for="ss-description">description</label>
-            <input id="ss-description" type="text" placeholder="optional — notes to find this project later" bind:value={ssDescription} />
+            <input id="ss-description" type="text" placeholder="optional notes to find this project later" bind:value={ssDescription} />
           </div>
           <div>
             <label for="ss-car">car (from recorded runs)</label>
@@ -216,7 +216,7 @@
             </select>
             {#if !cars.size}
               <div style="font-size:12px;color:var(--muted);margin-top:2px">
-                this list fills from recordings — drive once with the app open, or enter the ordinal manually
+                this list fills from recordings: drive once with the app open, or enter the ordinal manually
               </div>
             {/if}
           </div>
@@ -268,7 +268,7 @@
       <Button go onclick={newProject}>new project</Button>
     </div>
     <div style="font-size:13px;color:var(--muted);margin-bottom:6px">
-      archiving keeps the whole project (setup history + notes) — resume it any time
+      archiving keeps the whole project (setup history + notes); resume it any time
     </div>
     <div style="font-size:13px">
       {#if listError}

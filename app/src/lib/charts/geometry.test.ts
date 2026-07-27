@@ -1,4 +1,4 @@
-// Chart geometry suite — possible at all because layout is now pure
+// Chart geometry suite, possible at all because layout is now pure
 // (geometry/sizing split).
 
 import { describe, expect, it } from "vitest";

@@ -1,6 +1,6 @@
 //! End-to-end tests for the bundle receiver: a real listener on an
 //! ephemeral port, raw HTTP over TcpStream. The same requests must behave
-//! identically against the Cloudflare Worker (worker/) — this is the protocol's
+//! identically against the Cloudflare Worker (worker/); this is the protocol's
 //! reference implementation.
 
 use std::io::{Read, Write};
@@ -54,8 +54,8 @@ fn start(max_bundle_bytes: u64, daily_cap_bytes: u64, tag: &str) -> Server {
 }
 
 /// PUT with explicit content-length so tests can lie about it (413 path).
-/// Early rejects race the body write against the server's close — a TCP RST
-/// can eat the response — so an empty read retries on a fresh connection.
+/// Early rejects race the body write against the server's close (a TCP RST
+/// can eat the response), so an empty read retries on a fresh connection.
 fn put_raw(
     addr: SocketAddr,
     name: &str,
@@ -222,7 +222,7 @@ fn size_and_daily_caps() {
         b"0123456789ABCDEF",
     );
     assert_eq!(status, 200);
-    // 32 of 40 daily bytes used — the next 16 must be refused.
+    // 32 of 40 daily bytes used; the next 16 must be refused.
     let (status, resp) = put(
         srv.addr,
         "three.tar.zst",
@@ -301,7 +301,7 @@ fn open_mode_blocklist() {
 #[test]
 fn global_storage_ceiling() {
     // 40-byte global cap: two 16-byte bundles from DIFFERENT senders fit,
-    // a third from a fresh sender is refused — per-sender caps alone can't
+    // a third from a fresh sender is refused; per-sender caps alone can't
     // bound cost when tokens are free to mint.
     let srv = start_mode(16, 512 << 20, 40, false, "", "global");
     let (status, _) = put(

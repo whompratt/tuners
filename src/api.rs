@@ -1,5 +1,5 @@
 //! Typed app-facing API: the view structs and operations behind the desktop
-//! app's commands. Transport-agnostic — serialization is
+//! app's commands. Transport-agnostic: serialization is
 //! serde, and every builder is a pure function over engine state, so commands
 //! and tests share the exact same surface. Wire names stay camelCase to match
 //! the dashboard's existing JSON contract.
@@ -13,7 +13,7 @@ use specta::Type;
 use crate::analysis::effects::Effects;
 
 /// Command failure with enough structure for the frontend to distinguish
-/// "confirm and retry with force" (Conflict) from plain errors — the typed
+/// "confirm and retry with force" (Conflict) from plain errors: the typed
 /// replacement for the HTTP status codes the dashboard used to branch on.
 #[derive(Serialize, Type, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -65,7 +65,7 @@ impl std::fmt::Display for ApiError {
     }
 }
 
-/// Effect vector on the wire: sparse map keyed by `effects::FIELDS` keys —
+/// Effect vector on the wire: sparse map keyed by `effects::FIELDS` keys;
 /// absent fields are real absences, never zeroes.
 fn effects_map(fx: &Effects) -> BTreeMap<String, f32> {
     fx.iter().map(|(k, v)| (k.to_string(), *v)).collect()
@@ -78,7 +78,7 @@ fn effects_map(fx: &Effects) -> BTreeMap<String, f32> {
 #[serde(rename_all = "camelCase")]
 pub struct FrameView {
     pub race_on: bool,
-    /// Car ordinal from the packet (0 in menus — everything but the timestamp
+    /// Car ordinal from the packet (0 in menus, where everything but the timestamp
     /// is zeroed while race is off). Lets onboarding show "car detected".
     pub car: i32,
     pub car_name: Option<String>,
@@ -97,11 +97,11 @@ pub struct FrameView {
 #[derive(Serialize, Type, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RecorderView {
-    /// "recording" | "waiting" | "external" (port busy or disabled — view-only).
+    /// "recording" | "waiting" | "external" (port busy or disabled: view-only).
     pub mode: String,
     pub file: Option<String>,
     pub packets: u32,
-    /// Milliseconds since ANY datagram hit the socket — menu packets count,
+    /// Milliseconds since ANY datagram hit the socket; menu packets count,
     /// though they are never recorded. The onboarding wiring check: fresh
     /// here + no frame = hooked up, just not driving yet. None in external
     /// mode (another capture owns the socket) or before the first packet.
@@ -207,7 +207,7 @@ pub fn quality_view(q: Option<&crate::live::Quality>) -> Option<QualityView> {
 
 /// One entry of the effect-field registry: stable key, display label, unit
 /// hint ("" = plain number, "frac" = 0..1 shown as %), and the library noise
-/// floor. The engine owns this list (`effects::FIELDS`) — the frontend must
+/// floor. The engine owns this list (`effects::FIELDS`); the frontend must
 /// never hand-copy it.
 #[derive(Serialize, Type, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -415,7 +415,7 @@ pub fn update_session(
         // Switching cars = switching SESSIONS: archive the active session to
         // its per-car file (tune-session-<ordinal>.txt, same scheme as
         // journals) and resume the new car's archived session if one exists.
-        // Nothing is lost — switching back restores the whole campaign.
+        // Nothing is lost; switching back restores the whole campaign.
         let base = path.to_string_lossy();
         let archive = crate::tuning::journal_path_for(current.car, &base);
         let _ = current.save(archive.as_ref());
@@ -445,7 +445,7 @@ pub fn update_session(
 }
 
 /// A session switch is a hard recording boundary: cut the stint and drop any
-/// pending tune-note chain — the chain belonged to the outgoing session.
+/// pending tune-note chain (the chain belonged to the outgoing session).
 pub fn split_and_drop_pending(recorder: &crate::record::SharedRecorder) {
     let mut r = recorder.lock().unwrap();
     r.split_requested = true;
@@ -476,7 +476,7 @@ fn now_secs() -> u64 {
 
 /// Park the active session pair under a stamped id: the session file is copied
 /// to its archive name and the car's live journal moves with it. Ids are
-/// "<ordinal>-<stamp>" — the legacy car-switch scheme's plain "<ordinal>" ids
+/// "<ordinal>-<stamp>"; the legacy car-switch scheme's plain "<ordinal>" ids
 /// coexist and resume the same way.
 fn archive_active(
     s: &crate::tuning::TuningSession,
@@ -489,7 +489,7 @@ fn archive_active(
         crate::util::utc_stamp(now_secs()),
     );
     // Same car archived twice within a second (quick new+resume clicks) must
-    // not overwrite the first archive — bump a counter until the id is free.
+    // not overwrite the first archive: bump a counter until the id is free.
     let mut id = base_id.clone();
     let mut n = 2;
     while Path::new(&crate::tuning::suffixed_path(session_file, &id)).exists()
@@ -503,7 +503,7 @@ fn archive_active(
     if Path::new(&live).exists() {
         let parked = crate::tuning::suffixed_path(journal_base, &id);
         std::fs::rename(&live, &parked)?;
-        // Boundary marker (a comment — the entry parser skips it): a parked
+        // Boundary marker (a comment; the entry parser skips it): a parked
         // campaign accrues no implicit trajectory steps while other campaigns
         // drive the same car (advise::campaign_bound).
         append_line(
@@ -521,8 +521,8 @@ fn append_line(path: &str, line: &str) -> std::io::Result<()> {
 }
 
 /// Start a fresh session (e.g. after an upgrade rebuild): the active pair is
-/// archived and a blank session — carrying only the unit display prefs, plus
-/// any posted name/description/car — becomes active. The first tune save
+/// archived and a blank session (carrying only the unit display prefs, plus
+/// any posted name/description/car) becomes active. The first tune save
 /// seeds the new journal's baseline against the next stint.
 pub fn new_session(
     car: Option<String>,
@@ -554,7 +554,7 @@ pub fn new_session(
 }
 
 /// Swap an archived session back in: the active pair is archived first, then
-/// the chosen pair becomes active (files move, nothing is copied — an
+/// the chosen pair becomes active (files move, nothing is copied; an
 /// archived session has exactly one home).
 pub fn resume_session(
     id: &str,
@@ -583,7 +583,7 @@ pub fn resume_session(
     let frees_target = !session_is_blank(&current) && current.car == restored.car;
     if src != target && Path::new(&target).exists() && !frees_target {
         return Err(ApiError::conflict(format!(
-            "{target} already exists — another session for this car is parked; resume it first"
+            "{target} already exists: another session for this car is parked; resume it first"
         )));
     }
     if !session_is_blank(&current) {
@@ -712,7 +712,7 @@ pub struct TuneSaveView {
 /// Save a new tune revision. The journal note is derived by diffing against
 /// the previous revision; a changed tune also cuts the stint (the note
 /// journals against the next stint that opens). The first revision is the
-/// baseline — stored, no note, no cut. `partial` (accepting a suggestion)
+/// baseline: stored, no note, no cut. `partial` (accepting a suggestion)
 /// merges the posted keys onto the LATEST revision, and consecutive saves
 /// with no stint between them net into ONE journal note (diffed against the
 /// last DRIVEN revision, the pending chain's base).
@@ -880,7 +880,7 @@ pub fn stint_rows(dir: &str) -> Vec<StintRow> {
     rows
 }
 
-/// First car seen driving in the session (bounded scan — the file may open
+/// First car seen driving in the session (bounded scan; the file may open
 /// with menu frames, but driving starts within moments in every real capture).
 pub fn stint_car(path: &Path) -> Option<i32> {
     let mut reader = crate::stint::StintReader::open(path).ok()?;
@@ -926,7 +926,7 @@ fn journals_referencing(stint_name: &str, journal_base: &str) -> Vec<String> {
 
 /// Delete one stint recording. Stricter than the read guard: only a bare
 /// filename inside the stints directory (no paths), never the file the
-/// recorder is writing right now, and a journaled stint (campaign evidence —
+/// recorder is writing right now, and a journaled stint (campaign evidence;
 /// deleting it degrades advice) requires an explicit `force` so the frontend
 /// can confirm first.
 pub fn delete_stint(
@@ -948,7 +948,7 @@ pub fn delete_stint(
     }
     if !force && let Some(journal) = journals_referencing(name, journal_base).first() {
         return Err(ApiError::conflict(format!(
-            "journaled in {journal} — deleting drops that step's measurement"
+            "journaled in {journal}; deleting drops that step's measurement"
         )));
     }
     match std::fs::remove_file(Path::new(sessions_dir).join(name)) {
@@ -1037,8 +1037,8 @@ pub fn session_delete_plan(
     archived_session_parts(id, session_file, journal_base, sessions_dir).map(|(.., plan)| plan)
 }
 
-/// Delete an archived session: its session file, its journal, and — when
-/// `delete_runs` — the recordings only its journal references. Runs cited by
+/// Delete an archived session: its session file, its journal, and (when
+/// `delete_runs`) the recordings only its journal references. Runs cited by
 /// any other journal are always kept, as is a recording the recorder is
 /// mid-writing (it stays behind as an unjournaled run). Only archived
 /// sessions have an id; the active session must be archived first.
@@ -1095,7 +1095,7 @@ pub fn export_bundle(
 
 // ------------------------------------------------------------- laps, compare
 
-/// Only relative .ftel paths with no traversal — the API exposes session
+/// Only relative .ftel paths with no traversal: the API exposes session
 /// recordings, nothing else.
 fn is_safe_session_path(file: &str) -> bool {
     file.ends_with(".ftel") && !file.contains("..") && !file.starts_with('/')
@@ -1109,7 +1109,7 @@ fn checked_session_path(file: &str) -> Result<&Path, ApiError> {
     }
 }
 
-/// Per-lap distance-binned speed traces — the lap chart's data.
+/// Per-lap distance-binned speed traces: the lap chart's data.
 #[derive(Serialize, Type, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct LapView {
@@ -1125,7 +1125,7 @@ pub struct LapsView {
     pub bin_meters: f32,
     pub best_time: f32,
     /// Per-bin corroboration of the spliced ideal: true = a second lap
-    /// reproduces this bin's speed within splice tolerance — the confidence
+    /// reproduces this bin's speed within splice tolerance. Drives the confidence
     /// strip under the speed chart.
     pub corroborated: Vec<bool>,
     pub laps: Vec<LapView>,
@@ -1689,7 +1689,7 @@ mod tests {
         assert!(!sessions.join("stint-20260725-100000.ftel").exists());
 
         // Campaign start: journal baseline stint (100000) predates the first
-        // revision save (100500) — the earlier stamp wins.
+        // revision save (100500), so the earlier stamp wins.
         let mut s = crate::tuning::TuningSession {
             car: Some(99),
             ..Default::default()
@@ -1980,7 +1980,7 @@ mod tests {
 
     /// Fixture-driven: the committed fixtures are short race-on segments
     /// with no completed lap, so the laps view must fail with the profile
-    /// error (Internal — the decode ran), never a guard rejection. When a
+    /// error (Internal, since the decode ran), never a guard rejection. When a
     /// real session library is present (dev machine; gitignored elsewhere),
     /// the full chart geometry is asserted end to end.
     #[test]

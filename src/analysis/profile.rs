@@ -4,7 +4,7 @@
 //! across laps and sessions. The ideal lap is composited by splicing laps together
 //! ONLY at points where their speeds match: between two equal-speed crossovers a
 //! lap's span is taken whole, judged on total elapsed time. This keeps a mistake's
-//! fast corner entry chained to its slow exit — a missed braking point is faster
+//! fast corner entry chained to its slow exit: a missed braking point is faster
 //! into the corner and can never be combined with a clean lap's exit, which would
 //! fabricate a physically impossible lap.
 
@@ -14,8 +14,8 @@ use std::collections::BTreeSet;
 pub const BIN_METERS: f32 = 10.0;
 /// Laps may only be spliced at bins where their speeds match within this tolerance.
 pub const SPLICE_SPEED_TOLERANCE_MPS: f32 = 2.5;
-/// A span is only taken from another lap when it beats the base by this margin —
-/// keeps the composite anchored on the real best lap instead of chasing noise.
+/// A span is only taken from another lap when it beats the base by this margin.
+/// Keeps the composite anchored on the real best lap instead of chasing noise.
 pub const SPLICE_MIN_GAIN_S: f32 = 0.03;
 /// A lap must start within this many seconds of its beginning to be profiled.
 const LAP_START_TOLERANCE_S: f32 = 1.0;
@@ -194,7 +194,7 @@ pub struct StintProfile {
 /// of the composite weighted by bin time (a confirmed hairpin counts for more
 /// than a confirmed straight of equal length). Reproducibility, not optimality:
 /// a corner driven consistently wrong still corroborates. Monotone in laps
-/// driven — a mistake lap fails to corroborate but never lowers the score.
+/// driven: a mistake lap fails to corroborate but never lowers the score.
 #[derive(Debug)]
 pub struct Corroboration {
     /// Per shared bin: reproduced by a second lap.
@@ -233,7 +233,7 @@ impl StintProfile {
 pub fn stint_profile(frames: &[TimedFrame]) -> Result<StintProfile, String> {
     // Profiles are built from the kept timeline (rewinds erased, retries spliced
     // in), so a rewound lap arrives here as one continuous, physically consistent
-    // lap — the game restored exact state at the splice point.
+    // lap; the game restored exact state at the splice point.
     let segments = driving_segments(frames, 5.0);
     let mut laps: Vec<LapProfile> = Vec::new();
     let mut car_ordinal = 0;
@@ -366,7 +366,7 @@ mod tests {
     }
 
     /// A route-spline snap (DistanceTraveled leaping several bins in one frame)
-    /// must not leave empty bins — they'd chart as phantom 0-speed dips.
+    /// must not leave empty bins; they'd chart as phantom 0-speed dips.
     #[test]
     fn distance_snap_leaves_no_empty_bins() {
         let mut frames = synth_lap(0, 500.0, 50.0, 100.0);

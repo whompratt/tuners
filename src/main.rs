@@ -4,7 +4,7 @@ use std::time::Duration;
 use tuners::{analysis, capture, replay, simulate};
 
 const USAGE: &str = "\
-tuners — FH6 tuning assistant (telemetry capture spike)
+tuners: FH6 tuning assistant (telemetry capture spike)
 
 USAGE:
   tuners capture  [--port 20440] [--out sessions] [--packets N] [--duration SECS]
@@ -165,7 +165,7 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
     };
     let session = analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
     let segments = analysis::driving_segments(&session.frames, 5.0);
-    // Advise from the longest stint — the most driving under one set of conditions.
+    // Advise from the longest stint: the most driving under one set of conditions.
     let Some(stint) = segments.iter().max_by_key(|s| s.len()) else {
         return Err("no driving stints of 5s or longer found".into());
     };
@@ -222,7 +222,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
 
     if view.journal.is_none() {
         println!(
-            "no journal yet — blind advice on the latest stint; the journal starts \
+            "no journal yet: blind advice on the latest stint; the journal starts \
              with your first tune change\n"
         );
     } else {
@@ -244,7 +244,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                 ));
             }
             if let Some(note) = &step.note {
-                line.push_str(&format!("  — {note}"));
+                line.push_str(&format!("  - {note}"));
             }
             if let Some((f, r)) = step.pos {
                 line.push_str(&format!("  [pos F {f:+.1} / R {r:+.1}]"));
@@ -291,7 +291,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             if a.areas.is_empty() {
                 println!(
                     "  cleanest comparison for the last stint: step {} has the SAME \
-                     setup — the {:+.2}s ideal delta is pure driver/track drift",
+                     setup, so the {:+.2}s ideal delta is pure driver/track drift",
                     a.vs_step, a.delta_s,
                 );
             } else {
@@ -308,14 +308,14 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                     a.split.1,
                     a.split.2,
                     if a.weak {
-                        "  [single-lap side — corroborate]"
+                        "  [single-lap side, corroborate]"
                     } else {
                         ""
                     },
                     if a.reconciled {
                         ""
                     } else {
-                        "  [multi-area — informational]"
+                        "  [multi-area, informational]"
                     },
                 );
                 if let Some(m) = movers(&a.effects) {
@@ -326,7 +326,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         if let Some(aba) = &view.aba {
             println!(
                 "  A-B-A on {}: drift-corrected cost of the excursion {:+.2}s ideal; \
-                 driver/track drift {:+.2}s per stint — outcome margins near that \
+                 driver/track drift {:+.2}s per stint; outcome margins near that \
                  drift are noise",
                 aba.families, aba.effect_s, aba.drift_s,
             );
@@ -349,7 +349,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     }
     if let Some((pairs, floor)) = view.drift_floor {
         println!(
-            "  measured drift floor: ±{floor:.2}s across {pairs} same-setup pair{} — \
+            "  measured drift floor: ±{floor:.2}s across {pairs} same-setup pair{}; \
              single-comparison margins below this are noise",
             if pairs == 1 { "" } else { "s" },
         );
@@ -377,13 +377,13 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     if let Some(p) = &view.in_progress {
         println!(
             "\nnote: {p} is journaled but has no completed laps yet (still \
-             recording?) — its step joins the trajectory once a lap completes"
+             recording?); its step joins the trajectory once a lap completes"
         );
     }
     for p in &view.missing {
         println!(
             "\nnote: {p} is journaled but the recording no longer exists \
-             (deleted?) — skipped; its tune change was merged into the next step"
+             (deleted?), so it was skipped; its tune change was merged into the next step"
         );
     }
     let asks = view
@@ -394,7 +394,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     println!("\nadvice for {}:", view.advice_for);
     if asks > 1 {
         println!(
-            "(suggestions are ALTERNATIVES — apply one per stint, drive it, \
+            "(suggestions are ALTERNATIVES: apply one per stint, drive it, \
              then re-advise)"
         );
     }
@@ -536,7 +536,7 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
     if let Some(sender) = issue {
         let token = tuners::receive::issue_token(tokens.as_ref(), &sender)?;
         println!("token for {sender}: {token}");
-        println!("(appended to {tokens} — hand the token to the sender, keep the file private)");
+        println!("(appended to {tokens}; hand the token to the sender, keep the file private)");
         return Ok(());
     }
     let cfg = tuners::receive::ReceiveConfig {

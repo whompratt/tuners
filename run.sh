@@ -14,7 +14,7 @@ trap 'echo "run.sh: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 PS=$(command -v powershell.exe || true)
 [ -n "$PS" ] || PS=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
 if [ ! -x "$PS" ]; then
-    echo "run.sh: cannot find powershell.exe — is WSL interop enabled?" >&2
+    echo "run.sh: cannot find powershell.exe - is WSL interop enabled?" >&2
     exit 1
 fi
 
@@ -24,7 +24,7 @@ src_path=$PWD
 
 mkdir -p "$tmp_path"
 
-# Windows gets its own target/ and node_modules (host-specific artifacts) —
+# Windows gets its own target/ and node_modules (host-specific artifacts);
 # rsync must neither copy nor delete them.
 echo "syncing to $tmp_path…"
 rsync -rq . "$tmp_path" --exclude-from=.gitignore --delete \

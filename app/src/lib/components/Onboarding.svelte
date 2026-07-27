@@ -13,7 +13,7 @@
   let manualCar = $state("");
   let creating = $state(false);
 
-  // This machine's LAN IP, for console players — the game must be pointed at
+  // This machine's LAN IP, for console players: the game must be pointed at
   // the PC running the app, and guessing it from a router page is error-prone.
   let lanIp = $state<string | null>(null);
   commands.lanIp().then((ip) => (lanIp = ip));
@@ -31,7 +31,7 @@
     const f = app.live?.frame;
     if (fresh && f?.raceOn && f.car) return { car: f.car, name: f.carName };
     // Free roam is never recorded (no frames), but raw packets carry the
-    // ordinal — detection must not require starting an event.
+    // ordinal, so detection must not require starting an event.
     const r = app.live?.recorder;
     if (r?.udpCar) return { car: r.udpCar, name: r.udpCarName ?? null };
     return null;
@@ -51,7 +51,7 @@
   const carLabel = (c: { car: number; name: string | null }) => c.name || `car #${c.car}`;
 
   async function createProject() {
-    // bind:value on the number input stores a number — stringify before IPC.
+    // bind:value on the number input stores a number; stringify before IPC.
     const car = String(manualCar ?? "").trim() || (chosen ? String(chosen.car) : "");
     if (!car) return;
     creating = true;
@@ -84,7 +84,7 @@
       <h2>Welcome to tuners</h2>
       <p>
         tuners watches your Forza Horizon 6 driving and tells you which single
-        setup change to try next — then measures whether it actually helped.
+        setup change to try next, then measures whether it actually helped.
       </p>
       <p class="muted">
         Three things to set up, once: telemetry from the game, a project for
@@ -92,7 +92,7 @@
       </p>
       <div class="wiz-actions">
         <Button go onclick={() => (step = 1)}>get started</Button>
-        <button class="wiz-skip" onclick={finishOnboarding}>skip — I know what I'm doing</button>
+        <button class="wiz-skip" onclick={finishOnboarding}>skip, I know what I'm doing</button>
       </div>
     {:else if step === 1}
       <h2>Hook up the telemetry</h2>
@@ -100,25 +100,25 @@
       <ol>
         <li>Settings → HUD and Gameplay → <b>Data Out</b> → ON</li>
         <li>
-          IP address <b>127.0.0.1</b> if the game runs on this PC{#if lanIp}
-            — or <b>{lanIp}</b> (this PC's network address) if you play on a console{:else}
-            — from a console, use this PC's LAN IP{/if}
+          IP address <b>127.0.0.1</b> if the game runs on this PC{#if lanIp},
+            or <b>{lanIp}</b> (this PC's network address) if you play on a console{:else};
+            from a console, use this PC's LAN IP{/if}
         </li>
         <li>Port <b>20440</b></li>
-        <li><b>Restart the game fully</b> — it only honours new Data Out settings after a restart</li>
+        <li><b>Restart the game fully</b>: it only honours new Data Out settings after a restart</li>
       </ol>
       <div class="wiz-live" class:ok={receiving}>
         {#if !receiving}
           <span class="pulse">●</span> listening on port 20440…
         {:else if liveCar || detected}
-          receiving — car detected: <b>{carLabel((liveCar ?? detected)!)}</b>
+          receiving, car detected: <b>{carLabel((liveCar ?? detected)!)}</b>
         {:else}
-          receiving — the wiring works. Now get in a car: it shows up on the first driving packet
+          receiving: the wiring works. Now get in a car: it shows up on the first driving packet
         {/if}
       </div>
       {#if app.live?.recorder.mode === "external"}
         <p class="muted">
-          Another capture owns the telemetry port right now — close it so the app can record for itself.
+          Another capture owns the telemetry port right now. Close it so the app can record for itself.
         </p>
       {/if}
       <div class="wiz-actions">
@@ -129,7 +129,7 @@
     {:else if step === 2}
       <h2>Create your project</h2>
       <p>
-        A project is one build of one car — its setup history and advice live
+        A project is one build of one car: its setup history and advice live
         here. Start a new project when the car or its upgrades change, not
         just the tune.
       </p>
@@ -137,7 +137,7 @@
         <p>Car: <b>{carLabel(chosen)}</b> {detected ? "(detected from telemetry)" : "(from your last recorded run)"}</p>
       {:else}
         <p class="muted">
-          No car detected yet — go back and drive a few seconds, or enter the
+          No car detected yet. Go back and drive a few seconds, or enter the
           car ordinal by hand below.
         </p>
       {/if}
@@ -164,7 +164,7 @@
       <h2>Copy your tune in</h2>
       <p>
         Last step: transcribe the car's current tune from the game's tuning
-        screens — the Setup screen lays them out in the game's order, so you
+        screens. The Setup screen lays them out in the game's order, so you
         can tab straight through and copy.
       </p>
       <p class="muted">

@@ -2,7 +2,7 @@
 //! keep a shared snapshot (latest frame + data-quality summary) for the dashboard
 //! to relay over SSE.
 //!
-//! The tailer never binds the UDP port — the recorder (or capture) owns it. StintWriter
+//! The tailer never binds the UDP port; the recorder (or capture) owns it. StintWriter
 //! writes each record with a single unbuffered `write_all`, so tailing the file
 //! sees new packets within one poll interval.
 
@@ -122,12 +122,12 @@ pub struct Quality {
     pub laps: usize,
     pub standing_only: bool,
     pub best_lap_s: f32,
-    /// (worst − best) / best over profiled laps — driving consistency.
+    /// (worst − best) / best over profiled laps: driving consistency.
     pub spread_frac: f32,
     /// Distance every profiled lap covers (the comparable route length).
     pub shared_km: f32,
     /// Time-weighted share of the ideal lap reproduced by a second lap
-    /// (profile::Corroboration) — the headline confidence value.
+    /// (profile::Corroboration), the headline confidence value.
     pub confidence: f32,
     pub band: Band,
 }
@@ -151,7 +151,7 @@ pub fn compute_quality(frames: &[TimedFrame]) -> Option<Quality> {
 }
 
 /// Snapshot shared between the tail thread and SSE handlers. The frame timeline
-/// itself stays owned by the tail thread — only the distilled state is shared.
+/// itself stays owned by the tail thread; only the distilled state is shared.
 #[derive(Default)]
 pub struct LiveState {
     /// Session file currently being tailed (None until one exists).

@@ -34,7 +34,7 @@ import { alertDialog, confirmDialog } from "./ui/dialogs.svelte";
 import { save } from "@tauri-apps/plugin-dialog";
 
 export const app = $state({
-  /** Initial session/stints load finished — before this, "no project" is
+  /** Initial session/stints load finished. Before this, "no project" is
    * unknowable, not true, and screens must not claim it. */
   booted: false,
   /** Home starts on a landing gate each launch: the active project is named
@@ -57,7 +57,7 @@ export const app = $state({
   // bumped whenever unit prefs change so unit-dependent markup re-renders
   unitsTick: 0,
   // Advice is app-wide state: Home renders it imperatively, Setup spatially,
-  // Analysis evidentially — one reconciled list, three registers.
+  // Analysis evidentially: one reconciled list, three registers.
   advice: null as AdviseView | null,
   adviceError: "",
   adviceLoading: false,
@@ -66,7 +66,7 @@ export const app = $state({
 });
 
 // Failures reaching the frontend are usually typed ApiErrors, but an invoke
-// can also reject with a plain string (e.g. argument deserialization) — a
+// can also reject with a plain string (e.g. argument deserialization), and a
 // dialog must never render an empty body.
 export const errMsg = (e: ApiError | string | unknown): string =>
   typeof e === "string" ? e : ((e as ApiError)?.message ?? String(e));

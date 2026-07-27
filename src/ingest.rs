@@ -1,11 +1,11 @@
 //! Ingest: file received bundles into the per-sender
-//! library, in strict mode. Every bundle is untrusted input — `bundle::open`
+//! library, in strict mode. Every bundle is untrusted input: `bundle::open`
 //! already enforces hashes/members/version, and this layer re-runs the REAL
 //! parsers on top: every packet must decode, the session must belong to the
 //! manifest's car, and the free-text strip must hold (the export filters are
 //! idempotent, so `filter(member) == member` proves nothing slipped through).
 //! Anything that fails moves to quarantine with a written reason instead of
-//! being deleted — version skew and half-stints are data about failures.
+//! being deleted; version skew and half-stints are data about failures.
 //!
 //! The inbox (an rclone mirror of the bucket) is never mutated: ingest COPIES
 //! survivors so re-syncs and re-runs are idempotent. Layout:

@@ -1,6 +1,6 @@
 //! Stint bundles: the unit of telemetry collection. One
 //! bundle = one raw recording plus the session/journal context needed to
-//! interpret it, with all free text structurally absent — the filtered files
+//! interpret it, with all free text structurally absent: the filtered files
 //! are rebuilt from parsed structures and a strict grammar, never redacted.
 //!
 //! Layout: `bundle-<car>-<stamp>.tar.zst` = zstd(tar) of
@@ -17,7 +17,7 @@
 //! re-rendered from the parsed parts.
 //!
 //! `build` self-verifies: the produced archive is reopened, hash-checked, and
-//! compared against the sources before it is returned — a compressor bug can
+//! compared against the sources before it is returned, so a compressor bug can
 //! produce a failed export, never a corrupt bundle. `open` is the shared
 //! reader used by tests today and `tuners ingest` later.
 
@@ -33,7 +33,7 @@ const CONSENT: &str = "collected with informed opt-in consent for tuners develop
 /// Decompression guard for ingest: no legitimate stint approaches this.
 const MAX_UNPACKED: usize = 1 << 30;
 /// Measured FLAT on real telemetry (levels 3/9/15/19 all ≈1.9x on a 20.8 MB
-/// stint, 2026-07-26) — the packet format's entropy is the wall; the plan's
+/// stint, 2026-07-26): the packet format's entropy is the wall; the plan's
 /// byte-columnar transpose is the v2 lever if size ever matters. 9 costs
 /// ~0.5s per stint, a hair smaller than default.
 const ZSTD_LEVEL: i32 = 9;
@@ -48,7 +48,7 @@ pub struct Bundle {
 
 /// The bundle file name a recording will get: recordings are
 /// stint-<stamp>.ftel and the stamp names the bundle; other .ftel stems
-/// (fixtures) pass through as-is — charset-fenced because the name lands in
+/// (fixtures) pass through as-is, charset-fenced because the name lands in
 /// the upload URL.
 pub fn bundle_name(car: i32, stint_path: &Path) -> Result<String, String> {
     let file_name = stint_path
@@ -71,7 +71,7 @@ pub fn build(
 ) -> Result<(String, Vec<u8>), String> {
     let car = session
         .car
-        .ok_or("session has no car — export needs an active tuning session")?;
+        .ok_or("session has no car; export needs an active tuning session")?;
     let name = bundle_name(car, stint_path)?;
     let stamp = name
         .strip_prefix(&format!("bundle-{car}-"))
@@ -92,7 +92,7 @@ pub fn build(
     }
     if packets == 0 {
         return Err(format!(
-            "{name}: no packets — refusing to bundle an empty stint"
+            "{name}: no packets, refusing to bundle an empty stint"
         ));
     }
     let stint = std::fs::read(stint_path).map_err(|e| e.to_string())?;
@@ -224,7 +224,7 @@ pub fn export_session(s: &TuningSession) -> TuningSession {
             .filter(|(k, _)| known_field(k))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        // Values must be numeric — a slider value can't smuggle text.
+        // Values must be numeric; a slider value can't smuggle text.
         values.retain(|_, v| v.parse::<f32>().is_ok());
         out.revisions.push(tuning::Revision {
             stamp: rev.stamp.clone(),
@@ -285,7 +285,7 @@ pub fn export_journal(text: &str, car: i32) -> String {
 ///   "<field phrase> <signed delta> [canonical unit]"
 ///   "<field phrase> = <numeric value>"
 ///   "<field phrase> <numeric old> -> <numeric new>"
-/// Anything else — trailing words, unknown phrases, non-numeric values — is
+/// Anything else (trailing words, unknown phrases, non-numeric values) is
 /// dropped whole-clause.
 fn strict_clause(clause: &str) -> Option<String> {
     let lower = clause.to_lowercase();
@@ -484,7 +484,7 @@ mod tests {
             strict_clause("brake balance 52 -> 20").as_deref(),
             Some("brake balance 52 -> 20")
         );
-        // Prose around a parseable core is dropped whole-clause — the loose
+        // Prose around a parseable core is dropped whole-clause; the loose
         // journal parser would have accepted every one of these.
         for leak in [
             "front arb -2 because it felt pushy",
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn journal_filter_strips_prose_keeps_structure() {
         let src = "\
-# 1967 Ferrari 330 P4 (ordinal 2793) — my notes: gearbox whine at 8k?
+# 1967 Ferrari 330 P4 (ordinal 2793), my notes: gearbox whine at 8k?
 sessions/stint-20260724-182140.ftel | baseline
 sessions/stint-20260724-231042.ftel | rear arb -1.5
 sessions/stint-20260724-232059.ftel | front arb -1.5; felt terrible; rear aero +20 lb

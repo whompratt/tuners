@@ -41,12 +41,12 @@ fn lap_distance(x: f32) -> f32 {
 /// Deterministic, vaguely-plausible car state at time `t` seconds: speed and steering
 /// oscillate, gears step, temperatures drift, laps tick over every LAP_S seconds so
 /// the analysis pipeline (lap split, profile, quality) sees real lap structure.
-/// Not physics — just non-constant values for every field group analysis cares about.
+/// Not physics, just non-constant values for every field group analysis cares about.
 pub fn synth_frame(t: f32) -> TelemetryFrame {
     let lap = (t / LAP_S) as u16;
     let t_lap = t % LAP_S;
-    // Speed is a function of lap position — synthetic laps repeat like a real
-    // driver's do (so corroboration/quality sees consistent laps) — plus a small
+    // Speed is a function of lap position, so synthetic laps repeat like a real
+    // driver's do (and corroboration/quality sees consistent laps), plus a small
     // wobble within the splice tolerance for lap-to-lap variety.
     let speed = 30.0 + 15.0 * (t_lap / 4.0).sin() + 0.8 * (t * 1.7).sin();
     let rpm = 3800.0 + 2600.0 * (t * 1.5).sin();

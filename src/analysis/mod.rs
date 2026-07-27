@@ -84,7 +84,7 @@ pub struct LapSlice<'a> {
     /// Authoritative lap time from the next lap's `LastLap` field; None for the
     /// final (usually incomplete) lap of a stint.
     pub time_s: Option<f32>,
-    /// True when this is the race's first lap — a standing start (rivals out lap).
+    /// True when this is the race's first lap: a standing start (rivals out lap).
     /// Its time is not comparable to flying laps. Detected by the race clock and
     /// lap clock having started together, which survives capture starting late.
     pub standing_start: bool,
@@ -95,7 +95,7 @@ pub struct LapSlice<'a> {
 const STANDING_START_CLOCK_OFFSET_S: f32 = 5.0;
 
 /// Split a stint into laps on `LapNumber` transitions. A stint with no transitions
-/// (free roam, where LapNumber stays 0) yields a single slice — callers should only
+/// (free roam, where LapNumber stays 0) yields a single slice; callers should only
 /// treat the result as laps when there is more than one.
 pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
     let mut bounds = vec![0];
@@ -201,7 +201,7 @@ pub fn stint_seconds(frames: &[TimedFrame]) -> f32 {
 /// The session as the game kept it: driving segments with rewinds *erased*.
 ///
 /// A rewind restores exact car state (clock, position, speed) and lets the player
-/// re-drive — the game is doing equal-state splicing. For tune evaluation the kept
+/// re-drive: the game is doing equal-state splicing. For tune evaluation the kept
 /// retry is the data that matters (leaderboard validity is irrelevant), so frames
 /// superseded by a rewind (race clock >= the resume point) are dropped and the
 /// retry is spliced on. Pauses are stitched over; restarts start a new segment.
@@ -338,7 +338,7 @@ mod tests {
     }
 
     /// A race-on stint where the car never moves (waiting on track, then ducking
-    /// into the setup menu — which restarts the race clock) is not driving and
+    /// into the setup menu, which restarts the race clock) is not driving and
     /// must not reach the user.
     #[test]
     fn stationary_stints_are_dropped() {

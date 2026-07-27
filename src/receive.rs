@@ -1,5 +1,5 @@
 //! Telemetry bundle receiver: the collection endpoint. A dumb
-//! authenticated PUT into filesystem storage — the server never parses
+//! authenticated PUT into filesystem storage: the server never parses
 //! telemetry; validation and quarantine happen later in `tuners ingest`.
 //! Hand-rolled HTTP over std like serve.rs; TLS belongs to a reverse proxy
 //! (Caddy/nginx) in front, so this binds loopback by default.
@@ -15,17 +15,17 @@
 //!   GET /healthz -> 200 (unauthenticated, for proxy health checks)
 //!
 //! The body is hashed while streaming to a temp file and only renamed into
-//! place when the hash matches the header — a truncated or corrupted upload
+//! place when the hash matches the header, so a truncated or corrupted upload
 //! never lands. The stored name carries the first 16 hash hex chars, so a
 //! retried upload of the same content answers 200 "duplicate" and rewrites
 //! nothing, while a re-cut stint with the same stamp stores alongside instead
 //! of silently overwriting.
 //!
-//! Storage is one directory per sender under `root` — the per-sender library
+//! Storage is one directory per sender under `root`: the per-sender library
 //! namespace the plan asks for.
 //!
 //! Auth is OPEN by default (strangers-scale opt-in): the client generates its
-//! own 64-hex token and the sender id is sha256(token)[..16] — stable
+//! own 64-hex token and the sender id is sha256(token)[..16], stable
 //! pseudonymous identity without issuance. Misbehaving sender ids go in the
 //! blocklist file. If the tokens file exists (`<token> <sender-id>` lines,
 //! re-read per request), the endpoint is in allowlist-only lockdown mode
@@ -165,7 +165,7 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
     // A rejected upload leaves body bytes unread, and closing with unread
     // data can RST away the response we just wrote (curl then reports "no
     // response", so a permanent 4xx looks transient to the drainer). Drain
-    // exactly the unread remainder — zero on clean paths, and bounded by the
+    // exactly the unread remainder: zero on clean paths, and bounded by the
     // read timeout if the client stalls mid-body.
     let mut drain_left = content_length
         .unwrap_or(0)
@@ -222,14 +222,14 @@ fn put_bundle(
     if total_bytes(&cfg.root).saturating_add(len) > cfg.global_cap_bytes {
         return Err((
             "507 Insufficient Storage",
-            err_json("collection storage is full — uploads paused, retry tomorrow"),
+            err_json("collection storage is full; uploads paused, retry tomorrow"),
         ));
     }
     let sender_dir = cfg.root.join(&sender);
     if recent_bytes(&sender_dir).saturating_add(len) > cfg.daily_cap_bytes {
         return Err((
             "429 Too Many Requests",
-            err_json("daily upload cap reached — the outbox can retry tomorrow"),
+            err_json("daily upload cap reached; the outbox can retry tomorrow"),
         ));
     }
 
@@ -307,7 +307,7 @@ fn err_json(msg: &str) -> String {
 
 /// Tokens file present = lockdown (issued tokens only); absent = open mode,
 /// where any well-formed 64-hex client-generated token maps to the sender id
-/// sha256(token)[..16] — the same derivation as the Worker, pinned by tests.
+/// sha256(token)[..16], the same derivation as the Worker, pinned by tests.
 fn authenticate(cfg: &ReceiveConfig, token: &str) -> Result<String, Reply> {
     if cfg.tokens_path.exists() {
         return sender_for_token(&cfg.tokens_path, token)

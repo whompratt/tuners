@@ -3,9 +3,9 @@
 // secrets from .dev.vars).
 //
 // Auth is open by default (client-generated tokens). Optional secrets, both
-// set with `npx wrangler secret put <NAME>` — never in this file:
+// set with `npx wrangler secret put <NAME>`, never in this file:
 //   BLOCKLIST  JSON array of banned sender ids, e.g. ["a3f9c2e811d04b57"]
-//   TOKENS     JSON {"<token>":"<sender-id>"} — setting it flips the endpoint
+//   TOKENS     JSON {"<token>":"<sender-id>"}; setting it flips the endpoint
 //              to allowlist-only mode (the abuse circuit breaker)
 {
   "name": "tuners-collect",
@@ -23,7 +23,7 @@
   },
   // Platform rate limiter: consulted but measured NON-ENFORCING on this
   // account (2026-07-25/26, always success:true under 8x sustained load,
-  // fresh namespace) — the enforced throttle is in-isolate in index.js.
+  // fresh namespace); the enforced throttle is in-isolate in index.js.
   // Kept so enforcement is honored if the binding ever starts counting.
   "ratelimits": [
     { "name": "IP_LIMIT", "namespace_id": "2001", "simple": { "limit": 30, "period": 60 } }

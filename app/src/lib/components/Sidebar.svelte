@@ -14,7 +14,7 @@
   const stamp = (f: string) => (f.match(/(\d{8}-\d{6})/) || [])[1] || "";
 
   // Scope to the active campaign: stints of the session car from before the
-  // campaign started belong to archived sessions — tucked behind a toggle.
+  // campaign started belong to archived sessions, tucked behind a toggle.
   let split = $derived.by(() => {
     let shown = app.stints.filter((s) => app.carFilter === "all" || String(s.car) === app.carFilter);
     let earlier: typeof shown = [];
@@ -105,7 +105,7 @@
       {/if}
     </div>
   {:else}
-    <div class="placeholder">no recorded runs yet — drive with the app running</div>
+    <div class="placeholder">no recorded runs yet. Drive with the app running</div>
   {/if}
   <label class="adv-toggle" title="expand expert detail (evidence, measurements) by default">
     <input type="checkbox" style="width:auto" checked={advanced.on} onchange={toggleAdvanced} />

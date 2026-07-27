@@ -75,7 +75,7 @@ canvas { width: 100%; display: block; }
 .tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
 pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; }
 .placeholder { color: var(--muted); }
-/* Drive: dim only what has no data (placeholder values, idle gauge) —
+/* Drive: dim only what has no data (placeholder values, idle gauge);
    whole-screen dimming while not recording was uncomfortable. */
 .dim { opacity: 0.4; transition: opacity 0.3s; }
 #rec-split, .btn {
@@ -365,7 +365,7 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 .drive-grid .readout .trow { font-size: 26px; }
 .drive-grid .readout .trow .num { font-size: 30px; }
 
-/* Wide content scrolls inside its own container — panels never clip. */
+/* Wide content scrolls inside its own container, so panels never clip. */
 .table-scroll { overflow-x: auto; }
 .table-scroll .adv-table td { white-space: normal; }
 .table-scroll .adv-table td.num, .table-scroll .adv-table th { white-space: nowrap; }

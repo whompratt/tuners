@@ -1,6 +1,6 @@
 //! Strict-mode ingest: good bundles are filed per sender,
-//! re-runs are idempotent, and hostile bundles — including one with CORRECT
-//! hashes but smuggled prose — land in quarantine with a written reason.
+//! re-runs are idempotent, and hostile bundles (including one with CORRECT
+//! hashes but smuggled prose) land in quarantine with a written reason.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -105,7 +105,7 @@ fn bad_bundles_quarantine_with_reasons() {
 
     // Not even zstd.
     std::fs::write(sender.join("garbage.tar.zst"), b"not a bundle at all").unwrap();
-    // Correct hashes, smuggled prose — only strict validation catches this.
+    // Correct hashes, smuggled prose: only strict validation catches this.
     std::fs::write(sender.join("prose.tar.zst"), prose_bundle()).unwrap();
 
     let report = ingest_dir(&inbox, &lib, &quar).unwrap();

@@ -18,8 +18,8 @@ const REAR_AT_LIMIT: f32 = 0.9;
 /// |steer| (i8 units, full lock = 127) below this is straight-ahead jitter,
 /// not a counter-steer input.
 const STEER_DEADBAND: f32 = 15.0;
-/// Consecutive opposite-lock frames before a counter-steer episode counts —
-/// filters chicane transitions where lat flips before the hands do.
+/// Consecutive opposite-lock frames before a counter-steer episode counts.
+/// Filters chicane transitions where lat flips before the hands do.
 const COUNTERSTEER_MIN_RUN: usize = 3;
 /// Pedal inputs are 0–255; above this counts as "on".
 const PEDAL_ON: u8 = 128;
@@ -28,13 +28,13 @@ const BOTTOMED: f32 = 0.97;
 const TOPPED: f32 = 0.03;
 /// Fraction of redline treated as "on the limiter".
 const LIMITER: f32 = 0.98;
-/// Fraction of redline treated as "using the top of the rev range" — the
+/// Fraction of redline treated as "using the top of the rev range": the
 /// numerator of GearStats::top_gear_high_rev_frac.
 const HIGH_REV: f32 = 0.90;
 /// Gear values outside real forward gears: 0 = reverse, 11 = mid-shift sentinel.
 const MAX_REAL_GEAR: u8 = 10;
 /// Suspension travel must move this far (meters) since the last extreme for a
-/// direction change to count as a reversal — filters sensor jitter.
+/// direction change to count as a reversal; filters sensor jitter.
 const OSC_MIN_TRAVEL_M: f32 = 0.002;
 /// Mean |SurfaceRumble| above this = loose surface (tarmac reads ~0.00, dirt
 /// 0.10-0.15 observed).
@@ -44,7 +44,7 @@ const AIRBORNE_TRAVEL: f32 = 0.06;
 /// Minimum airborne time for a jump/crest event (seconds).
 const JUMP_MIN_AIR_S: f32 = 0.15;
 /// Bottoming inside this window after touchdown is a landing, not a spring
-/// problem — excluded from bottomed_frac (one jump must not drive spring advice).
+/// problem, excluded from bottomed_frac (one jump must not drive spring advice).
 const LANDING_WINDOW_S: f32 = 0.6;
 /// Flutter (|d rpm/dt|, |d wheel speed/dt|) sampling: same gear, on throttle,
 /// frame gaps up to this many seconds.
@@ -66,7 +66,7 @@ pub struct SuspensionStats {
     /// Also the airborne-wheel proxy: no airborne flag exists in the packet, but a
     /// fully-extended wheel is unloaded (matters for rally rebound tuning).
     pub topped_frac: f32,
-    /// Amplitude-filtered travel direction reversals per second — the damping
+    /// Amplitude-filtered travel direction reversals per second: the damping
     /// signal. Road texture drives ~5.5/s baseline (observed, tarmac, healthy
     /// damping); underdamped ringing adds 2 reversals per cycle on top.
     pub reversals_per_sec: f32,
@@ -79,7 +79,7 @@ pub struct BandBalance {
     pub samples: usize,
     /// mean |front slip angle| − mean |rear slip angle| within the band.
     pub index: Option<f32>,
-    /// Mean |rear slip angle| within the band — the absolute operating point.
+    /// Mean |rear slip angle| within the band: the absolute operating point.
     pub rear_slip: Option<f32>,
 }
 
@@ -91,7 +91,7 @@ pub struct GearStats {
     /// jump evidence, not gearing evidence.
     pub time_frac: Vec<(u8, f32)>,
     pub top_gear: u8,
-    /// Highest rpm reached while grounded in the top gear used — low vs redline
+    /// Highest rpm reached while grounded in the top gear used. Low vs redline
     /// means the top of the rev range goes unused (final drive likely too long).
     pub top_gear_max_rpm: f32,
     /// Share of grounded top-gear time spent at >= HIGH_REV of redline. The
@@ -104,7 +104,7 @@ pub struct GearStats {
     pub limiter_frac: f32,
     /// The redline gearing stats are judged against. Some cars' reported
     /// engine_max_rpm sits well above the actual rev cut (Datsun 240Z:
-    /// limiter ~7500 vs reported 8000) — when 3+ gears max out within 1% of
+    /// limiter ~7500 vs reported 8000). When 3+ gears max out within 1% of
     /// the same sustained ceiling, that ceiling IS the limiter and becomes
     /// the effective redline. Otherwise the reported value stands.
     pub effective_redline: f32,
@@ -113,7 +113,7 @@ pub struct GearStats {
     pub limiter_detected: bool,
 }
 
-/// Shares of cornering time spent in momentary oversteer — the transients a
+/// Shares of cornering time spent in momentary oversteer: the transients a
 /// stint-length balance average hides. All fractions are of cornering samples.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TransientOversteer {
@@ -129,7 +129,7 @@ pub struct TransientOversteer {
     pub episodes: usize,
     /// Share of cornering time steering AGAINST the corner (opposite lock).
     /// The driver's own correction labels a slide: understeer never needs
-    /// counter-steer, every caught slide does — so this channel sees the
+    /// counter-steer, every caught slide does, so this channel sees the
     /// rear-limited moments that time-averaged balance structurally cannot
     /// (oversteer is episodic and corrected; understeer is sustained).
     pub countersteer_frac: f32,
@@ -157,7 +157,7 @@ pub struct StintMetrics {
     /// Positive = front washes out first (understeer tendency). None if no cornering.
     /// Units: fraction of each tire's grip limit (1.0 = at the limit).
     pub understeer_index: Option<f32>,
-    /// Mean |slip angle| per axle over cornering samples — the absolute operating
+    /// Mean |slip angle| per axle over cornering samples: the absolute operating
     /// point the index difference hides (0.85 front vs 0.55 rear reads very
     /// differently from 0.30 vs 0.04, at the same index).
     pub cornering_front_slip: Option<f32>,
@@ -165,10 +165,10 @@ pub struct StintMetrics {
     pub cornering_frac: f32,
     pub transient_oversteer: TransientOversteer,
     /// Fitted drag/driveline model (None without enough clean full-throttle
-    /// data) — the measured aero–gearing coupling.
+    /// data): the measured aero–gearing coupling.
     pub driveline: Option<super::driveline::DrivelineFit>,
     /// Extra normalized front suspension travel while braking vs on throttle
-    /// (nose dive). Measurement only — no rule threshold is calibrated yet;
+    /// (nose dive). Measurement only; no rule threshold is calibrated yet, and
     /// front aero confounds it at braking speeds. None without enough braking
     /// and throttle samples.
     pub brake_dive_front: Option<f32>,
@@ -180,7 +180,7 @@ pub struct StintMetrics {
     /// is the power-on balance signature (diff accel / power understeer).
     pub balance_on_throttle: BandBalance,
     pub balance_off_throttle: BandBalance,
-    /// Balance while cornering AND braking — the trail-braking signature
+    /// Balance while cornering AND braking: the trail-braking signature
     /// (brake balance / diff decel live here, not in positional phase means:
     /// the 2026-07-21 max-decel A/B cost 0.75s with phase means unmoved).
     pub balance_on_brake: BandBalance,
@@ -194,12 +194,12 @@ pub struct StintMetrics {
     pub suspension: Corners<SuspensionStats>,
     pub gears: GearStats,
     pub surface_rumble_avg: f32,
-    /// Loose surface (dirt/gravel) per SurfaceRumble — baselines for suspension
+    /// Loose surface (dirt/gravel) per SurfaceRumble. Baselines for suspension
     /// activity and slip differ enormously from tarmac.
     pub surface_loose: bool,
     /// Airborne events (all four wheels at full droop >= 0.15s): jumps and crests.
     pub jumps: u32,
-    /// Bottoming samples that happened on jump landings — excluded from
+    /// Bottoming samples that happened on jump landings, excluded from
     /// bottomed_frac so one jump can't drive spring/ride-height advice.
     pub landing_bottomed_excluded: u32,
     /// Mean |d rpm/dt| on throttle in-gear (rpm/s). On loose surfaces, roughly
@@ -274,7 +274,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut upshift_rpm_sum = 0.0f32;
     let mut upshifts = 0u32;
     let mut prev_real_gear: Option<(u8, f32)> = None; // (gear, rpm while in it)
-    let mut grounded = 0usize; // frames not airborne — denominator for gear stats
+    let mut grounded = 0usize; // frames not airborne: denominator for gear stats
     // DistanceTraveled is always 0 outside races (see telemetry.md), so distance is
     // integrated from speed over the race clock (monotonic in a kept timeline,
     // frozen across pauses).
@@ -404,7 +404,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             wheelspin += spinning as usize;
         }
         // Brake dive: how much extra front compression braking adds vs the
-        // on-throttle attitude. Measurement only for now — confounded by
+        // on-throttle attitude. Measurement only for now: confounded by
         // front aero at braking speeds, and the library has no known
         // dive-problem stint to calibrate a rule threshold against.
         {
@@ -427,7 +427,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         }
 
         // Airborne revs are free-revving against unloaded wheels (usually pinned
-        // on the limiter) — jump evidence, not gearing evidence. Gear/limiter
+        // on the limiter): jump evidence, not gearing evidence. Gear/limiter
         // stats sample grounded frames only, and an upshift must not span an
         // airborne gap (auto shifts at the mid-air limiter).
         if airborne {
@@ -472,7 +472,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
 
     let frac = |count: usize| count as f32 / n as f32;
     // Gear stats count grounded frames only, so their fractions are over the
-    // grounded sample count — a jump-heavy stint must not dilute limiter time.
+    // grounded sample count; a jump-heavy stint must not dilute limiter time.
     let gfrac = |count: usize| count as f32 / grounded.max(1) as f32;
     let corners_from = |vals: [f32; 4]| Corners {
         fl: vals[0],
@@ -495,7 +495,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
 
     // Effective redline: the SUSTAINED rev ceiling (highest 25-rpm bucket
     // holding >= 0.25s, so a single downhill over-rev spike can't set it),
-    // adopted only when 3+ well-used gears max out within 1% of it — the
+    // adopted only when 3+ well-used gears max out within 1% of it: the
     // signature of a rev cut, not of a consistent shift point in one gear.
     let reported_redline = first.engine_max_rpm;
     let ceiling = {
@@ -511,7 +511,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     };
     // A real rev cut clusters TIGHT (the Datsun's six gears max within 8 rpm
     // of 7500); a consistent shift habit clusters loose (the Ford GT's within
-    // ~90 rpm of 6875, plus a brief 7094 overshoot) — the cluster is gears
+    // ~90 rpm of 6875, plus a brief 7094 overshoot). The cluster is gears
     // whose max sits AT the sustained ceiling: within 0.5% below, 1% above
     // (momentary overshoot past a cut is a spike, not a cut).
     let gears_at_ceiling = (1..=MAX_REAL_GEAR as usize)
@@ -671,7 +671,7 @@ mod tests {
                 drivetrain_type: 1,
                 accel: 255,
                 tire_slip_ratio: Corners {
-                    fl: 2.0, // front always sliding — irrelevant for RWD
+                    fl: 2.0, // front always sliding, irrelevant for RWD
                     fr: 2.0,
                     rl: if i < 4 { 1.5 } else { 0.2 },
                     rr: 0.0,
@@ -834,7 +834,7 @@ mod tests {
 
     /// A jump (all four wheels at full droop for >=0.15s) followed by a bottoming
     /// landing: the event is counted and the landing bottoming is EXCLUDED from
-    /// bottomed_frac — one jump must not drive spring advice.
+    /// bottomed_frac; one jump must not drive spring advice.
     #[test]
     fn jump_landing_bottoming_is_excluded() {
         let mut frames = Vec::new();

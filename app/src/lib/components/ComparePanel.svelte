@@ -125,7 +125,7 @@
           · <span style="color:var(--muted)">note: unequal lap counts bias the optimal lap toward the run with more laps</span>
         {/if}
         {#if cmpData.carMismatch}
-          · <span style="color:var(--muted)">note: different cars — this compares cars, not tunes</span>
+          · <span style="color:var(--muted)">note: different cars, so this compares cars, not tunes</span>
         {/if}
       </div>
       <div class="legend-row">
@@ -144,7 +144,7 @@
       <div class="legend-row">
         {#each [[A_COLOR, "A", cmpData.a], [B_COLOR, "B", cmpData.b]] as [c, tag, s] (tag)}
           <span>
-            <span class="chip" style="background:{c}"></span>{tag}: {(s as typeof cmpData.a).file.split("/").pop()} —
+            <span class="chip" style="background:{c}"></span>{tag}: {(s as typeof cmpData.a).file.split("/").pop()} ·
             best <span class="num">{fmtLap((s as typeof cmpData.a).best)}</span>, optimal
             <span class="num">{fmtLap((s as typeof cmpData.a).ideal)}</span> ({(s as typeof cmpData.a).laps} laps)
           </span>

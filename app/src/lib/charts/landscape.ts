@@ -4,7 +4,7 @@
 import type { Palette } from "./palette";
 
 export type LandscapeData = {
-  /** (value, cumulative ideal delta s) — sanitized, ascending by value. */
+  /** (value, cumulative ideal delta s); sanitized, ascending by value. */
   nodes: [number, number][];
   fit: [number, number, number] | null;
   vertex: number | null;
@@ -57,7 +57,7 @@ export function drawLandscape(
   ctx.font = "11px system-ui";
   if (data.nodes.length < 2) {
     ctx.fillStyle = pal.muted;
-    ctx.fillText("not enough mapped values to chart — drive more single-change stints", 10, 24);
+    ctx.fillText("not enough mapped values to chart. Drive more single-change stints", 10, 24);
     return;
   }
   const X = (v: number) => landscapeX(L, v);

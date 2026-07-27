@@ -8,14 +8,14 @@
 //!
 //! with `alpha = eta/m` (drivetrain effectiveness) and `beta = c/m` (quadratic
 //! drag). Both are fitted from telemetry (kinematic dv/dt, power channel,
-//! height-derived grade — hillclimbs would otherwise poison the fit). An aero
+//! height-derived grade; hillclimbs would otherwise poison the fit). An aero
 //! change moves `beta`, which moves the reachable top speed, which moves the
-//! final drive that puts the rev cut exactly there — the coupling the user hit
+//! final drive that puts the rev cut exactly there: the coupling the user hit
 //! on the Datsun time attack when dropping downforce made the tuned final
 //! drive too short.
 //!
 //! What gearing should match is not the infinite-straight terminal speed but
-//! the speed reachable at the end of THIS track's longest flat-out run —
+//! the speed reachable at the end of THIS track's longest flat-out run,
 //! integrated from the fitted model over that run's measured length and entry
 //! speed.
 
@@ -34,17 +34,17 @@ const DIFF_HALF_WINDOW: usize = 5;
 pub struct DrivelineFit {
     /// Power effectiveness per mass (eta/m).
     pub alpha: f32,
-    /// Quadratic drag per mass (c/m) — the aero knob moves this.
+    /// Quadratic drag per mass (c/m). The aero knob moves this.
     pub beta: f32,
     pub samples: usize,
-    /// 95th percentile of full-throttle power (W) — the fit's power budget.
+    /// 95th percentile of full-throttle power (W): the fit's power budget.
     pub p95_power: f32,
     /// Terminal speed on an infinite flat straight (m/s).
     pub vmax_flat: f32,
     /// Speed reached at the end of the longest observed flat-out run (m/s),
     /// integrating the fitted model from that run's entry speed and length.
     pub vmax_track: f32,
-    /// rpm per m/s in the top gear used (slip-filtered) — scales linearly
+    /// rpm per m/s in the top gear used (slip-filtered); scales linearly
     /// with final drive.
     pub k_top: f32,
     pub top_gear: u8,

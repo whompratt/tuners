@@ -2,7 +2,7 @@
 
 The release pipeline is `.github/workflows/release.yml`.
 Pushing a `v*` tag builds installers on GitHub's runners and attaches them
-to a **draft** GitHub release — nothing goes public until the draft is
+to a **draft** GitHub release; nothing goes public until the draft is
 published by hand.
 
 ## What a tag build produces
@@ -22,7 +22,7 @@ later ones much faster.
 1. Bump the version. The authoritative one is `app/src-tauri/tauri.conf.json`
    (`"version"`); it names the bundles and feeds the in-app display
    (`getVersion()` in the nav rail). Keep `app/package.json` and the two
-   `Cargo.toml`s in step when convenient — nothing breaks if they lag, it's
+   `Cargo.toml`s in step when convenient; nothing breaks if they lag, it's
    just tidier.
 2. Commit, then tag and push:
 
@@ -56,6 +56,6 @@ A bad build costs nothing: delete the draft and the tag
 - **Installed-app data**: a packaged install anchors its data root at the
   OS app-data dir (`TUNERS_DATA` still overrides). A dev machine's live
   data needs a one-time copy there if you switch to the installed build.
-- Windows code signing is not set up — installers will trip SmartScreen
+- Windows code signing is not set up, so installers will trip SmartScreen
   ("unrecognized app"). Fine for handing builds to friends; a signing
   cert is the fix if that ever matters.
