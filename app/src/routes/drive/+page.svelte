@@ -8,7 +8,9 @@
   const STALE_MS = 3000;
   const ARC = Math.PI * 40; // semicircle path length (r=40)
 
-  let rec = $derived(app.live?.recorder ?? { mode: "external", file: null, packets: 0, udpAgeMs: null });
+  let rec = $derived(
+    app.live?.recorder ?? { mode: "external", file: null, packets: 0, udpAgeMs: null, udpCar: null, udpCarName: null },
+  );
   let stale = $derived(app.live?.ageMs == null || app.live.ageMs > STALE_MS);
   let f = $derived(app.live?.frame ?? null);
 
@@ -55,7 +57,8 @@
 
   {#if !f && rec.udpAgeMs != null && rec.udpAgeMs < STALE_MS}
     <div class="banner" style="margin-top:12px">
-      receiving telemetry — drive to see live data (menus aren't recorded)
+      receiving telemetry{rec.udpCarName ? ` from the ${rec.udpCarName}` : ""} — menus and free roam
+      aren't recorded; start a race, rivals lap, or route event to record a run
     </div>
   {:else if !f && app.booted}
     <div class="banner" style="margin-top:12px">

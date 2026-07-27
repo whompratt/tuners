@@ -211,6 +211,10 @@ pub struct RecorderStatus {
     /// never recorded. Lets onboarding confirm the Data Out wiring before any
     /// race telemetry exists.
     pub last_udp: Option<std::time::Instant>,
+    /// Car ordinal seen in raw packets. Free roam carries it while never
+    /// being recorded (DistanceTraveled stays 0 there, so the cutter never
+    /// opens) — onboarding detects the car without requiring an event.
+    pub udp_car: Option<i32>,
     pub split_requested: bool,
     /// Tune-change note from the dashboard, journaled against the NEXT stint
     /// that opens (journal lines describe the change since the previous stint).
@@ -230,6 +234,7 @@ pub fn new_shared() -> SharedRecorder {
         file: None,
         packets: 0,
         last_udp: None,
+        udp_car: None,
         split_requested: false,
         pending_note: None,
         pending_base_rev: None,
@@ -320,7 +325,17 @@ pub fn run_recorder(
         let mut actions = if split { cutter.split() } else { Vec::new() };
         match socket.recv_from(&mut buf) {
             Ok((len, _)) => {
-                shared.lock().unwrap().last_udp = Some(std::time::Instant::now());
+                {
+                    let mut s = shared.lock().unwrap();
+                    s.last_udp = Some(std::time::Instant::now());
+                    // Menu packets zero everything but the timestamp, so a
+                    // non-zero ordinal is a real car (free roam included).
+                    if let Ok(f) = crate::packet::decode(&buf[..len])
+                        && f.car_ordinal != 0
+                    {
+                        s.udp_car = Some(f.car_ordinal);
+                    }
+                }
                 actions.extend(cutter.feed(unix_micros(), &buf[..len]));
             }
             Err(e)

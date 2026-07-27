@@ -24,8 +24,12 @@
   });
   let liveCar = $derived.by(() => {
     const f = app.live?.frame;
-    if (!fresh || !f?.raceOn || !f.car) return null;
-    return { car: f.car, name: f.carName };
+    if (fresh && f?.raceOn && f.car) return { car: f.car, name: f.carName };
+    // Free roam is never recorded (no frames), but raw packets carry the
+    // ordinal — detection must not require starting an event.
+    const r = app.live?.recorder;
+    if (r?.udpCar) return { car: r.udpCar, name: r.udpCarName ?? null };
+    return null;
   });
 
   // Once seen, the detected car sticks (the user pauses the game to click).
@@ -100,7 +104,7 @@
         {:else if liveCar || detected}
           ✓ receiving — car detected: <b>{carLabel((liveCar ?? detected)!)}</b>
         {:else}
-          ✓ receiving — the wiring works. Now drive: the car shows up on the first driving frame
+          ✓ receiving — the wiring works. Now get in a car: it shows up on the first driving packet
         {/if}
       </div>
       {#if app.live?.recorder.mode === "external"}

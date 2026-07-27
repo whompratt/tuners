@@ -277,6 +277,9 @@ export type RecorderView = {
 	 *  mode (another capture owns the socket) or before the first packet.
 	 */
 	udpAgeMs: number | null,
+	/**  Car seen in raw packets (free roam counts; nothing need be recorded). */
+	udpCar: number | null,
+	udpCarName: string | null,
 };
 
 export type RowAnchorView = {

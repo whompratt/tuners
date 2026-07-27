@@ -106,6 +106,9 @@ pub struct RecorderView {
     /// here + no frame = hooked up, just not driving yet. None in external
     /// mode (another capture owns the socket) or before the first packet.
     pub udp_age_ms: Option<u32>,
+    /// Car seen in raw packets (free roam counts; nothing need be recorded).
+    pub udp_car: Option<i32>,
+    pub udp_car_name: Option<String>,
 }
 
 /// The `live-state` event payload (was the SSE `state` event).
@@ -164,6 +167,11 @@ pub fn recorder_view(r: &crate::record::RecorderStatus) -> RecorderView {
         udp_age_ms: r
             .last_udp
             .map(|t| t.elapsed().as_millis().min(u32::MAX as u128) as u32),
+        udp_car: r.udp_car,
+        udp_car_name: r
+            .udp_car
+            .and_then(crate::cars::car_name)
+            .map(str::to_string),
     }
 }
 
