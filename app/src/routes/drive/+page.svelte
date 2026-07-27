@@ -32,7 +32,7 @@
   }
 </script>
 
-<div class="screen" class:stale style="transition:opacity 0.3s">
+<div class="screen">
   <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
     <h2 style="margin:0;color:var(--ink)">Drive</h2>
     <span style="color:var(--muted);font-size:13px">{app.live?.file || ""}</span>
@@ -72,7 +72,12 @@
   {/if}
 
   <div style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap;margin-top:10px">
-    <div id="live-quality" class={qBand === "good" ? "q-good" : qBand === "ok" ? "q-ok" : ""} style="margin-top:18px">
+    <div
+      id="live-quality"
+      class={qBand === "good" ? "q-good" : qBand === "ok" ? "q-ok" : ""}
+      class:dim={stale || !q}
+      style="margin-top:18px"
+    >
       <svg viewBox="0 0 100 62" width="230" aria-label="data confidence">
         <path class="q-track" d="M 10 52 A 40 40 0 0 1 90 52" />
         <path
@@ -97,32 +102,32 @@
       {#key app.unitsTick}
         <div class="readout">
           <div class="label">Speed</div>
-          <div class="value">{f ? ((f.speedMps ?? 0) * SPD().k).toFixed(0) : "–"} <span class="unit">{SPD().l}</span></div>
+          <div class="value" class:dim={!f}>{f ? ((f.speedMps ?? 0) * SPD().k).toFixed(0) : "–"} <span class="unit">{SPD().l}</span></div>
         </div>
         <div class="readout">
           <div class="label">Gear</div>
-          <div class="value">{f ? (f.gear === 0 ? "R" : f.gear === 11 ? "–" : f.gear) : "–"}</div>
+          <div class="value" class:dim={!f}>{f ? (f.gear === 0 ? "R" : f.gear === 11 ? "–" : f.gear) : "–"}</div>
           <div class="sub">{f ? `${(f.rpm ?? 0).toFixed(0)} / ${(f.maxRpm ?? 0).toFixed(0)} rpm` : ""}</div>
         </div>
         <div class="readout minor">
           <div class="label">Lap {f ? (f.lapNumber ?? 0) + 1 : "–"}</div>
-          <div class="value">{f ? fmtClock(f.currentLapS ?? 0) : "–"}</div>
+          <div class="value" class:dim={!f}>{f ? fmtClock(f.currentLapS ?? 0) : "–"}</div>
         </div>
         <div class="readout">
           <div class="label">Lap times</div>
-          <div class="trow">last <span class="num">{f && (f.lastLapS ?? 0) > 0 ? fmtLap(f.lastLapS ?? 0) : "–"}</span></div>
-          <div class="trow">best <span class="num">{f && (f.bestLapS ?? 0) > 0 ? fmtLap(f.bestLapS ?? 0) : "–"}</span></div>
+          <div class="trow">last <span class="num" class:dim={!(f && (f.lastLapS ?? 0) > 0)}>{f && (f.lastLapS ?? 0) > 0 ? fmtLap(f.lastLapS ?? 0) : "–"}</span></div>
+          <div class="trow">best <span class="num" class:dim={!(f && (f.bestLapS ?? 0) > 0)}>{f && (f.bestLapS ?? 0) > 0 ? fmtLap(f.bestLapS ?? 0) : "–"}</span></div>
         </div>
         <div class="readout minor">
           <div class="label">Fuel</div>
-          <div class="value">{f ? `${((f.fuel ?? 0) * 100).toFixed(0)}%` : "–"}</div>
+          <div class="value" class:dim={!f}>{f ? `${((f.fuel ?? 0) * 100).toFixed(0)}%` : "–"}</div>
         </div>
         <div class="readout">
           <div class="label">Tires {tempLabel()}</div>
           <div class="temps">
             {#each f ? f.tireTempF : [null, null, null, null] as t, i (i)}
               <!-- thresholds in canonical °F -->
-              <div class={t == null ? "" : t < 160 ? "cold" : t > 240 ? "hot" : ""}>
+              <div class={t == null ? "dim" : t < 160 ? "cold" : t > 240 ? "hot" : ""}>
                 {t == null ? "–" : tempDisp(t).toFixed(0)}
               </div>
             {/each}

@@ -75,7 +75,9 @@ canvas { width: 100%; display: block; }
 .tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
 pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; }
 .placeholder { color: var(--muted); }
-.screen.stale { opacity: 0.55; }
+/* Drive: dim only what has no data (placeholder values, idle gauge) —
+   whole-screen dimming while not recording was uncomfortable. */
+.dim { opacity: 0.4; transition: opacity 0.3s; }
 #rec-split, .btn {
   background: none; border: 1px solid var(--border); border-radius: 6px;
   color: var(--ink-2); font: 13px system-ui; padding: 5px 12px; cursor: pointer;
