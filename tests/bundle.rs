@@ -1,4 +1,4 @@
-//! End-to-end bundle round trip (plan 009 phase 1): build from the real
+//! End-to-end bundle round trip: build from the real
 //! committed fixture, reopen, and prove the parsers accept every member and
 //! that free text is provably absent.
 

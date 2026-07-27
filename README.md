@@ -41,5 +41,3 @@ lap counts, A-B-A protocol).
 - [docs/design.md](docs/design.md) — objectives, constraints, architecture, design principles
 - [docs/telemetry.md](docs/telemetry.md) — the packet, verified quirks, what's (not) available
 - [docs/guide.md](docs/guide.md) — user-facing capture & interpretation guidance
-- [docs/plans/](docs/plans/) — numbered plans with status (001 capture … 008 damping/events)
-- [CLAUDE.md](CLAUDE.md) — current work state

@@ -150,7 +150,7 @@ export type FrameView = {
 };
 
 /**
- *  Preview of a historic backfill (plan 009): what "share existing
+ *  Preview of a historic backfill: what "share existing
  *  recordings" would queue.
  */
 export type HistoryPlanView = {
@@ -342,7 +342,7 @@ export type SessionsView = {
 };
 
 /**
- *  Telemetry-collection state (plan 009): consent flag, pseudonymous sender
+ *  Telemetry-collection state: consent flag, pseudonymous sender
  *  id, and outbox depth. The token itself never leaves the config file.
  */
 export type SharingView = {

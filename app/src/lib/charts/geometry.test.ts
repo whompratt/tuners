@@ -1,5 +1,5 @@
 // Chart geometry suite — possible at all because layout is now pure
-// (plan 010 phase 2: geometry/sizing split).
+// (geometry/sizing split).
 
 import { describe, expect, it } from "vitest";
 import { lapsBinAt, lapsLayout } from "./laps";

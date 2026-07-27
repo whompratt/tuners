@@ -1,4 +1,4 @@
-// Cloudflare Worker config for the telemetry-collection endpoint (plan 009).
+// Cloudflare Worker config for the telemetry-collection endpoint.
 // Deploy: npx wrangler deploy   Local dev: npx wrangler dev (emulated R2,
 // secrets from .dev.vars).
 //

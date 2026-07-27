@@ -1,4 +1,4 @@
-# tuners-collect — the deployed collection endpoint (plan 009)
+# tuners-collect — the deployed collection endpoint
 
 A Cloudflare Worker in front of a private R2 bucket. It is deliberately dumb:
 rate limit, token shape, name check, caps, then the body streams straight

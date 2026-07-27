@@ -1,5 +1,5 @@
 // Register-selection helpers over the one reconciled recommendation list
-// (plan 010): Home shows the PRIMARY entry imperatively, Setup shows each
+// Home shows the primary entry imperatively, Setup shows each
 // family spatially, Analysis shows everything evidentially.
 
 import type { AdviseView, RecommendationView } from "./bindings";

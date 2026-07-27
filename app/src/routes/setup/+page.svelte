@@ -224,7 +224,7 @@
       </div>
     {:else if baselineJustSaved}
       <div class="pending-bar">
-        <b style="color:var(--ok)">✓ baseline saved</b>
+        <b style="color:var(--ok)">baseline saved</b>
         <span style="color:var(--ink-2)">
           now go drive — recording is armed. Start a race, rivals lap, or route event
           (free roam isn't recorded); your first run unlocks advice.
@@ -253,7 +253,7 @@
           <h3>
             {group}
             {#if isPriority}<span class="badge" style="color:var(--accent)">next priority</span>{/if}
-            {#if hold}<span class="badge" style="color:var(--ok)">✓ bracketed — hold</span>{/if}
+            {#if hold}<span class="badge" style="color:var(--ok)">bracketed — hold</span>{/if}
           </h3>
           {#each fields as [k, l] (k)}
             {#key app.unitsTick}
@@ -301,7 +301,7 @@
                         title={hasPending && r !== primary ? "adds a 2nd change — the next run can't separate them" : undefined}
                         onclick={() => accept(r.apply as [string, string][])}
                       >
-                        {r === primary ? "apply" : hasPending ? "adds a 2nd change ⚠" : "apply instead"}
+                        {r === primary ? "apply" : hasPending ? "adds a 2nd change" : "apply instead"}
                       </Button>
                     </div>
                   {/if}

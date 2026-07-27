@@ -1,6 +1,6 @@
 // Units: storage is canonical imperial (FH6 internals); prefs are pure
 // display formatting, switchable any time. k converts canonical -> display.
-// Ported 1:1 from the old dashboard (plan 010 phase 1b).
+// Ported 1:1 from the old dashboard.
 
 export type UnitDef = { k: number; dp: number; l: string };
 

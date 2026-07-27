@@ -1,4 +1,4 @@
-//! Strict-mode ingest (plan 009 phase 3): good bundles are filed per sender,
+//! Strict-mode ingest: good bundles are filed per sender,
 //! re-runs are idempotent, and hostile bundles — including one with CORRECT
 //! hashes but smuggled prose — land in quarantine with a written reason.
 

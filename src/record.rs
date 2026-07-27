@@ -432,7 +432,7 @@ pub fn run_recorder(
                         s.last_closed = s.file.take();
                         s.last_closed.clone()
                     };
-                    // Finalization is the collection moment (plan 009): bundle
+                    // Finalization is the collection moment: bundle
                     // into the outbox on a worker thread, never inline.
                     if let Some(path) = closed {
                         crate::collect::maybe_enqueue(path, session_file.clone(), open_car);

@@ -1,5 +1,5 @@
 //! Typed app-facing API: the view structs and operations behind the desktop
-//! app's commands (plan 010 phase 1a). Transport-agnostic — serialization is
+//! app's commands. Transport-agnostic — serialization is
 //! serde, and every builder is a pure function over engine state, so commands
 //! and tests share the exact same surface. Wire names stay camelCase to match
 //! the dashboard's existing JSON contract.
@@ -232,7 +232,7 @@ pub fn effect_fields() -> Vec<EffectFieldView> {
 
 // ------------------------------------------------------------------- sharing
 
-/// Telemetry-collection state (plan 009): consent flag, pseudonymous sender
+/// Telemetry-collection state: consent flag, pseudonymous sender
 /// id, and outbox depth. The token itself never leaves the config file.
 #[derive(Serialize, Type, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -291,7 +291,7 @@ pub fn set_sharing(
     Ok(sharing_view(config, outbox))
 }
 
-/// Preview of a historic backfill (plan 009): what "share existing
+/// Preview of a historic backfill: what "share existing
 /// recordings" would queue.
 #[derive(Serialize, Type, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -960,7 +960,7 @@ pub fn delete_stint(
     }
 }
 
-/// Build the stint's telemetry bundle for manual export (plan 009). The
+/// Build the stint's telemetry bundle for manual export. The
 /// bundler self-verifies, so an Ok is a bundle that already round-tripped.
 pub fn export_bundle(
     sessions_dir: &str,

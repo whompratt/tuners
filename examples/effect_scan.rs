@@ -1,4 +1,4 @@
-//! Plan 011 phase B: dump every recording's effect vector (overall + per
+//! Dump every recording's effect vector (overall + per
 //! flying lap) as TSV, for offline noise-floor and responsiveness analysis.
 
 use std::path::Path;

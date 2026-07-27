@@ -184,7 +184,7 @@ pub struct StintMetrics {
     /// (brake balance / diff decel live here, not in positional phase means:
     /// the 2026-07-21 max-decel A/B cost 0.75s with phase means unmoved).
     pub balance_on_brake: BandBalance,
-    /// Corner-event segmentation (plan 008): entry/exit phase balance across
+    /// Corner-event segmentation: entry/exit phase balance across
     /// detected corners. None when the stint has no corner events.
     pub corners: Option<super::corners::CornerSummary>,
     /// Drive-wheel spin as a fraction of on-throttle samples. None if never on throttle.

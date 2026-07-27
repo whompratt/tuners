@@ -71,7 +71,7 @@
             <button
               class="exp"
               title="export telemetry bundle (raw run + setup history, no free text)"
-              onclick={(e) => { e.stopPropagation(); exportBundle(s.file); }}>⇩</button>
+              onclick={(e) => { e.stopPropagation(); exportBundle(s.file); }}>↓</button>
             <button
               class="del"
               title="delete this run"

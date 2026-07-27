@@ -6,7 +6,7 @@
 //! lap's span is taken whole, judged on total elapsed time. This keeps a mistake's
 //! fast corner entry chained to its slow exit — a missed braking point is faster
 //! into the corner and can never be combined with a clean lap's exit, which would
-//! fabricate a physically impossible lap (docs/plans/003-comparison.md).
+//! fabricate a physically impossible lap.
 
 use super::{LapSlice, TimedFrame, driving_segments, split_laps};
 use std::collections::BTreeSet;

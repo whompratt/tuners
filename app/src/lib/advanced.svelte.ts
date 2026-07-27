@@ -1,4 +1,4 @@
-// Advanced mode (plan 010): ONE boolean that only changes default expansion
+// Advanced mode: ONE boolean that only changes default expansion
 // state — purely presentational. Persisted so the choice survives restarts.
 
 const KEY = "tuners-advanced";

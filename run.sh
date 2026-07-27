@@ -1,5 +1,5 @@
 #!/bin/bash
-# Windows-side dev loop (plan 010 phase 5): sync the repo to the Windows
+# Windows-side dev loop: sync the repo to the Windows
 # filesystem and run `pnpm tauri dev` there, so the app sees real FH6 UDP
 # telemetry (the game can't reach a WSL socket). Needs Node + pnpm installed
 # on the Windows side; the first run installs app/node_modules there.

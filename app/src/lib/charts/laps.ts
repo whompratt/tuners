@@ -1,4 +1,4 @@
-// Speed-by-distance lap chart: pure geometry + pure draw (plan 010 phase 2).
+// Speed-by-distance lap chart: pure geometry + pure draw.
 // Layout math is DOM-free and unit-tested; the Chart host owns sizing.
 
 import type { Laps } from "$lib/app.svelte";

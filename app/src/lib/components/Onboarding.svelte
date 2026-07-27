@@ -102,9 +102,9 @@
         {#if !receiving}
           <span class="pulse">●</span> listening on port 20440…
         {:else if liveCar || detected}
-          ✓ receiving — car detected: <b>{carLabel((liveCar ?? detected)!)}</b>
+          receiving — car detected: <b>{carLabel((liveCar ?? detected)!)}</b>
         {:else}
-          ✓ receiving — the wiring works. Now get in a car: it shows up on the first driving packet
+          receiving — the wiring works. Now get in a car: it shows up on the first driving packet
         {/if}
       </div>
       {#if app.live?.recorder.mode === "external"}

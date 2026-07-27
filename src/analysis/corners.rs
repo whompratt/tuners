@@ -1,4 +1,4 @@
-//! Corner-event segmentation (plan 008): contiguous cornering episodes split
+//! Corner-event segmentation: contiguous cornering episodes split
 //! into entry / exit phases at the minimum-speed apex. This is the vocabulary
 //! scenario-specific advice (diff decel, brake balance, rebound) is written
 //! in; rules on top of these metrics wait for deliberate calibration A/Bs,

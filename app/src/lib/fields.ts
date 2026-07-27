@@ -1,5 +1,5 @@
 // Tune/fact field definitions, grouped exactly like the game's tuning screens.
-// Ported 1:1 from the old dashboard (plan 010 phase 1b).
+// Ported 1:1 from the old dashboard.
 
 export const TUNE_GROUPS: [string, [string, string][]][] = [
   ["Tire pressures", [["tire_pressure_f", "front"], ["tire_pressure_r", "rear"]]],

@@ -1,4 +1,4 @@
-//! Phase 2 end-to-end (plan 009): outbox enqueue + the curl drainer against a
+//! Phase 2 end-to-end: outbox enqueue + the curl drainer against a
 //! real local `tuners receive` (open mode) — the same protocol the deployed
 //! Worker speaks, so a green drain here is the whole sender pipeline working.
 

@@ -37,7 +37,7 @@ USAGE:
   tuners receive  [--port 8090] [--bind 127.0.0.1] [--root inbox]
                   [--tokens receive-tokens.txt] [--blocklist receive-blocklist.txt]
                   [--max-mb 64] [--daily-mb 512] [--global-mb 20480]
-                    telemetry-collection endpoint (plan 009), local twin of
+                    telemetry-collection endpoint, local twin of
                     worker/: bundle PUTs stored per sender under --root. Open
                     mode by default (client-generated 64-hex tokens, sender =
                     sha256 prefix); a --tokens file that exists = lockdown

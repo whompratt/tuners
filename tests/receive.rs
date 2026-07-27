@@ -1,4 +1,4 @@
-//! End-to-end tests for the bundle receiver (plan 009): a real listener on an
+//! End-to-end tests for the bundle receiver: a real listener on an
 //! ephemeral port, raw HTTP over TcpStream. The same requests must behave
 //! identically against the Cloudflare Worker (worker/) — this is the protocol's
 //! reference implementation.

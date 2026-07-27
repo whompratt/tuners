@@ -158,7 +158,7 @@
                         vs step {st.anchor.vsStep} ({st.anchor.areas}):
                         <span style="color:{OUTCOME_COLOR[st.anchor.word] || 'inherit'}">
                           {st.anchor.word} {sgn(st.anchor.deltaS)}
-                        </span>{st.anchor.weak ? " ⚠" : ""}
+                        </span>{st.anchor.weak ? " (single-lap)" : ""}
                       </span>
                     {:else}
                       <span style="color:var(--muted)">
@@ -178,7 +178,7 @@
                   {#if st.outcome}
                     {@const o = st.outcome}
                     {#if !("error" in o) && o.unequalLaps}
-                      <span style="color:var(--muted)" title="unequal lap counts bias the ideal">⚠</span>
+                      <span style="color:var(--muted)" title="unequal lap counts bias the ideal">unequal laps</span>
                     {/if}
                   {/if}
                 </td>
@@ -209,7 +209,7 @@
             <span style="color:{OUTCOME_COLOR[a.anchor.word] || 'inherit'}">{a.anchor.word} {sgn(a.anchor.deltaS)}</span>
             <span title="where the time moved: corner entry / corner exit / straights">
               entry {sgn(a.anchor.split[0])} / exit {sgn(a.anchor.split[1])} / straights {sgn(a.anchor.split[2])}
-            </span>{a.anchor.weak ? " ⚠ single-lap side" : ""}{a.anchor.reconciled ? "" : " (multi-area — informational)"}
+            </span>{a.anchor.weak ? " — single-lap side" : ""}{a.anchor.reconciled ? "" : " (multi-area — informational)"}
           {:else}
             step {a.anchor.vsStep} has the same setup — {sgn(a.anchor.deltaS)} ideal is pure driver/track drift
           {/if}
@@ -268,7 +268,7 @@
                     {:else}
                       <td></td><td></td><td></td>
                     {/if}
-                    <td style="color:var(--muted)">{m.direct ? "direct" : "attributed"}{m.weak ? " ⚠ single-lap" : ""}</td>
+                    <td style="color:var(--muted)">{m.direct ? "direct" : "attributed"}{m.weak ? " — single-lap" : ""}</td>
                   </tr>
                 {/each}
               </tbody>

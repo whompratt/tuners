@@ -1,6 +1,6 @@
 # Releasing the desktop app
 
-The release pipeline is `.github/workflows/release.yml` (plan 010 phase 5).
+The release pipeline is `.github/workflows/release.yml`.
 Pushing a `v*` tag builds installers on GitHub's runners and attaches them
 to a **draft** GitHub release — nothing goes public until the draft is
 published by hand.

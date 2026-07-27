@@ -1,6 +1,6 @@
 //! Live view: tail the newest session file as `tuners capture` appends to it and
 //! keep a shared snapshot (latest frame + data-quality summary) for the dashboard
-//! to relay over SSE (docs/plans/006-dashboard.md phase 4).
+//! to relay over SSE.
 //!
 //! The tailer never binds the UDP port — the recorder (or capture) owns it. StintWriter
 //! writes each record with a single unbuffered `write_all`, so tailing the file
@@ -81,7 +81,7 @@ impl StintTail {
 }
 
 /// Confidence band for the dashboard gauge, derived from the corroboration
-/// score. Cutoffs calibrated against the real session library (see plan 006):
+/// score. Cutoffs calibrated against the real session library:
 /// sessions the user drew tuning conclusions from should land in Good.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Band {

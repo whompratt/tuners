@@ -162,6 +162,6 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 ## Sources
 
 - [Official FH6 Data Out documentation (Forza Support)](https://support.forza.net/hc/en-us/articles/51744149102611-Forza-Horizon-6-Data-Out-Documentation)
-  — full text pasted by the user 2026-07-19; layout above transcribed from it.
+  — layout above transcribed from the full text as of 2026-07-19.
 - [fh6-tel — Rust/Tauri FH6 telemetry dashboard](https://github.com/TheBanHammer/fh6-tel)
 - [MOZA FH6 telemetry setup guide](https://support.mozaracing.com/en/support/solutions/articles/70000683812-forza-horizon-6-telemetry-settings-control-mapping-setup-guide)

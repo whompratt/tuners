@@ -64,7 +64,7 @@ pub struct AbaView {
     /// Per-stint drift over the pair — the noise floor for outcome margins.
     pub drift_s: f32,
     /// Drift-corrected behavioural movement of the excursion, per effect
-    /// field ((exc − rev)/2, plan 011).
+    /// field ((exc − rev)/2).
     pub effects: effects::Effects,
 }
 
@@ -90,7 +90,7 @@ pub struct AnchorView {
     pub reconciled: bool,
     /// Where the time moved vs the anchor: (entry, exit, straights).
     pub split: (f32, f32, f32),
-    /// Behavioural movement anchor → last stint (plan 011 effect deltas).
+    /// Behavioural movement anchor → last stint (effect deltas).
     pub effects: effects::Effects,
 }
 
@@ -105,7 +105,7 @@ pub struct MeasurementView {
     pub split: Option<(f32, f32, f32)>,
     pub weak: bool,
     pub direct: bool,
-    /// Behavioural movement of the underlying stint pair (plan 011). For an
+    /// Behavioural movement of the underlying stint pair. For an
     /// attributed compound clause this is the WHOLE pair's movement — the
     /// vector belongs to the pair, siblings share it.
     pub effects: effects::Effects,
@@ -726,7 +726,7 @@ pub fn advise(
 
     // Per-stint overall metrics (computed once) and their effect vectors:
     // every stint-pair comparison below carries its behavioural movement
-    // alongside the time delta (plan 011 phase A).
+    // alongside the time delta.
     let mets: Vec<Option<analysis::metrics::StintMetrics>> = loaded
         .iter()
         .map(|(_, stint, _)| stint_overall_metrics(stint))
@@ -1003,7 +1003,7 @@ pub fn advise(
         /// share this clause is judged on). A corner-channel sibling would
         /// contaminate the curve.
         clean: bool,
-        /// Behavioural movement of the stint pair (plan 011 phase A).
+        /// Behavioural movement of the stint pair.
         effects: effects::Effects,
     }
     let mut measurements: Vec<Measurement> = Vec::new();
@@ -1387,7 +1387,7 @@ pub fn advise(
                         .copied()
                         .flatten()
                         .and_then(|b| b.values.get(key)?.parse::<f32>().ok());
-                    // Convergence honesty (plan 007): "optimum" is a bracket
+                    // Convergence honesty: "optimum" is a bracket
                     // claim, not proof. Quote the fit's own expected gain for
                     // the move; when it is under the campaign's measured
                     // noise floor, holding is equally defensible and the

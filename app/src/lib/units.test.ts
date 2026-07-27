@@ -1,4 +1,4 @@
-// Unit-conversion suite (plan 010: "port the toDisp/toCanon suite").
+// Unit-conversion suite.
 // Storage is canonical imperial; display prefs must round-trip losslessly
 // enough that repeated open/save cycles never drift a value.
 

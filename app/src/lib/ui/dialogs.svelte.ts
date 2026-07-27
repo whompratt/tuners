@@ -1,4 +1,4 @@
-// In-app modal confirm/alert service (plan 010: real modals with explicit
+// In-app modal confirm/alert service (real modals with explicit
 // verb buttons — confirm()/alert() are banned, and OS dialogs are reserved
 // for file pickers). DialogHost (mounted once in the page) renders the
 // pending request; confirmDialog/alertDialog resolve when the user acts.

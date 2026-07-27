@@ -1,4 +1,4 @@
-//! Ingest (plan 009 phase 3): file received bundles into the per-sender
+//! Ingest: file received bundles into the per-sender
 //! library, in strict mode. Every bundle is untrusted input — `bundle::open`
 //! already enforces hashes/members/version, and this layer re-runs the REAL
 //! parsers on top: every packet must decode, the session must belong to the

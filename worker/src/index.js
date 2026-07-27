@@ -1,4 +1,4 @@
-// Telemetry bundle collector (plan 009): the deployed twin of `tuners
+// Telemetry bundle collector — the deployed twin of `tuners
 // receive`. A dumb authenticated PUT into R2 — never parses telemetry;
 // validation/quarantine happen in `tuners ingest` after the bucket is synced
 // down. The protocol (and every status code) is pinned by tests/receive.rs

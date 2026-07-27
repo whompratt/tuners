@@ -1,8 +1,8 @@
-//! Effect vectors (plan 011 phase A): per-stint setup-sensitive behavioural
+//! Effect vectors: per-stint setup-sensitive behavioural
 //! scalars, and pairwise deltas attached to campaign measurements.
 //!
 //! Purely empirical — fields are recorded, never interpreted here. The 2026-07
-//! evidence (plan 011): sustained averaged metrics move above noise but are
+//! evidence: sustained averaged metrics move above noise but are
 //! drift-contaminated (the Ford GT ARB series' balance index tracked the
 //! session clock, not the slider), so consumers must read deltas against the
 //! per-field noise floors, and A-B-A pairs get the drift-corrected form.
@@ -50,7 +50,7 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
 /// Per-field library noise floor: largest same-setup stint-mean movement we
 /// should shrug at. Calibrated 2026-07-26 on the real recording library
 /// (examples/effect_scan.rs — same-setup cross-stint pairs plus lap-to-lap
-/// spread; see plan 011 phase B table). Campaign-measured floors, when a
+/// spread). Campaign-measured floors, when a
 /// campaign has same-setup pairs, take the max with these.
 pub fn noise_floor(key: &str) -> f32 {
     match key {

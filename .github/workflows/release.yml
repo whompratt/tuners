@@ -1,4 +1,4 @@
-# Release builds (plan 010 phase 5): push a `v*` tag to build the desktop app
+# Release builds: push a `v*` tag to build the desktop app
 # for Windows (NSIS + MSI) and Linux (AppImage + deb + rpm) and attach the
 # installers to a draft GitHub release. Publish the draft by hand after a
 # smoke test. Updater artifacts/signing are wired later (needs a keypair —

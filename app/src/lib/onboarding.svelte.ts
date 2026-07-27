@@ -1,4 +1,4 @@
-// First-run onboarding (plan 010 phase 4): a one-time wizard shown when the
+// First-run onboarding: a one-time wizard shown when the
 // app boots with no project. Completion (or skipping) persists; users with an
 // existing project never see it. Reopenable from Home's no-project state.
 

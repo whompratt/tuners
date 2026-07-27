@@ -35,7 +35,7 @@
     const d = Math.abs(st.outcome.deltaS ?? 0).toFixed(2);
     const word = st.outcome.word;
     if (word === "improved")
-      return { tone: "ok", text: `Run ${runN}: ${d}s faster than run ${runN - 1} ✓ your last change worked` };
+      return { tone: "ok", text: `Run ${runN}: ${d}s faster than run ${runN - 1} — your last change worked` };
     if (word === "WORSE")
       return { tone: "bad", text: `Run ${runN}: ${d}s slower than run ${runN - 1} — your last change hurt` };
     return { tone: "meh", text: `Run ${runN}: within noise of run ${runN - 1} (${d}s) — inconclusive` };
@@ -178,7 +178,7 @@
               <div class="dash-line" style="margin-top:6px">{consequence}</div>
             {/if}
             {#if lastStep?.outcome && !("error" in lastStep.outcome) && lastStep.outcome.unequalLaps && prevStep}
-              <div class="dash-line">⚠ unequal lap counts ({prevStep.laps} vs {lastStep.laps}) bias this comparison</div>
+              <div class="dash-line">unequal lap counts ({prevStep.laps} vs {lastStep.laps}) bias this comparison</div>
             {/if}
           {:else if app.adviceLoading}
             <div class="dash-line">analyzing your runs…</div>
@@ -242,7 +242,7 @@
                 {applying ? "applying…" : "apply"}
               </Button>
             {:else if isHold(primary)}
-              <span style="color:var(--ok);font-size:13px">✓ nothing to change here — drive to confirm</span>
+              <span style="color:var(--ok);font-size:13px">nothing to change here — drive to confirm</span>
             {/if}
             <details style="display:inline-block">
               <summary style="cursor:pointer;color:var(--muted);font-size:13px">why?</summary>

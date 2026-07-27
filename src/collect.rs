@@ -1,4 +1,4 @@
-//! Opt-in telemetry collection, sender side (plan 009 phase 2): consent
+//! Opt-in telemetry collection, sender side: consent
 //! config, the outbox spool, and the idle-gated drainer.
 //!
 //! Consent lives in `tune-collect.txt` (default OFF; the dashboard toggle
@@ -63,7 +63,7 @@ impl CollectConfig {
         std::fs::write(
             path,
             format!(
-                "# tuners telemetry collection (docs/plans/009-data-collection.md)\n\
+                "# tuners telemetry collection\n\
                  # enabled = on shares stint bundles (raw driving telemetry, setup\n\
                  # values, tune deltas — no names, no free text) for tool development.\n\
                  enabled = {}\nendpoint = {}\ntoken = {}\n",
@@ -256,7 +256,7 @@ fn sent_names(outbox: &Path) -> std::collections::BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// What "share existing recordings" would do (plan 009 addendum): historic
+/// What "share existing recordings" would do: historic
 /// stints are shared per CAMPAIGN — each journaled stint pairs with its own
 /// campaign's session + journal, so archived campaigns ship with honest
 /// context instead of the active session's. Unjournaled recordings have no

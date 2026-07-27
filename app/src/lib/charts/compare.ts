@@ -1,4 +1,4 @@
-// A/B comparison chart: pure geometry + pure draw (plan 010 phase 2).
+// A/B comparison chart: pure geometry + pure draw.
 // Speed overlay, per-250m delta bars, cumulative gap curve.
 
 import type { Palette } from "./palette";

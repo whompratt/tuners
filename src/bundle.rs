@@ -1,4 +1,4 @@
-//! Stint bundles (plan 009 phase 1): the unit of telemetry collection. One
+//! Stint bundles: the unit of telemetry collection. One
 //! bundle = one raw recording plus the session/journal context needed to
 //! interpret it, with all free text structurally absent — the filtered files
 //! are rebuilt from parsed structures and a strict grammar, never redacted.

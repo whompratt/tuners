@@ -1,4 +1,4 @@
-//! Telemetry bundle receiver (plan 009): the collection endpoint. A dumb
+//! Telemetry bundle receiver: the collection endpoint. A dumb
 //! authenticated PUT into filesystem storage — the server never parses
 //! telemetry; validation and quarantine happen later in `tuners ingest`.
 //! Hand-rolled HTTP over std like serve.rs; TLS belongs to a reverse proxy

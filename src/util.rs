@@ -2,7 +2,7 @@
 
 pub const MPS_TO_MPH: f32 = 2.236_936_3;
 
-/// Single data root (plan 010): sessions, tune files, journals, archives,
+/// Single data root: sessions, tune files, journals, archives,
 /// outbox, and collection config all resolve under one directory. Resolution
 /// order: `TUNERS_DATA` env, then a root installed by the app shell
 /// (app_data_dir), then the current directory — which keeps CLI behavior in
@@ -114,7 +114,7 @@ pub fn utc_stamp(unix_secs: u64) -> String {
     )
 }
 
-/// Streaming SHA-256 (FIPS 180-4), for bundle content hashes (plan 009).
+/// Streaming SHA-256 (FIPS 180-4), for bundle content hashes.
 /// Hand-rolled like everything else; checked against NIST test vectors below.
 pub struct Sha256 {
     state: [u32; 8],

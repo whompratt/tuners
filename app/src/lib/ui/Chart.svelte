@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  // The blessed chart pattern (plan 010 phase 2): THIS host is the only code
+  // The blessed chart pattern: THIS host is the only code
   // that ever sizes the canvas — sizing clears it, so draw functions must be
   // pure renderers. `draw` closes over data + hover state; a new closure
   // identity (or a resize) triggers a full re-render.

@@ -1,6 +1,6 @@
 //! Tuning journal: history-aware advice without knowing absolute setup values.
 //! Blind mode stays blind to numbers — hill-climbing only needs the *direction* of
-//! each past change plus the measured outcome (docs/plans/005-journal.md).
+//! each past change plus the measured outcome.
 
 use super::recommend::{Confidence, Recommendation};
 
@@ -55,7 +55,7 @@ pub fn family_for_area(area: &str) -> Option<Family> {
 
 /// A step on a parameter family. Still blind to absolute setup values: the
 /// optional magnitude is a SIGNED delta in slider units (negative = softer),
-/// which lets positions accumulate relative to baseline (plan 005 v2) without
+/// which lets positions accumulate relative to baseline without
 /// ever knowing where baseline actually sits on the slider.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Change {

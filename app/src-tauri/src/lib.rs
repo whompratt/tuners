@@ -1,4 +1,4 @@
-//! Tauri shell for the tuners desktop app (plan 010): typed commands over the
+//! Tauri shell for the tuners desktop app: typed commands over the
 //! engine's api module, TS bindings via tauri-specta, and the recorder/live/
 //! drainer lifecycle that `tuners serve` used to own.
 
@@ -315,7 +315,7 @@ fn run_emitter(
     }
 }
 
-/// Uploads queued bundles only while telemetry is idle (plan 009 phase 2).
+/// Uploads queued bundles only while telemetry is idle.
 /// Config is re-read every pass, so the sharing toggle takes effect without
 /// a restart.
 fn run_drainer(live: tuners::live::SharedLive, config: PathBuf, outbox: PathBuf) {

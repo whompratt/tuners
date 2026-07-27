@@ -1,4 +1,4 @@
-// Shared app state + cross-panel actions (plan 010 phase 1b). One $state
+// Shared app state + cross-panel actions. One $state
 // object mirrors what the old dashboard kept in module-level lets; panels
 // read it reactively and call the actions below.
 

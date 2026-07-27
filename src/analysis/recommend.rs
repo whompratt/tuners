@@ -1,6 +1,6 @@
 //! Recommendation rules: observations -> directional tune advice with evidence.
 //! Blind mode: tune values and slider limits are unknown, so advice is a direction
-//! phrased to survive unknown limits. See docs/plans/004-recommendations.md.
+//! phrased to survive unknown limits.
 
 use super::journal::{Change, Family};
 use super::metrics::StintMetrics;
@@ -94,7 +94,7 @@ const HIGH_REV_SHARE_MIN: f32 = 0.02;
 /// Suspension travel fractions.
 const BOTTOMING_FRAC: f32 = 0.03;
 const TOPPING_FRAC: f32 = 0.10;
-/// Damping calibration from deliberate min/max A/Bs (see plan 008). Baselines
+/// Damping calibration from deliberate min/max A/Bs. Baselines
 /// are SURFACE-driven: healthy reads ~5.5-6 reversals/s on tarmac but 12-16 on
 /// dirt, so thresholds are per-surface.
 const UNDERDAMPED_REV_TARMAC: f32 = 7.0;
@@ -308,7 +308,7 @@ fn balance_rule(
     };
     // Phase-redirected driveline primaries rest on the newer corner-phase
     // signal and on families whose behavioural evidence is historically weak
-    // (plan 007/008 A/Bs) — never High on the split alone.
+    // (deliberate min/max A/Bs) — never High on the split alone.
     let mut confidence = confidence;
     if matches!(family, Family::DiffAccel | Family::DiffDecel) {
         confidence = confidence.min(Confidence::Medium);
@@ -477,7 +477,7 @@ fn balance_rule(
     // Entry-understeer corroborated by the braking band (tarmac only — dirt
     // trail-brake rotation is technique): brake balance is its own lever on
     // the entry card, worth a separate journalable recommendation. Single-car
-    // calibration so far (plan 008 brake A/B), hence Low.
+    // calibration so far (one brake A/B), hence Low.
     if understeer
         && matches!(lean, PhaseLean::Entry)
         && !overall.surface_loose

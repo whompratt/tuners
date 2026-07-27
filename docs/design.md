@@ -63,8 +63,8 @@ UDP listener → packet decoder → session recorder (raw + decoded)
 - **UI**: local web dashboard. The Rust binary serves a browser UI over
   HTTP/WebSocket on localhost; charts render in the browser. Chosen over a TUI
   (charts/graphs are central to presenting telemetry) and over a desktop shell
-  (a Tauri wrap can be added later without changing the architecture). UI design is
-  Claude-led with user feedback; capture/analysis stay UI-agnostic.
+  (a Tauri wrap can be added later without changing the architecture).
+  Capture/analysis stay UI-agnostic.
 
 ## Non-goals (for now)
 
@@ -92,8 +92,8 @@ superseded driving) rather than discarding rewound laps.
 **Balance is the real coordinate system.** Setup changes act on lap time *through*
 behaviour (setting → balance → pace), and the first real trajectory showed the
 measured balance tracks the *driver's* preferred operating point more than the
-hardware — drivers adapt inputs to the feel they like. Long-term direction
-([plan 007](plans/007-learning.md)): per-driver balance priors and per-setting
+hardware — drivers adapt inputs to the feel they like. Long-term direction:
+per-driver balance priors and per-setting
 effect maps learned across cars, used as informed starting points and validated
 per car. Preferred balance differs by driver and surface; there is no universal
 "neutral is best".
