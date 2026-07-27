@@ -148,6 +148,15 @@
       {/if}
     {:else if app.adviceLoading}
       <div class="hero" style="color:var(--muted)">analyzing your runs…</div>
+    {:else if !app.stints.some((s) => s.car === app.session?.car)}
+      <!-- Tune on file, nothing driven yet: advise has no data and would
+           surface an error — this state is expected, not a fault. -->
+      <div class="hero">Tune saved — drive your first run.</div>
+      <div style="margin-top:8px;color:var(--muted);max-width:560px">
+        Recording is armed whenever the app is open. Start a race, rivals lap, or route
+        event in FH6 (free roam isn't recorded) — the verdict lands here when the run ends.
+      </div>
+      <div style="margin-top:14px"><a href="/drive">open the Drive view →</a></div>
     {:else if app.adviceError}
       <div class="hero" style="color:var(--muted)">{app.adviceError}</div>
     {:else}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { app, errMsg, loadAdvice, loadPending, loadSession } from "$lib/app.svelte";
   import { AREA_GROUP, isAccepted, isHold, primaryRec } from "$lib/advice";
   import { advanced } from "$lib/advanced.svelte";
@@ -136,10 +137,12 @@
       msg = errMsg(r.error);
       return;
     }
-    msg = "baseline saved — advice unlocks after your first run";
+    msg = "";
+    baselineJustSaved = true;
     await loadSession();
     await loadAdvice();
   }
+  let baselineJustSaved = $state(false);
 
   // --- the spatial register: recommendations per family card ---
   let primary = $derived(primaryRec(app.advice, latest));
@@ -218,6 +221,16 @@
             switching re-converts anything already typed; per-field prefs live in Projects
           </span>
         </div>
+      </div>
+    {:else if baselineJustSaved}
+      <div class="pending-bar">
+        <b style="color:var(--ok)">✓ baseline saved</b>
+        <span style="color:var(--ink-2)">
+          now go drive — recording is armed. Start a race, rivals lap, or route event
+          (free roam isn't recorded); your first run unlocks advice.
+        </span>
+        <span style="flex:1"></span>
+        <Button go onclick={() => goto("/")}>done — back to Home</Button>
       </div>
     {:else if app.pending}
       <div class="pending-bar">
