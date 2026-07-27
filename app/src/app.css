@@ -255,16 +255,6 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 .fam-grid {
   columns: 3 320px; column-gap: 14px; max-width: 1200px;
 }
-/* baseline stepper: one game screen at a time */
-.fam-grid.single { columns: 1; max-width: 460px; }
-.b-steps { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; max-width: 1200px; }
-.b-steps button {
-  background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  color: var(--muted); font: 12px var(--font-ui); padding: 3px 9px; cursor: pointer;
-}
-.b-steps button:hover { color: var(--ink); }
-.b-steps button.filled { color: var(--ink-2); border-color: var(--ok); }
-.b-steps button.current { color: var(--ink); border-color: var(--accent); }
 .fam-card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px 14px;

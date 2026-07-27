@@ -155,8 +155,8 @@
       <h2>Copy your tune in</h2>
       <p>
         Last step: transcribe the car's current tune from the game's tuning
-        screens — the Setup screen walks you through them one by one, in the
-        same order as the game.
+        screens — the Setup screen lays them out in the game's order, so you
+        can tab straight through and copy.
       </p>
       <p class="muted">
         Advice stays locked until this baseline exists: the app can't reason

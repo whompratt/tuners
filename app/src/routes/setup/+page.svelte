@@ -137,12 +137,12 @@
 
   let hasPending = $derived(!!app.pending);
 
-  // --- baseline transcription stepper (phase 4): one game screen at a time,
-  // in the game's own order, so entry is transcription rather than a wall of
-  // 30 inputs. The draft survives step changes; save happens once at the end.
-  let bStep = $state(0);
-  const enteredCount = (fields: [string, string][]) =>
-    fields.filter(([k]) => String(draft[k] ?? "").trim() !== "").length;
+  // Baseline entry shows every card at once — the cards mirror the game's
+  // tuning screens in order, so transcription is one tab-through of the
+  // whole form (a per-group stepper was tried and felt tedious).
+  let baselineEntered = $derived(
+    TUNE_GROUPS.flatMap(([, fields]) => fields).filter(([k]) => String(draft[k] ?? "").trim() !== "").length,
+  );
 </script>
 
 <div class="screen">
@@ -156,26 +156,15 @@
   {:else}
     {#if baselineMode}
       <div class="pending-bar">
-        <b>Baseline entry — screen {bStep + 1} of {TUNE_GROUPS.length}</b>
+        <b>Baseline entry</b>
         <span style="color:var(--ink-2)">
-          copy your tune exactly as the game's tuning screens show it — leave a field empty when the car can't tune it
+          the cards mirror the game's tuning screens in order — tab through and copy your tune exactly;
+          leave a field empty when the car can't tune it
         </span>
         <span style="flex:1"></span>
-        {#if bStep > 0}<Button onclick={() => bStep--}>back</Button>{/if}
-        {#if bStep < TUNE_GROUPS.length - 1}
-          <Button go onclick={() => bStep++}>next screen</Button>
-        {:else}
-          <Button go onclick={saveBaseline}>save baseline tune</Button>
-        {/if}
+        {#if baselineEntered}<span style="color:var(--muted)">{baselineEntered} entered</span>{/if}
+        <Button go onclick={saveBaseline}>save baseline tune</Button>
         {#if msg}<span style="color:var(--accent)">{msg}</span>{/if}
-      </div>
-      <div class="b-steps">
-        {#each TUNE_GROUPS as [group, fields], i (group)}
-          {@const n = enteredCount(fields)}
-          <button class:current={i === bStep} class:filled={n > 0} onclick={() => (bStep = i)}>
-            {group}{n ? ` ${n}/${fields.length}` : ""}
-          </button>
-        {/each}
       </div>
     {:else if app.pending}
       <div class="pending-bar">
@@ -187,8 +176,8 @@
     {/if}
     {#if msg && !baselineMode}<div class="banner">{msg}</div>{/if}
 
-    <div class="fam-grid" class:single={baselineMode}>
-      {#each baselineMode ? [TUNE_GROUPS[bStep]] : TUNE_GROUPS as [group, fields] (group)}
+    <div class="fam-grid">
+      {#each TUNE_GROUPS as [group, fields] (group)}
         {@const recs = recsByGroup.get(group) ?? []}
         {@const isPriority = !!primary && recs.includes(primary)}
         {@const hold = recs.find((r) => isHold(r))}
