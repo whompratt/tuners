@@ -298,35 +298,43 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 }
 
 /* --- home hero --- */
-/* --- home dashboard: a 2x2 that fills the window --- */
+/* --- home dashboard: a 2x2 that fills the window ---
+   Density comes from fluid type (clamped on viewport width), not from
+   stretching or centering sparse content: everything top-aligns and the
+   tails (trajectory, footer links) pin to the card bottom. */
 .screen.dash { display: flex; flex-direction: column; }
 .dash-grid {
   flex: 1; min-height: 0;
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-auto-rows: minmax(200px, 1fr);
-  gap: 16px; max-width: 1600px;
+  gap: clamp(14px, 1.2vw, 26px);
 }
 @media (max-width: 900px) {
   .dash-grid { grid-template-columns: minmax(0, 1fr); }
 }
-.dash-card { margin-bottom: 0; display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.dash-card {
+  margin-bottom: 0; display: flex; flex-direction: column; min-height: 0;
+  overflow: auto; padding: clamp(14px, 1.5vw, 30px);
+}
 .dash-card.priority { border-color: var(--accent); }
-.dash-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.dash-head h2 { margin: 0; font-size: 16px; color: var(--ink); }
-.dash-head a { margin-left: auto; font-size: 12px; color: var(--muted); text-decoration: none; }
+/* gauge grows with the viewport inside dashboard cards */
+.dash-card .live-quality svg { width: clamp(210px, 15vw, 340px); }
+.dash-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: clamp(8px, 0.8vw, 16px); }
+.dash-head h2 { margin: 0; font-size: clamp(15px, 1.05vw, 21px); color: var(--ink); }
+.dash-head a { margin-left: auto; font-size: clamp(11px, 0.75vw, 14px); color: var(--muted); text-decoration: none; }
 .dash-head a:hover { color: var(--accent); }
-.dash-line { font-size: 14px; color: var(--muted); margin-top: 5px; }
+.dash-line { font-size: clamp(13px, 0.9vw, 18px); color: var(--muted); margin-top: 5px; }
 .dash-line a { color: var(--ink-2); }
 .dash-line a:hover { color: var(--accent); }
-.dash-big { font-size: 34px; color: var(--ink); margin-top: 8px; font-variant-numeric: tabular-nums; line-height: 1.2; }
-.dash-verdict { font-size: 17px; color: var(--ink); line-height: 1.45; }
-/* Center a card's main content in the leftover height (auto vertical
-   margins absorb the free space between the head and any bottom tail). */
-.dash-mid { margin: auto 0; }
-.dash-steps { padding-top: 10px; font-size: 13px; color: var(--muted); }
-.dash-steps .row { display: flex; gap: 10px; padding: 3px 0; border-top: 1px solid var(--border); }
+.dash-big { font-size: clamp(30px, 2.8vw, 58px); color: var(--ink); margin-top: 8px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.dash-verdict { font-size: clamp(16px, 1.3vw, 26px); color: var(--ink); line-height: 1.45; }
+.dash-steps { margin-top: auto; padding-top: 10px; font-size: clamp(12px, 0.85vw, 16px); color: var(--muted); }
+.dash-steps .row { display: flex; gap: 10px; padding: 4px 0; border-top: 1px solid var(--border); }
 .dash-steps .num { font-variant-numeric: tabular-nums; margin-left: auto; }
-.dash-alt { margin-top: 8px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 6px; }
+.dash-alt {
+  margin-top: 10px; font-size: clamp(12px, 0.85vw, 16px); color: var(--muted);
+  border-top: 1px solid var(--border); padding-top: 8px;
+}
 .dash-verdict.ok { color: var(--ok); }
 .dash-verdict.bad { color: var(--danger); }
 .dash-verdict.meh { color: var(--muted); }

@@ -145,7 +145,7 @@
             view-only — another capture owns the telemetry port
           {/if}
         </div>
-        <div class="dash-mid" style="display:flex;gap:26px;align-items:center;flex-wrap:wrap;padding:12px 0">
+        <div style="display:flex;gap:clamp(20px,2vw,44px);align-items:center;flex-wrap:wrap;padding-top:clamp(10px,1vw,22px)">
           <div style="flex:1;min-width:170px">
             {#if driving}
               <div class="dash-big">{((live?.frame?.speedMps ?? 0) * SPD().k).toFixed(0)} {SPD().l}</div>
@@ -169,7 +169,7 @@
           <h2>Last run</h2>
           <a href="/analysis">evidence →</a>
         </div>
-        <div class="dash-mid">
+        <div>
           {#if driving}
             <div class="dash-line">recording — the verdict lands here when the run ends</div>
           {:else if verdict}
@@ -215,7 +215,7 @@
           <h2>Next</h2>
           <a href="/setup">setup →</a>
         </div>
-        <div class="dash-mid" style="width:100%">
+        <div style="width:100%">
         {#if app.pending}
           <div style="font-size:14px;color:var(--ink)">
             <b>{app.pending.changes.length} change{app.pending.changes.length === 1 ? "" : "s"} pending</b>
@@ -282,18 +282,18 @@
         <div class="dash-line">
           setup version {app.session.revisions} · {carRuns} run{carRuns === 1 ? "" : "s"} recorded
         </div>
-        <div class="dash-mid">
-          {#if shownFacts.length}
-            <div style="font-size:14px;color:var(--ink-2);display:flex;gap:8px 18px;flex-wrap:wrap">
-              {#key app.unitsTick}
-                {#each shownFacts as [k, v] (k)}
-                  <span style="white-space:nowrap">{label(FACT_FIELDS, k)} <b style="color:var(--ink)">{toDisp(k, v)}{unitLabel(k).replace(/[()]/g, "")}</b></span>
-                {/each}
-              {/key}
-            </div>
-          {/if}
-        </div>
-        <div class="dash-line" style="padding-top:10px"><a href="/settings">units & sharing in Settings</a></div>
+        {#if shownFacts.length}
+          <div
+            style="margin-top:clamp(10px,1vw,20px);font-size:clamp(13px,0.9vw,18px);color:var(--ink-2);display:flex;gap:8px 20px;flex-wrap:wrap"
+          >
+            {#key app.unitsTick}
+              {#each shownFacts as [k, v] (k)}
+                <span style="white-space:nowrap">{label(FACT_FIELDS, k)} <b style="color:var(--ink)">{toDisp(k, v)}{unitLabel(k).replace(/[()]/g, "")}</b></span>
+              {/each}
+            {/key}
+          </div>
+        {/if}
+        <div class="dash-line" style="margin-top:auto;padding-top:10px"><a href="/settings">units & sharing in Settings</a></div>
       </div>
     </div>
     {#if viewOnly}
