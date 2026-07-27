@@ -7,6 +7,16 @@
 # Usage: ./run.sh [KEY=VAL ...]   (leading KEY=VAL args become Windows env vars)
 
 set -e
+trap 'echo "run.sh: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
+
+# Windows PATH interop may be off (wsl.conf appendWindowsPath=false), so
+# don't rely on powershell.exe being on PATH.
+PS=$(command -v powershell.exe || true)
+[ -n "$PS" ] || PS=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+if [ ! -x "$PS" ]; then
+    echo "run.sh: cannot find powershell.exe — is WSL interop enabled?" >&2
+    exit 1
+fi
 
 dir=${PWD##*/}
 tmp_path="/mnt/c/temp/$dir"
@@ -16,12 +26,13 @@ mkdir -p "$tmp_path"
 
 # Windows gets its own target/ and node_modules (host-specific artifacts) —
 # rsync must neither copy nor delete them.
+echo "syncing to $tmp_path…"
 rsync -rq . "$tmp_path" --exclude-from=.gitignore --delete \
     --exclude node_modules --exclude /app/build --exclude /app/.svelte-kit
 
 cd "$tmp_path"
 
-powershell.exe -Command "Get-Process tuners-app -ErrorAction SilentlyContinue | Stop-Process -Force" 2>/dev/null
+"$PS" -Command "Get-Process tuners-app -ErrorAction SilentlyContinue | Stop-Process -Force" || true
 
 # Data root stays in the WSL source tree so recordings/journals survive the
 # next rsync --delete. WSLENV tells WSL which env vars to forward to the
@@ -38,15 +49,16 @@ while [[ "$1" == *=* && "$1" != -* ]]; do
     shift
 done
 
-if ! powershell.exe -Command "Get-Command pnpm -ErrorAction Stop | Out-Null" 2>/dev/null; then
-    echo "pnpm not found on the Windows side — install Node, then 'npm install -g pnpm'" >&2
+if ! "$PS" -Command "Get-Command pnpm -ErrorAction Stop | Out-Null"; then
+    echo "run.sh: pnpm not found on the Windows side — install Node, then 'npm install -g pnpm'" >&2
     exit 1
 fi
 
 cd app
 if [ ! -d node_modules ]; then
     echo "first run: installing app/node_modules on the Windows side…"
-    powershell.exe -Command "pnpm install"
+    "$PS" -Command "pnpm install"
 fi
 
-powershell.exe -Command "${env_prefix}pnpm tauri dev $*"
+echo "launching pnpm tauri dev (data root: $TUNERS_DATA)…"
+"$PS" -Command "${env_prefix}pnpm tauri dev $*"
