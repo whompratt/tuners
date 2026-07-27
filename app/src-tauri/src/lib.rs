@@ -235,6 +235,18 @@ fn export_stint(state: S, file: String, dest: String) -> Result<String, api::Api
     Ok(name)
 }
 
+/// Best-guess LAN IP for the Data Out hookup screen: a connected UDP socket
+/// reveals which local address routes outward, without sending a packet.
+/// None when offline or loopback-only — the wizard then shows 127.0.0.1 alone.
+#[tauri::command]
+#[specta::specta]
+fn lan_ip() -> Option<String> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:53").ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
+}
+
 // -------------------------------------------------------------------- shell
 
 pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
@@ -260,6 +272,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             export_stint,
             effect_fields,
             pending,
+            lan_ip,
         ])
         .events(tauri_specta::collect_events![
             LiveStateEvent,

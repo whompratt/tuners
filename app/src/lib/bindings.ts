@@ -33,6 +33,12 @@ export const commands = {
 	note: string,
 	changes: PendingChange[],
 } | null>("pending"),
+	/**
+	 *  Best-guess LAN IP for the Data Out hookup screen: a connected UDP socket
+	 *  reveals which local address routes outward, without sending a packet.
+	 *  None when offline or loopback-only — the wizard then shows 127.0.0.1 alone.
+	 */
+	lanIp: () => __TAURI_INVOKE<string | null>("lan_ip"),
 };
 
 /** Events */

@@ -13,6 +13,11 @@
   let manualCar = $state("");
   let creating = $state(false);
 
+  // This machine's LAN IP, for console players — the game must be pointed at
+  // the PC running the app, and guessing it from a router page is error-prone.
+  let lanIp = $state<string | null>(null);
+  commands.lanIp().then((ip) => (lanIp = ip));
+
   // Live hookup status: udpAgeMs counts RAW datagrams (the game streams
   // zeroed packets even in menus), so "receiving" confirms the wiring from
   // the menu screen; "car detected" needs an actual driving frame, which is
@@ -94,7 +99,11 @@
       <p>In Forza Horizon 6, set these once:</p>
       <ol>
         <li>Settings → HUD and Gameplay → <b>Data Out</b> → ON</li>
-        <li>IP address <b>127.0.0.1</b> (this PC; use this PC's LAN IP from a console)</li>
+        <li>
+          IP address <b>127.0.0.1</b> if the game runs on this PC{#if lanIp}
+            — or <b>{lanIp}</b> (this PC's network address) if you play on a console{:else}
+            — from a console, use this PC's LAN IP{/if}
+        </li>
         <li>Port <b>20440</b></li>
         <li><b>Restart the game fully</b> — it only honours new Data Out settings after a restart</li>
       </ol>
