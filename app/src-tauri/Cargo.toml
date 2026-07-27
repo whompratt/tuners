@@ -3,6 +3,7 @@ name = "tuners-app"
 version = "0.1.0"
 description = "FH6 tuning assistant"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

@@ -41,3 +41,7 @@ lap counts, A-B-A protocol).
 - [docs/design.md](docs/design.md) — objectives, constraints, architecture, design principles
 - [docs/telemetry.md](docs/telemetry.md) — the packet, verified quirks, what's (not) available
 - [docs/guide.md](docs/guide.md) — user-facing capture & interpretation guidance
+
+## License
+
+GPL-3.0-or-later — see [LICENSE](LICENSE).
