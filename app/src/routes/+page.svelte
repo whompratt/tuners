@@ -145,7 +145,7 @@
             view-only — another capture owns the telemetry port
           {/if}
         </div>
-        <div style="display:flex;gap:26px;align-items:center;flex-wrap:wrap;margin-top:auto;padding-top:12px">
+        <div class="dash-mid" style="display:flex;gap:26px;align-items:center;flex-wrap:wrap;padding:12px 0">
           <div style="flex:1;min-width:170px">
             {#if driving}
               <div class="dash-big">{((live?.frame?.speedMps ?? 0) * SPD().k).toFixed(0)} {SPD().l}</div>
@@ -154,13 +154,13 @@
                 {#if live?.frame?.bestLapS}· best {fmtLap(live.frame.bestLapS ?? 0)}{/if}
               </div>
             {:else if receiving && rec.udpCarName}
-              <div class="dash-big" style="font-size:22px">{rec.udpCarName}</div>
+              <div class="dash-big" style="font-size:24px">{rec.udpCarName}</div>
               <div class="dash-line">in the garage — start an event to record</div>
             {:else}
               <div class="dash-line dim">waiting for the game</div>
             {/if}
           </div>
-          <ConfidenceGauge dim={!driving} width={185} />
+          <ConfidenceGauge dim={!driving} width={250} />
         </div>
       </div>
 
@@ -169,26 +169,28 @@
           <h2>Last run</h2>
           <a href="/analysis">evidence →</a>
         </div>
-        {#if driving}
-          <div class="dash-line">recording — the verdict lands here when the run ends</div>
-        {:else if verdict}
-          <div class="dash-verdict {verdict.tone}">{verdict.text}</div>
-          {#if consequence}
-            <div class="dash-line" style="margin-top:6px">{consequence}</div>
+        <div class="dash-mid">
+          {#if driving}
+            <div class="dash-line">recording — the verdict lands here when the run ends</div>
+          {:else if verdict}
+            <div class="dash-verdict {verdict.tone}">{verdict.text}</div>
+            {#if consequence}
+              <div class="dash-line" style="margin-top:6px">{consequence}</div>
+            {/if}
+            {#if lastStep?.outcome && !("error" in lastStep.outcome) && lastStep.outcome.unequalLaps && prevStep}
+              <div class="dash-line">⚠ unequal lap counts ({prevStep.laps} vs {lastStep.laps}) bias this comparison</div>
+            {/if}
+          {:else if app.adviceLoading}
+            <div class="dash-line">analyzing your runs…</div>
+          {:else}
+            <div class="dash-line">
+              no verdict yet — finish a few laps of a race, rivals lap, or route event
+            </div>
+            {#if app.adviceError}
+              <div class="dash-line" style="font-size:12px">analysis said: {app.adviceError}</div>
+            {/if}
           {/if}
-          {#if lastStep?.outcome && !("error" in lastStep.outcome) && lastStep.outcome.unequalLaps && prevStep}
-            <div class="dash-line">⚠ unequal lap counts ({prevStep.laps} vs {lastStep.laps}) bias this comparison</div>
-          {/if}
-        {:else if app.adviceLoading}
-          <div class="dash-line">analyzing your runs…</div>
-        {:else}
-          <div class="dash-line">
-            no verdict yet — finish a few laps of a race, rivals lap, or route event
-          </div>
-          {#if app.adviceError}
-            <div class="dash-line" style="font-size:12px">analysis said: {app.adviceError}</div>
-          {/if}
-        {/if}
+        </div>
         {#if recentSteps.length}
           <div class="dash-steps">
             {#each recentSteps as { st, n } (n)}
@@ -213,6 +215,7 @@
           <h2>Next</h2>
           <a href="/setup">setup →</a>
         </div>
+        <div class="dash-mid" style="width:100%">
         {#if app.pending}
           <div style="font-size:14px;color:var(--ink)">
             <b>{app.pending.changes.length} change{app.pending.changes.length === 1 ? "" : "s"} pending</b>
@@ -265,6 +268,7 @@
         {:else}
           <div class="dash-line">no suggestion yet — verdicts and advice build up as you drive</div>
         {/if}
+        </div>
       </div>
 
       <div class="panel dash-card">
@@ -278,16 +282,18 @@
         <div class="dash-line">
           setup version {app.session.revisions} · {carRuns} run{carRuns === 1 ? "" : "s"} recorded
         </div>
-        {#if shownFacts.length}
-          <div style="margin-top:10px;font-size:13px;color:var(--ink-2);display:flex;gap:6px 16px;flex-wrap:wrap">
-            {#key app.unitsTick}
-              {#each shownFacts as [k, v] (k)}
-                <span style="white-space:nowrap">{label(FACT_FIELDS, k)} <b style="color:var(--ink)">{toDisp(k, v)}{unitLabel(k).replace(/[()]/g, "")}</b></span>
-              {/each}
-            {/key}
-          </div>
-        {/if}
-        <div class="dash-line" style="margin-top:auto;padding-top:10px"><a href="/settings">units & sharing in Settings</a></div>
+        <div class="dash-mid">
+          {#if shownFacts.length}
+            <div style="font-size:14px;color:var(--ink-2);display:flex;gap:8px 18px;flex-wrap:wrap">
+              {#key app.unitsTick}
+                {#each shownFacts as [k, v] (k)}
+                  <span style="white-space:nowrap">{label(FACT_FIELDS, k)} <b style="color:var(--ink)">{toDisp(k, v)}{unitLabel(k).replace(/[()]/g, "")}</b></span>
+                {/each}
+              {/key}
+            </div>
+          {/if}
+        </div>
+        <div class="dash-line" style="padding-top:10px"><a href="/settings">units & sharing in Settings</a></div>
       </div>
     </div>
     {#if viewOnly}

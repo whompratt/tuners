@@ -320,7 +320,10 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 .dash-line a:hover { color: var(--accent); }
 .dash-big { font-size: 34px; color: var(--ink); margin-top: 8px; font-variant-numeric: tabular-nums; line-height: 1.2; }
 .dash-verdict { font-size: 17px; color: var(--ink); line-height: 1.45; }
-.dash-steps { margin-top: auto; padding-top: 10px; font-size: 13px; color: var(--muted); }
+/* Center a card's main content in the leftover height (auto vertical
+   margins absorb the free space between the head and any bottom tail). */
+.dash-mid { margin: auto 0; }
+.dash-steps { padding-top: 10px; font-size: 13px; color: var(--muted); }
 .dash-steps .row { display: flex; gap: 10px; padding: 3px 0; border-top: 1px solid var(--border); }
 .dash-steps .num { font-variant-numeric: tabular-nums; margin-left: auto; }
 .dash-alt { margin-top: 8px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 6px; }
