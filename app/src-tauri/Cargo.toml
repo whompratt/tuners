@@ -25,3 +25,5 @@ specta = { version = "2.0.0-rc.22", features = ["derive"] }
 tauri-specta = { version = "2.0.0-rc.21", features = ["derive", "typescript"] }
 specta-typescript = "0.0.12"
 tauri-plugin-dialog = "2.7.2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

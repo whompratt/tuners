@@ -7,6 +7,7 @@
   import { app, loadAdvice, loadPending, loadSession, loadStints } from "$lib/app.svelte";
   import { initAdvanced } from "$lib/advanced.svelte";
   import { initOnboarding, onboarding } from "$lib/onboarding.svelte";
+  import { checkForUpdate } from "$lib/update";
   import DialogHost from "$lib/ui/DialogHost.svelte";
   import Onboarding from "$lib/components/Onboarding.svelte";
 
@@ -33,6 +34,7 @@
       initOnboarding(!!app.session && app.session.car != null);
       // Advice on launch feeds all three registers; recomputed on run close.
       loadAdvice();
+      checkForUpdate();
     })();
     const subs = [
       events.liveStateEvent.listen((e) => (app.live = e.payload)),

@@ -1,8 +1,11 @@
 # Release builds: push a `v*` tag to build the desktop app
 # for Windows (NSIS + MSI) and Linux (AppImage + deb + rpm) and attach the
-# installers to a draft GitHub release. Publish the draft by hand after a
-# smoke test. Updater artifacts/signing are wired later (needs a keypair —
-# `pnpm tauri signer generate` — and testers to update).
+# installers plus signed updater artifacts (latest.json) to a GitHub release
+# with auto-generated notes. The release is created as a draft and published
+# automatically only after BOTH platform builds succeed — the updater feed
+# reads releases/latest, which must never see a half-uploaded release.
+# Signing needs the TAURI_SIGNING_PRIVATE_KEY secret (keypair at
+# ~/.tauri/tuners.key on the dev machine; losing it orphans shipped installs).
 name: release
 
 on:
@@ -10,7 +13,30 @@ on:
     tags: ["v*"]
 
 jobs:
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `tuners ${tag}`,
+              draft: true,
+              generate_release_notes: true,
+            });
+            return data.id;
+
   build:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -51,9 +77,24 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
-          tagName: ${{ github.ref_name }}
-          releaseName: "tuners ${{ github.ref_name }}"
-          releaseBody: "See the commit log for what changed."
-          releaseDraft: true
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+
+  publish:
+    needs: [create-release, build]
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false,
+            });
