@@ -17,6 +17,10 @@
   let q = $derived(app.quality);
   let qBand = $derived(q ? q.band : "low");
   let qPct = $derived(q ? (q.confidencePct ?? 0) : 0);
+  // Confidence card: dimmed in menus/idle, full opacity as soon as the car
+  // is on a recorded track (out lap included — it shows "–" until a flying
+  // lap produces a value). External capture counts via live race frames.
+  let onTrack = $derived(!stale && (rec.mode === "recording" || !!f?.raceOn));
 
   let onTop = $state(false);
   async function toggleOnTop() {
@@ -75,7 +79,7 @@
     <div
       id="live-quality"
       class={qBand === "good" ? "q-good" : qBand === "ok" ? "q-ok" : ""}
-      class:dim={stale || !q}
+      class:dim={!onTrack}
       style="margin-top:18px"
     >
       <svg viewBox="0 0 100 62" width="230" aria-label="data confidence">
