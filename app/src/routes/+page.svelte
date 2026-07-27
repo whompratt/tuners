@@ -158,7 +158,16 @@
       </div>
       <div style="margin-top:14px"><a href="/drive">open the Drive view →</a></div>
     {:else if app.adviceError}
-      <div class="hero" style="color:var(--muted)">{app.adviceError}</div>
+      <!-- Advise failing must not reduce Home to a raw error string: most
+           often it just means no analyzable driving yet (e.g. a seconds-long
+           stint cut while sitting in pre-race menus). -->
+      <div class="hero" style="color:var(--muted)">No verdict yet.</div>
+      <div style="margin-top:8px;color:var(--muted);max-width:560px">
+        Usually this just means not enough clean driving on record — finish a few laps
+        of a race, rivals lap, or route event and the verdict lands here.
+      </div>
+      <div style="margin-top:8px;color:var(--muted);font-size:13px">analysis said: {app.adviceError}</div>
+      <div style="margin-top:14px"><a href="/drive">open the Drive view →</a></div>
     {:else}
       <div class="hero">Ready — drive a run to get your first verdict.</div>
     {/if}
