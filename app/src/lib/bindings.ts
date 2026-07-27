@@ -21,6 +21,8 @@ export const commands = {
 	sharingHistoryPlan: () => __TAURI_INVOKE<HistoryPlanView>("sharing_history_plan"),
 	shareHistory: () => typedError<number, ApiError>(__TAURI_INVOKE("share_history")),
 	deleteStint: (file: string, force: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("delete_stint", { file, force })),
+	sessionDeletePlan: (id: string) => typedError<SessionDeletePlan, ApiError>(__TAURI_INVOKE("session_delete_plan", { id })),
+	deleteSession: (id: string, deleteRuns: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("delete_session", { id, deleteRuns })),
 	recordSplit: (note: string | null) => __TAURI_INVOKE<void>("record_split", { note }),
 	/**
 	 *  Build the stint's bundle and write it to `dest` (picked via the native
@@ -310,6 +312,19 @@ export type RunFinishedEvent = {
  */
 export type RunsChangedEvent = {
 	file: string | null,
+};
+
+/**
+ *  What deleting an archived session would remove alongside its setup
+ *  history: runs only its journal references (deletable), split from runs
+ *  another journal also cites (kept) and lines whose recording is already
+ *  gone.
+ */
+export type SessionDeletePlan = {
+	runs: number,
+	mb: number | null,
+	shared: number,
+	missing: number,
 };
 
 /**  One session in the library listing; `id: None` is the active session. */

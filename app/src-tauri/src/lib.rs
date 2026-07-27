@@ -200,6 +200,31 @@ fn share_history(state: S) -> Result<u32, api::ApiError> {
 
 #[tauri::command]
 #[specta::specta]
+fn session_delete_plan(state: S, id: String) -> Result<api::SessionDeletePlan, api::ApiError> {
+    api::session_delete_plan(
+        &id,
+        &state.session_file,
+        &state.journal_base,
+        &state.sessions_dir,
+    )
+}
+
+#[tauri::command]
+#[specta::specta]
+fn delete_session(state: S, id: String, delete_runs: bool) -> Result<(), api::ApiError> {
+    let active = state.recorder.lock().unwrap().file.clone();
+    api::delete_session(
+        &id,
+        delete_runs,
+        &state.session_file,
+        &state.journal_base,
+        &state.sessions_dir,
+        active.as_deref(),
+    )
+}
+
+#[tauri::command]
+#[specta::specta]
 fn delete_stint(state: S, file: String, force: bool) -> Result<(), api::ApiError> {
     let active = state.recorder.lock().unwrap().file.clone();
     api::delete_stint(
@@ -268,6 +293,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             sharing_history_plan,
             share_history,
             delete_stint,
+            session_delete_plan,
+            delete_session,
             record_split,
             export_stint,
             effect_fields,

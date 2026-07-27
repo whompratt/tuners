@@ -3,7 +3,7 @@
   import { commands, type SessionsView } from "$lib/bindings";
   import { COMPOUNDS, FACT_FIELDS, label } from "$lib/fields";
   import { toCanon, toDisp, unitLabel } from "$lib/units";
-  import { alertDialog } from "$lib/ui/dialogs.svelte";
+  import { alertDialog, confirmDialog } from "$lib/ui/dialogs.svelte";
   import Button from "$lib/ui/Button.svelte";
 
   let formOpen = $state(false);
@@ -106,6 +106,47 @@
     await refreshList();
     await loadAdvice();
     await loadStints(true);
+  }
+
+  async function deleteProject(r: { id: string; name: string | null; carName: string | null; car: number | null }) {
+    const p = await commands.sessionDeletePlan(r.id);
+    if (p.status === "error") {
+      await alertDialog("Delete failed", errMsg(p.error));
+      return;
+    }
+    const plan = p.data;
+    const ok = await confirmDialog({
+      title: "Delete project",
+      body: `Delete "${rowName(r)}"? Its setup history and notes are removed.\n\nThis cannot be undone.`,
+      verb: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    // Second decision, not a veto: cancel here still deletes the project,
+    // it just leaves the recordings on disk.
+    let deleteRuns = false;
+    if (plan.runs > 0) {
+      const kept = [
+        plan.shared ? `${plan.shared} used by other projects are kept` : "",
+        plan.missing ? `${plan.missing} already gone` : "",
+      ]
+        .filter(Boolean)
+        .join("; ");
+      deleteRuns = await confirmDialog({
+        title: "Delete its recordings too?",
+        body: `${plan.runs} recorded run${plan.runs === 1 ? "" : "s"} (${(plan.mb ?? 0).toFixed(1)} MB) belong only to this project.${kept ? `\n${kept}.` : ""}`,
+        verb: "Delete recordings",
+        cancel: "Keep recordings",
+        danger: true,
+      });
+    }
+    const d = await commands.deleteSession(r.id, deleteRuns);
+    if (d.status === "error") {
+      await alertDialog("Delete failed", errMsg(d.error));
+      return;
+    }
+    await refreshList();
+    if (deleteRuns) await loadStints(true);
   }
 
   const rowName = (r: { name: string | null; carName: string | null; car: number | null }) =>
@@ -243,6 +284,7 @@
               <span style="color:var(--accent)">active</span>
             {:else if r.id}
               <Button onclick={() => resumeProject(r.id!)}>resume</Button>
+              <Button danger onclick={() => deleteProject({ ...r, id: r.id! })}>delete</Button>
             {/if}
           </div>
         {/each}

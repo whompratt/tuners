@@ -960,6 +960,119 @@ pub fn delete_stint(
     }
 }
 
+/// What deleting an archived session would remove alongside its setup
+/// history: runs only its journal references (deletable), split from runs
+/// another journal also cites (kept) and lines whose recording is already
+/// gone.
+#[derive(Serialize, Type, Debug, Clone, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDeletePlan {
+    pub runs: u32,
+    pub mb: f64,
+    pub shared: u32,
+    pub missing: u32,
+}
+
+/// The archived pair for `id` plus the run split: (session file, journal
+/// file, deletable run names, plan). Shared/missing runs never make the
+/// deletable list, so `delete_session` can remove it blindly.
+fn archived_session_parts(
+    id: &str,
+    session_file: &str,
+    journal_base: &str,
+    sessions_dir: &str,
+) -> Result<(String, String, Vec<String>, SessionDeletePlan), ApiError> {
+    let id = id.trim();
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(ApiError::bad("bad id"));
+    }
+    let session_path = crate::tuning::suffixed_path(session_file, id);
+    if !Path::new(&session_path).exists() {
+        return Err(ApiError::not_found("no such session"));
+    }
+    let journal_path = crate::tuning::suffixed_path(journal_base, id);
+    let own_journal = Path::new(&journal_path)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let text = std::fs::read_to_string(&journal_path).unwrap_or_default();
+    let names: std::collections::BTreeSet<String> = crate::analysis::journal::parse_journal(&text)
+        .into_iter()
+        .filter_map(|e| {
+            Path::new(&e.path)
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+        })
+        .collect();
+    let mut deletable = Vec::new();
+    let mut plan = SessionDeletePlan::default();
+    let mut bytes = 0u64;
+    for name in names {
+        let Ok(md) = Path::new(sessions_dir).join(&name).metadata() else {
+            plan.missing += 1;
+            continue;
+        };
+        if journals_referencing(&name, journal_base)
+            .iter()
+            .any(|j| *j != own_journal)
+        {
+            plan.shared += 1;
+            continue;
+        }
+        plan.runs += 1;
+        bytes += md.len();
+        deletable.push(name);
+    }
+    plan.mb = bytes as f64 / 1e6;
+    Ok((session_path, journal_path, deletable, plan))
+}
+
+/// Preview what `delete_session` would remove, for the confirm dialog.
+pub fn session_delete_plan(
+    id: &str,
+    session_file: &str,
+    journal_base: &str,
+    sessions_dir: &str,
+) -> Result<SessionDeletePlan, ApiError> {
+    archived_session_parts(id, session_file, journal_base, sessions_dir).map(|(.., plan)| plan)
+}
+
+/// Delete an archived session: its session file, its journal, and — when
+/// `delete_runs` — the recordings only its journal references. Runs cited by
+/// any other journal are always kept, as is a recording the recorder is
+/// mid-writing (it stays behind as an unjournaled run). Only archived
+/// sessions have an id; the active session must be archived first.
+pub fn delete_session(
+    id: &str,
+    delete_runs: bool,
+    session_file: &str,
+    journal_base: &str,
+    sessions_dir: &str,
+    active: Option<&Path>,
+) -> Result<(), ApiError> {
+    let (session_path, journal_path, deletable, _) =
+        archived_session_parts(id, session_file, journal_base, sessions_dir)?;
+    if delete_runs {
+        let active_name = active
+            .and_then(|p| p.file_name())
+            .map(|f| f.to_string_lossy().into_owned());
+        for name in deletable {
+            if active_name.as_deref() == Some(name.as_str()) {
+                continue;
+            }
+            match std::fs::remove_file(Path::new(sessions_dir).join(&name)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(ApiError::internal(e)),
+            }
+        }
+    }
+    if Path::new(&journal_path).exists() {
+        std::fs::remove_file(&journal_path).map_err(ApiError::internal)?;
+    }
+    std::fs::remove_file(&session_path).map_err(ApiError::internal)
+}
+
 /// Build the stint's telemetry bundle for manual export. The
 /// bundler self-verifies, so an Ok is a bundle that already round-tripped.
 pub fn export_bundle(
@@ -1486,6 +1599,61 @@ mod tests {
             assert!(!v["frame"][key].is_null(), "missing frame key {key}");
         }
         assert!(quality_view(None).is_none());
+    }
+
+    /// Deleting an archived session removes its pair and only the runs no
+    /// other journal references; the plan previews exactly that split.
+    #[test]
+    fn archived_session_delete_and_plan() {
+        let dir = std::env::temp_dir().join(format!("tuners-sessdel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sessions = dir.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let sfile = dir.join("tune-session.txt").to_string_lossy().into_owned();
+        let jbase = dir.join("tune-journal.txt").to_string_lossy().into_owned();
+        let sdir = sessions.to_string_lossy().into_owned();
+
+        // Archived pair for car 99: one run only it references, one shared
+        // with car 55's live journal, one whose recording is already gone.
+        let id = "99-20260727-000000";
+        std::fs::write(dir.join(format!("tune-session-{id}.txt")), "car = 99\n").unwrap();
+        std::fs::write(
+            dir.join(format!("tune-journal-{id}.txt")),
+            "# parked\nsessions/stint-a.ftel | baseline\nsessions/stint-b.ftel | front arb +1\nsessions/stint-gone.ftel | note\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("tune-journal-55.txt"),
+            "sessions/stint-b.ftel | baseline\n",
+        )
+        .unwrap();
+        std::fs::write(sessions.join("stint-a.ftel"), vec![0u8; 100]).unwrap();
+        std::fs::write(sessions.join("stint-b.ftel"), b"x").unwrap();
+
+        let plan = session_delete_plan(id, &sfile, &jbase, &sdir).unwrap();
+        assert_eq!(
+            plan,
+            SessionDeletePlan {
+                runs: 1,
+                mb: 100.0 / 1e6,
+                shared: 1,
+                missing: 1
+            }
+        );
+        let err = session_delete_plan("nope", &sfile, &jbase, &sdir).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NotFound, "{err}");
+        let err = session_delete_plan("../evil", &sfile, &jbase, &sdir).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::BadRequest, "{err}");
+
+        delete_session(id, true, &sfile, &jbase, &sdir, None).unwrap();
+        assert!(
+            !sessions.join("stint-a.ftel").exists(),
+            "exclusive run goes"
+        );
+        assert!(sessions.join("stint-b.ftel").exists(), "shared run stays");
+        assert!(!dir.join(format!("tune-session-{id}.txt")).exists());
+        assert!(!dir.join(format!("tune-journal-{id}.txt")).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Deleting a journaled stint needs an explicit force; unjournaled stints
