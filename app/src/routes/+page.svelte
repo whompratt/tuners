@@ -4,8 +4,10 @@
   import { reopenOnboarding } from "$lib/onboarding.svelte";
   import { isAccepted, isHold, primaryRec } from "$lib/advice";
   import { commands } from "$lib/bindings";
-  import { SPD, fmtLap, toDisp } from "$lib/units";
+  import { FACT_FIELDS, label } from "$lib/fields";
+  import { SPD, fmtLap, toDisp, unitLabel } from "$lib/units";
   import Button from "$lib/ui/Button.svelte";
+  import ConfidenceGauge from "$lib/components/ConfidenceGauge.svelte";
 
   const STALE_MS = 3000;
 
@@ -72,11 +74,25 @@
     applying = false;
   }
 
-  let confPct = $derived(app.quality ? Math.round(app.quality.confidencePct ?? 0) : null);
   let carRuns = $derived(app.stints.filter((s) => s.car === app.session?.car).length);
+  // Mini trajectory tail for the Last-run card (newest last, numbered).
+  let recentSteps = $derived.by(() => {
+    const steps = app.advice?.steps ?? [];
+    return steps.slice(-4).map((st, i) => ({ st, n: steps.length - Math.min(4, steps.length) + i + 1 }));
+  });
+  let shownFacts = $derived(
+    app.session
+      ? Object.entries(app.session.facts).filter(
+          ([k]) => !k.startsWith("unit_") && !k.startsWith("limit_") && k !== "name" && k !== "description",
+        )
+      : [],
+  );
+  let dashboard = $derived(
+    app.booted && app.entered && !!app.session && app.session.car != null && !!app.session.latest,
+  );
 </script>
 
-<div class="screen">
+<div class="screen" class:dash={dashboard}>
   {#if !app.booted}
     <div class="hero" style="color:var(--muted)">…</div>
   {:else if !app.entered && app.session && app.session.car != null}
@@ -129,17 +145,22 @@
             view-only — another capture owns the telemetry port
           {/if}
         </div>
-        {#if driving}
-          <div class="dash-big">
-            {((live?.frame?.speedMps ?? 0) * SPD().k).toFixed(0)} {SPD().l} · lap {(live?.frame?.lapNumber ?? 0) + 1}
-            {#if live?.frame?.bestLapS}· best {fmtLap(live.frame.bestLapS ?? 0)}{/if}
+        <div style="display:flex;gap:26px;align-items:center;flex-wrap:wrap;margin-top:auto;padding-top:12px">
+          <div style="flex:1;min-width:170px">
+            {#if driving}
+              <div class="dash-big">{((live?.frame?.speedMps ?? 0) * SPD().k).toFixed(0)} {SPD().l}</div>
+              <div class="dash-line">
+                lap {(live?.frame?.lapNumber ?? 0) + 1}
+                {#if live?.frame?.bestLapS}· best {fmtLap(live.frame.bestLapS ?? 0)}{/if}
+              </div>
+            {:else if receiving && rec.udpCarName}
+              <div class="dash-big" style="font-size:22px">{rec.udpCarName}</div>
+              <div class="dash-line">in the garage — start an event to record</div>
+            {:else}
+              <div class="dash-line dim">waiting for the game</div>
+            {/if}
           </div>
-        {/if}
-        <div class="dash-line" class:dim={!driving && confPct == null}>
-          confidence {confPct != null ? `${confPct}%` : "–"}
-          {#if app.quality}
-            · {app.quality.band === "good" ? "enough for A/B — pit when ready" : app.quality.band === "ok" ? "nearly there" : "keep driving"}
-          {/if}
+          <ConfidenceGauge dim={!driving} width={185} />
         </div>
       </div>
 
@@ -167,6 +188,23 @@
           {#if app.adviceError}
             <div class="dash-line" style="font-size:12px">analysis said: {app.adviceError}</div>
           {/if}
+        {/if}
+        {#if recentSteps.length}
+          <div class="dash-steps">
+            {#each recentSteps as { st, n } (n)}
+              <div class="row">
+                <span style="color:var(--ink-2);flex:none">run {n}</span>
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{st.note || "baseline"}</span>
+                <span class="num">
+                  {#if st.outcome && !("error" in st.outcome)}
+                    {st.outcome.word === "improved" ? "−" : st.outcome.word === "WORSE" ? "+" : "±"}{Math.abs(st.outcome.deltaS ?? 0).toFixed(2)}s
+                  {:else if st.bestS}
+                    {fmtLap(st.bestS)}
+                  {/if}
+                </span>
+              </div>
+            {/each}
+          </div>
         {/if}
       </div>
 
@@ -211,8 +249,17 @@
             </details>
           </div>
           {#if others.length}
-            <div class="dash-line" style="margin-top:8px">
-              <a href="/setup">{others.length} alternative{others.length === 1 ? "" : "s"}</a> — one change at a time
+            <div class="dash-alt">
+              alternatives — one change at a time:
+              {#each others.slice(0, 3) as r (r.area + r.advice)}
+                <div style="padding:3px 0">
+                  <span style="opacity:.7">[{r.confidence}]</span>
+                  {#if r.suggestion}<b style="color:var(--ink-2)">{r.suggestion}</b> — {/if}{r.advice}
+                </div>
+              {/each}
+              {#if others.length > 3}
+                <a href="/setup">+{others.length - 3} more in Setup</a>
+              {/if}
             </div>
           {/if}
         {:else}
@@ -225,13 +272,22 @@
           <h2>Project</h2>
           <a href="/projects">manage →</a>
         </div>
-        <div style="font-size:14px;color:var(--ink)">
+        <div style="font-size:16px;color:var(--ink)">
           {app.session.facts.name ? `${app.session.facts.name} · ` : ""}{app.session.carName || `car #${app.session.car}`}
         </div>
         <div class="dash-line">
           setup version {app.session.revisions} · {carRuns} run{carRuns === 1 ? "" : "s"} recorded
         </div>
-        <div class="dash-line"><a href="/settings">units & sharing in Settings</a></div>
+        {#if shownFacts.length}
+          <div style="margin-top:10px;font-size:13px;color:var(--ink-2);display:flex;gap:6px 16px;flex-wrap:wrap">
+            {#key app.unitsTick}
+              {#each shownFacts as [k, v] (k)}
+                <span style="white-space:nowrap">{label(FACT_FIELDS, k)} <b style="color:var(--ink)">{toDisp(k, v)}{unitLabel(k).replace(/[()]/g, "")}</b></span>
+              {/each}
+            {/key}
+          </div>
+        {/if}
+        <div class="dash-line" style="margin-top:auto;padding-top:10px"><a href="/settings">units & sharing in Settings</a></div>
       </div>
     </div>
     {#if viewOnly}

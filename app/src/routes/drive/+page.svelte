@@ -4,9 +4,9 @@
   import { SPD, fmtClock, fmtLap, tempDisp, tempLabel } from "$lib/units";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import Button from "$lib/ui/Button.svelte";
+  import ConfidenceGauge from "$lib/components/ConfidenceGauge.svelte";
 
   const STALE_MS = 3000;
-  const ARC = Math.PI * 40; // semicircle path length (r=40)
 
   let rec = $derived(
     app.live?.recorder ?? { mode: "external", file: null, packets: 0, udpAgeMs: null, udpCar: null, udpCarName: null },
@@ -14,9 +14,6 @@
   let stale = $derived(app.live?.ageMs == null || app.live.ageMs > STALE_MS);
   let f = $derived(app.live?.frame ?? null);
 
-  let q = $derived(app.quality);
-  let qBand = $derived(q ? q.band : "low");
-  let qPct = $derived(q ? (q.confidencePct ?? 0) : 0);
   // Confidence card: dimmed in menus/idle, full opacity as soon as the car
   // is on a recorded track (out lap included — it shows "–" until a flying
   // lap produces a value). External capture counts via live race frames.
@@ -76,30 +73,8 @@
   {/if}
 
   <div style="display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap;margin-top:10px">
-    <div
-      id="live-quality"
-      class={qBand === "good" ? "q-good" : qBand === "ok" ? "q-ok" : ""}
-      class:dim={!onTrack}
-      style="margin-top:18px"
-    >
-      <svg viewBox="0 0 100 62" width="230" aria-label="data confidence">
-        <path class="q-track" d="M 10 52 A 40 40 0 0 1 90 52" />
-        <path
-          class="q-fill"
-          d="M 10 52 A 40 40 0 0 1 90 52"
-          stroke-dasharray="{(ARC * qPct) / 100} 999"
-          style="visibility:{qPct > 0 ? 'visible' : 'hidden'}"
-        />
-        <text id="q-pct" x="50" y="50">{q ? `${Math.round(qPct)}%` : "–"}</text>
-      </svg>
-      <div id="q-label">
-        confidence — {{ good: "enough for A/B", ok: "nearly there", low: "keep driving" }[qBand] ?? "keep driving"}
-      </div>
-      {#if q}
-        <div style="font-size:13px;color:var(--muted)">
-          {q.laps} {q.standingOnly ? "standing run(s)" : "flying lap(s)"} · best {fmtLap(q.bestLapS ?? 0)}
-        </div>
-      {/if}
+    <div style="margin-top:18px">
+      <ConfidenceGauge dim={!onTrack} />
     </div>
 
     <div class="drive-grid" style="flex:1;min-width:420px">
