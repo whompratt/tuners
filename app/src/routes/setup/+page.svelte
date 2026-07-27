@@ -230,7 +230,8 @@
           (free roam isn't recorded); your first run unlocks advice.
         </span>
         <span style="flex:1"></span>
-        <Button go onclick={() => goto("/")}>done — back to Home</Button>
+        <Button go onclick={() => goto("/drive")}>open the Drive view</Button>
+        <Button onclick={() => goto("/")}>Home</Button>
       </div>
     {:else if app.pending}
       <div class="pending-bar">
