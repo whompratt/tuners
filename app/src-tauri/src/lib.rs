@@ -361,9 +361,14 @@ pub fn run() {
             // absolute paths — both only hold when the engine runs from the
             // root, exactly like `tuners serve` used to.
             let fallback = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&fallback).ok();
             tuners::util::set_data_root(fallback);
-            std::env::set_current_dir(tuners::util::data_root())?;
+            // The resolved root (TUNERS_DATA or app_data_dir) may not exist
+            // yet — first boot, or a fresh scratch dir. It IS the data root,
+            // so create it rather than dying on set_current_dir.
+            let root = tuners::util::data_root();
+            std::fs::create_dir_all(root)
+                .and_then(|()| std::env::set_current_dir(root))
+                .map_err(|e| format!("data root {}: {e}", root.display()))?;
             let root = PathBuf::from(".");
             let sessions_dir = "sessions".to_string();
             let session_file = "tune-session.txt".to_string();
