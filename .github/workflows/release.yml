@@ -25,11 +25,29 @@ jobs:
         with:
           script: |
             const tag = context.ref.replace('refs/tags/', '');
+            const version = tag.replace(/^v/, '');
+            const dl = (name) =>
+              `[${name}](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${tag}/${name})`;
+            const body = [
+              '## Downloads',
+              '',
+              '| Platform | File |',
+              '| --- | --- |',
+              `| Windows (recommended) | ${dl(`tuners_${version}_x64-setup.exe`)} |`,
+              `| Windows (MSI) | ${dl(`tuners_${version}_x64_en-US.msi`)} |`,
+              `| Linux (portable) | ${dl(`tuners_${version}_amd64.AppImage`)} |`,
+              `| Linux (Debian/Ubuntu) | ${dl(`tuners_${version}_amd64.deb`)} |`,
+              `| Linux (Fedora) | ${dl(`tuners-${version}-1.x86_64.rpm`)} |`,
+              '',
+              'The `.sig` files and `latest.json` are used by the in-app updater — no need to download them.',
+              '',
+            ].join('\n');
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
               name: `tuners ${tag}`,
+              body,
               draft: true,
               generate_release_notes: true,
             });
