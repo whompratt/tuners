@@ -53,7 +53,7 @@ done
 # a freshly installed pnpm (or one added by a shell-profile hook like
 # fnm/volta) is invisible here even though interactive PowerShell sees it.
 # Prepend the usual install locations explicitly.
-path_fix='foreach ($c in @("$env:APPDATA\npm", "$env:LOCALAPPDATA\pnpm", "$env:ProgramFiles\nodejs", "$env:LOCALAPPDATA\Volta\bin")) { if (Test-Path $c) { $env:Path = "$c;" + $env:Path } }; '
+path_fix='foreach ($c in @("C:\nvm4w\nodejs", "$env:APPDATA\npm", "$env:LOCALAPPDATA\pnpm", "$env:ProgramFiles\nodejs", "$env:LOCALAPPDATA\Volta\bin")) { if (Test-Path $c) { $env:Path = "$c;" + $env:Path } }; '
 
 if ! "$PS" -Command "${path_fix}Get-Command pnpm -ErrorAction Stop | Out-Null"; then
     echo "run.sh: pnpm not found on the Windows side." >&2
