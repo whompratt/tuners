@@ -209,6 +209,19 @@ pub struct StintMetrics {
     pub wheelspeed_flutter: Option<f32>,
 }
 
+impl StintMetrics {
+    /// Grip-margin ratio: how much closer the front runs to its limit than
+    /// the rear while cornering (cornering_front_slip / cornering_rear_slip).
+    /// Signature runs (2026-07-25) measured every library driver settling at
+    /// front 1.5-1.7x — the driver's preferred operating point; a smaller
+    /// ratio means the rear is working relatively harder. None without
+    /// cornering or with the rear far from its limit (ratio unstable).
+    pub fn margin_ratio(&self) -> Option<f32> {
+        let (f, r) = (self.cornering_front_slip?, self.cornering_rear_slip?);
+        (r >= 0.05).then(|| f / r)
+    }
+}
+
 fn band_balance((samples, front, rear): (usize, f32, f32)) -> BandBalance {
     BandBalance {
         samples,

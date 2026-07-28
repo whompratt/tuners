@@ -363,6 +363,12 @@ fn balance_rule(
         front_slip * 100.0,
         rear_slip * 100.0,
     ));
+    if let Some(ratio) = overall.margin_ratio() {
+        evidence.push(format!(
+            "grip-margin ratio {ratio:.1}x (front vs rear share of limit; \
+             drivers settle near 1.5-1.7x — the gap is the rear's spare grip)",
+        ));
+    }
     if let (Some(lo), Some(hi)) =
         supported_pair(&overall.balance_low_speed, &overall.balance_high_speed)
     {

@@ -30,6 +30,7 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
     ("apex_speed", "matched-corner apex speed", "m/s"),
     ("front_slip", "front share of limit", "frac"),
     ("rear_slip", "rear share of limit", "frac"),
+    ("margin_ratio", "grip-margin ratio", ""),
     ("countersteer", "counter-steer share", "frac"),
     ("os_flash", "oversteer-flash share", "frac"),
     ("os_on_power", "on-power oversteer share", "frac"),
@@ -64,6 +65,10 @@ pub fn noise_floor(key: &str) -> f32 {
         // this replaced needed 5.0 (corner-mix dominated).
         "apex_speed" => 0.5,
         "front_slip" | "rear_slip" => 0.04,
+        // Same-setup pairs measured 0.016-0.023 (2026-07-28): the ratio is
+        // nearly a driver constant, while real changes move it 0.13-0.41
+        // (front aero cut +0.41).
+        "margin_ratio" => 0.05,
         "countersteer" => 0.010,
         "os_flash" => 0.015,
         "os_on_power" => 0.012,
@@ -119,6 +124,7 @@ pub fn vector(m: &StintMetrics) -> Effects {
     }
     push("front_slip", m.cornering_front_slip);
     push("rear_slip", m.cornering_rear_slip);
+    push("margin_ratio", m.margin_ratio());
     // Transient shares are fractions OF cornering time: meaningless (always
     // zero) when the stint never cornered.
     push("countersteer", cornering.then_some(os.countersteer_frac));

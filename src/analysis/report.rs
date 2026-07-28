@@ -214,23 +214,34 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         m.cornering_front_slip,
         m.cornering_rear_slip,
     ) {
-        (Some(idx), Some(front), Some(rear)) => writeln!(
-            out,
-            "    balance while cornering ({} of stint): {} {:+.2} \
-             (front at {:.0}% of grip limit, rear {:.0}%)",
-            pct(m.cornering_frac),
-            if idx > 0.05 {
-                "understeer"
-            } else if idx < -0.05 {
-                "oversteer"
-            } else {
-                "neutral"
-            },
-            idx,
-            front * 100.0,
-            rear * 100.0,
-        )
-        .unwrap(),
+        (Some(idx), Some(front), Some(rear)) => {
+            writeln!(
+                out,
+                "    balance while cornering ({} of stint): {} {:+.2} \
+                 (front at {:.0}% of grip limit, rear {:.0}%)",
+                pct(m.cornering_frac),
+                if idx > 0.05 {
+                    "understeer"
+                } else if idx < -0.05 {
+                    "oversteer"
+                } else {
+                    "neutral"
+                },
+                idx,
+                front * 100.0,
+                rear * 100.0,
+            )
+            .unwrap();
+            if let Some(ratio) = m.margin_ratio() {
+                writeln!(
+                    out,
+                    "    grip margin: front runs {ratio:.1}x closer to its limit \
+                     (drivers settle near 1.5-1.7x; lower = the rear is working \
+                     relatively harder)",
+                )
+                .unwrap();
+            }
+        }
         _ => writeln!(out, "    no significant cornering in this stint").unwrap(),
     }
     let band = |b: &crate::analysis::metrics::BandBalance| match b.index {
