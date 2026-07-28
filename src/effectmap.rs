@@ -226,107 +226,114 @@ pub struct SenderCampaign {
     pub entries: Vec<journal::Entry>,
 }
 
-/// Rebuild campaigns from `library/<sender>/bundle-*.tar.zst`. Bundles of one
-/// campaign share a growing journal; they are grouped by (car, first journal
-/// entry) and the longest journal in a group defines the campaign. Each
-/// bundle's stint is written under `scratch` and its journal entry is
-/// repointed there; journal entries no bundle covers become missing paths,
-/// which the campaign loader already skips honestly. Unreadable bundles are
-/// reported and skipped.
-pub fn sender_campaigns(
-    library: &Path,
-    scratch: &Path,
-    report: &mut Vec<String>,
-) -> Vec<SenderCampaign> {
-    let mut out = Vec::new();
-    let Ok(senders) = std::fs::read_dir(library) else {
-        return out;
+/// Sender directories under the library, sorted.
+fn sender_dirs(library: &Path) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(library) else {
+        return Vec::new();
     };
-    let mut senders: Vec<_> = senders
+    let mut senders: Vec<_> = rd
         .flatten()
         .filter(|e| e.path().is_dir())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     senders.sort();
-    for sender in senders {
-        let dir = library.join(&sender);
-        let Ok(rd) = std::fs::read_dir(&dir) else {
+    senders
+}
+
+/// Rebuild one sender's campaigns from `library/<sender>/bundle-*.tar.zst`.
+/// Bundles of one campaign share a growing journal; they are grouped by
+/// (car, first journal entry) and the longest journal in a group defines the
+/// campaign. Each bundle's stint is written under `scratch` and its journal
+/// entry is repointed there; journal entries no bundle covers become missing
+/// paths, which the campaign loader already skips honestly. Unreadable
+/// bundles are reported and skipped.
+fn harvest_sender(
+    library: &Path,
+    sender: &str,
+    scratch: &Path,
+    report: &mut Vec<String>,
+) -> Vec<SenderCampaign> {
+    let mut out = Vec::new();
+    let dir = library.join(sender);
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return out;
+    };
+    let mut names: Vec<String> = rd
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".tar.zst"))
+        .collect();
+    names.sort();
+    // (car, first journal entry path) -> bundles of that campaign.
+    let mut groups: BTreeMap<(String, String), Vec<(String, crate::bundle::Bundle)>> =
+        BTreeMap::new();
+    for name in names {
+        let path = dir.join(&name);
+        let bundle = std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| crate::bundle::open(&bytes));
+        match bundle {
+            Ok(b) => {
+                let car = b.manifest.get("car").cloned().unwrap_or_default();
+                let first = journal::parse_journal(&b.journal_txt)
+                    .first()
+                    .map(|e| e.path.clone())
+                    .unwrap_or_default();
+                groups.entry((car, first)).or_default().push((name, b));
+            }
+            Err(e) => report.push(format!("{sender}/{name}: {e}")),
+        }
+    }
+    for ((car, first), bundles) in groups {
+        // The longest journal sees the whole campaign.
+        let Some((_, longest)) = bundles
+            .iter()
+            .max_by_key(|(_, b)| journal::parse_journal(&b.journal_txt).len())
+        else {
             continue;
         };
-        let mut names: Vec<String> = rd
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".tar.zst"))
-            .collect();
-        names.sort();
-        // (car, first journal entry path) -> bundles of that campaign.
-        let mut groups: BTreeMap<(String, String), Vec<(String, crate::bundle::Bundle)>> =
-            BTreeMap::new();
-        for name in names {
-            let path = dir.join(&name);
-            let bundle = std::fs::read(&path)
-                .map_err(|e| e.to_string())
-                .and_then(|bytes| crate::bundle::open(&bytes));
-            match bundle {
-                Ok(b) => {
-                    let car = b.manifest.get("car").cloned().unwrap_or_default();
-                    let first = journal::parse_journal(&b.journal_txt)
-                        .first()
-                        .map(|e| e.path.clone())
-                        .unwrap_or_default();
-                    groups.entry((car, first)).or_default().push((name, b));
-                }
-                Err(e) => report.push(format!("{sender}/{name}: {e}")),
-            }
-        }
-        for ((car, _), bundles) in groups {
-            // The longest journal sees the whole campaign.
-            let Some((_, longest)) = bundles
+        let mut entries = journal::parse_journal(&longest.journal_txt);
+        let session = TuningSession::parse(&longest.session_txt);
+        let group_dir = scratch.join(sender).join(&car);
+        let mut covered = 0usize;
+        for entry in entries.iter_mut() {
+            let file = Path::new(&entry.path)
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_else(|| entry.path.clone());
+            let dest = group_dir.join(&file);
+            // The bundle whose stint stamp names this entry, if delivered.
+            let stamp = crate::advise::stint_stamp(&entry.path);
+            let backing = bundles
                 .iter()
-                .max_by_key(|(_, b)| journal::parse_journal(&b.journal_txt).len())
-            else {
-                continue;
-            };
-            let mut entries = journal::parse_journal(&longest.journal_txt);
-            let session = TuningSession::parse(&longest.session_txt);
-            let group_dir = scratch.join(&sender).join(&car);
-            let mut covered = 0usize;
-            for entry in entries.iter_mut() {
-                let file = Path::new(&entry.path)
-                    .file_name()
-                    .map(|f| f.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| entry.path.clone());
-                let dest = group_dir.join(&file);
-                // The bundle whose stint stamp names this entry, if delivered.
-                let stamp = crate::advise::stint_stamp(&entry.path);
-                let backing = bundles
-                    .iter()
-                    .find(|(_, b)| b.manifest.get("stint_stamp").map(String::as_str) == stamp);
-                if let Some((name, b)) = backing {
-                    if std::fs::create_dir_all(&group_dir)
-                        .and_then(|_| std::fs::write(&dest, &b.stint))
-                        .is_err()
-                    {
-                        report.push(format!("{sender}/{name}: could not extract stint"));
-                    } else {
-                        covered += 1;
-                    }
+                .find(|(_, b)| b.manifest.get("stint_stamp").map(String::as_str) == stamp);
+            if let Some((name, b)) = backing {
+                if std::fs::create_dir_all(&group_dir)
+                    .and_then(|_| std::fs::write(&dest, &b.stint))
+                    .is_err()
+                {
+                    report.push(format!("{sender}/{name}: could not extract stint"));
+                } else {
+                    covered += 1;
                 }
-                // Repoint unconditionally: uncovered entries must resolve
-                // (and fail) under scratch, never against local files.
-                entry.path = dest.to_string_lossy().into_owned();
             }
-            if covered == 0 {
-                continue;
-            }
-            out.push(SenderCampaign {
-                driver: sender.clone(),
-                label: format!("{sender}:{car}"),
-                car: car.parse().ok(),
-                session,
-                entries,
-            });
+            // Repoint unconditionally: uncovered entries must resolve
+            // (and fail) under scratch, never against local files.
+            entry.path = dest.to_string_lossy().into_owned();
         }
+        if covered == 0 {
+            continue;
+        }
+        // The first entry's stamp keeps two campaigns of the same car
+        // under one sender apart.
+        let first_stamp = crate::advise::stint_stamp(&first).unwrap_or("nostamp");
+        out.push(SenderCampaign {
+            driver: sender.to_string(),
+            label: format!("{sender}:{car}:{first_stamp}"),
+            car: car.parse().ok(),
+            session,
+            entries,
+        });
     }
     out
 }
@@ -862,47 +869,178 @@ pub fn summary(cells: &[Cell]) -> String {
     out
 }
 
-/// Build the whole map from a data root: local campaigns plus the ingested
-/// sender library. Returns the map and a build report (campaigns harvested,
-/// skipped, and why).
-pub fn build(root: &Path, stints_dir: &str, scratch: &Path) -> (EffectMap, Vec<String>) {
-    let mut map = EffectMap::default();
+/// A local campaign's identity without loading its stints: parsed journal
+/// first entry plus the session car. The cheap form of what `harvest_local`
+/// derives, for dedupe keys of campaigns served from cache.
+fn source_key(source: &CampaignSource) -> Option<CampaignKey> {
+    let text = std::fs::read_to_string(&source.journal).ok()?;
+    let entries = journal::parse_journal(&text);
+    let car = source
+        .session
+        .as_deref()
+        .map(TuningSession::load)
+        .and_then(|s| s.car);
+    campaign_key(car, &entries)
+}
+
+/// Refresh the map file at `out`, re-harvesting only campaigns whose inputs
+/// changed since it was written (mtime-based: the journal, its session file,
+/// the stints dir for open campaigns — implicit steps join without a journal
+/// write — and each sender's library dir). Unchanged campaigns' rows carry
+/// over from the existing file. `force` re-harvests everything. When nothing
+/// is stale the existing file is left untouched. Returns the map and a
+/// report of what was done.
+pub fn refresh(
+    root: &Path,
+    stints_dir: &str,
+    out: &Path,
+    scratch: &Path,
+    force: bool,
+) -> Result<(EffectMap, Vec<String>), String> {
     let mut report = Vec::new();
+    let old: Option<EffectMap> = (!force)
+        .then(|| {
+            std::fs::read_to_string(out)
+                .ok()
+                .and_then(|t| parse(&t).ok())
+        })
+        .flatten();
+    let map_time = old
+        .as_ref()
+        .and_then(|_| std::fs::metadata(out).and_then(|m| m.modified()).ok());
+    let newer = |p: &Path| -> bool {
+        match (
+            map_time,
+            std::fs::metadata(p).and_then(|m| m.modified()).ok(),
+        ) {
+            (Some(mt), Some(t)) => t > mt,
+            // No baseline or unreadable input: treat as changed.
+            _ => true,
+        }
+    };
+    let stints_newer = std::fs::read_dir(stints_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|e| e.path().extension().is_some_and(|x| x == "ftel") && newer(&e.path()));
+
+    let mut map = EffectMap::default();
     let mut seen: Vec<CampaignKey> = Vec::new();
+    let mut stale_count = 0usize;
+    let carry = |map: &mut EffectMap, old: &EffectMap, driver: &str, label: Option<&str>| {
+        let matches = |d: &str, c: &str| d == driver && label.is_none_or(|l| l == c);
+        map.samples.extend(
+            old.samples
+                .iter()
+                .filter(|s| matches(&s.driver, &s.campaign))
+                .cloned(),
+        );
+        map.floors.extend(
+            old.floors
+                .iter()
+                .filter(|f| matches(&f.driver, &f.campaign))
+                .cloned(),
+        );
+    };
     for source in local_campaigns(root) {
+        // Open campaigns accrue implicit steps from new recordings, so new
+        // stint files make them stale even with the journal untouched.
+        let open = std::fs::read_to_string(&source.journal)
+            .map(|t| !crate::advise::campaign_closed(&t))
+            .unwrap_or(true);
+        let stale = force
+            || newer(&source.journal)
+            || source.session.as_deref().is_some_and(&newer)
+            || (open && stints_newer);
+        let cached = old
+            .as_ref()
+            .is_some_and(|o| o.floors.iter().any(|f| f.campaign == source.label));
+        if !stale && cached {
+            carry(
+                &mut map,
+                old.as_ref().unwrap(),
+                "local",
+                Some(&source.label),
+            );
+            seen.extend(source_key(&source));
+            continue;
+        }
         match harvest_local(&source, stints_dir) {
             Ok((samples, floor, key)) => {
+                stale_count += 1;
                 report.push(format!("{}: {} samples", source.label, samples.len()));
                 map.samples.extend(samples);
                 map.floors.push(floor);
                 seen.extend(key);
             }
-            Err(e) => report.push(format!("skipped {e}")),
+            Err(e) => {
+                // A failed harvest only dirties the file when it drops rows
+                // the old map carried; a campaign that never harvests (e.g.
+                // no completed laps yet) must not force rewrites forever.
+                if cached {
+                    stale_count += 1;
+                }
+                report.push(format!("skipped {e}"));
+            }
         }
     }
-    for sc in sender_campaigns(&root.join("library"), scratch, &mut report) {
-        // A sender's echo of a campaign already harvested from local files
-        // (this machine shares its own recordings) must not double-count.
-        if let Some(key) = campaign_key(sc.car, &sc.entries)
-            && seen.contains(&key)
+    let library = root.join("library");
+    for sender in sender_dirs(&library) {
+        // Ingest only ever adds files, so the dir mtime is the staleness
+        // signal. Zero carried rows is legitimate: a sender whose campaigns
+        // all deduped as local echoes contributes nothing.
+        if !force
+            && !newer(&library.join(&sender))
+            && let Some(old) = old.as_ref()
         {
-            report.push(format!(
-                "skipped {}: same campaign already harvested locally",
-                sc.label
-            ));
+            carry(&mut map, old, &sender, None);
             continue;
         }
-        match crate::advise::load_campaign(sc.entries, &sc.session, &sc.label) {
-            Ok(c) => {
-                let (samples, floor) = harvest_campaign(&c, &sc.driver, &sc.label);
-                report.push(format!("{}: {} samples", sc.label, samples.len()));
-                map.samples.extend(samples);
-                map.floors.push(floor);
+        let had_rows = old.as_ref().is_some_and(|o| {
+            o.floors.iter().any(|f| f.driver == sender)
+                || o.samples.iter().any(|s| s.driver == sender)
+        });
+        let rows_before = (map.samples.len(), map.floors.len());
+        for sc in harvest_sender(&library, &sender, scratch, &mut report) {
+            // A sender's echo of a campaign already harvested from local
+            // files (this machine shares its own recordings) must not
+            // double-count.
+            if let Some(key) = campaign_key(sc.car, &sc.entries)
+                && seen.contains(&key)
+            {
+                report.push(format!(
+                    "skipped {}: same campaign already harvested locally",
+                    sc.label
+                ));
+                continue;
             }
-            Err(e) => report.push(format!("skipped {e}")),
+            match crate::advise::load_campaign(sc.entries, &sc.session, &sc.label) {
+                Ok(c) => {
+                    let (samples, floor) = harvest_campaign(&c, &sc.driver, &sc.label);
+                    report.push(format!("{}: {} samples", sc.label, samples.len()));
+                    map.samples.extend(samples);
+                    map.floors.push(floor);
+                }
+                Err(e) => report.push(format!("skipped {e}")),
+            }
+        }
+        // Dirty only when the harvest changed anything: rows produced now,
+        // or old rows this pass dropped.
+        if (map.samples.len(), map.floors.len()) != rows_before || had_rows {
+            stale_count += 1;
         }
     }
-    (map, report)
+    if stale_count == 0
+        && let Some(old) = old
+    {
+        report.push("up to date".into());
+        return Ok((old, report));
+    }
+    if !map.samples.is_empty() || out.exists() {
+        std::fs::write(out, render(&map)).map_err(|e| format!("{}: {e}", out.display()))?;
+    }
+    Ok((map, report))
 }
 
 #[cfg(test)]
@@ -1133,6 +1271,54 @@ mod tests {
         // s1 (0.04) and s3 (0.05) fall under the raised floor of campaign 1;
         // only 4 - 2 = 2 pairs remain -> under the minimum, silent.
         assert!(driver_trends(&map, "local", None).is_empty());
+    }
+
+    #[test]
+    fn refresh_carries_unchanged_campaigns_without_harvesting() {
+        let root = std::env::temp_dir().join(format!("tuners-refresh-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // An archived (closed) campaign pair whose stint recording does NOT
+        // exist: harvesting it can only fail, so surviving rows prove the
+        // cache path was taken.
+        let label = "tune-journal-99-20260101-000000.txt";
+        std::fs::write(
+            root.join("tune-session-99-20260101-000000.txt"),
+            "car = 99\n\n[20260101-000000]\narb_f = 20\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(label),
+            "sessions/stint-20260101-000100.ftel | front arb -1\n# parked 20260102-000000\n",
+        )
+        .unwrap();
+        let out = root.join("effect-map.tsv");
+        let mut sample = sample("front roll", true, -0.3, false);
+        sample.campaign = label.into();
+        let old = EffectMap {
+            samples: vec![sample],
+            floors: vec![CampaignFloor {
+                driver: "local".into(),
+                campaign: label.into(),
+                drift_s: None,
+                effects: Vec::new(),
+            }],
+        };
+        std::fs::write(&out, render(&old)).unwrap();
+
+        let stints = root.join("sessions").to_string_lossy().into_owned();
+        let scratch = root.join("scratch");
+        let (map, report) = refresh(&root, &stints, &out, &scratch, false).unwrap();
+        assert_eq!(map.samples.len(), 1, "{report:?}");
+        assert_eq!(map.floors.len(), 1);
+        assert!(report.iter().any(|l| l == "up to date"), "{report:?}");
+
+        // Forced: the harvest really runs, fails on the missing recording,
+        // and the stale rows drop.
+        let (map, report) = refresh(&root, &stints, &out, &scratch, true).unwrap();
+        assert!(map.samples.is_empty(), "{report:?}");
+        assert!(report.iter().any(|l| l.contains("missing")), "{report:?}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

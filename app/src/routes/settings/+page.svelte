@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { app, errMsg, loadSession } from "$lib/app.svelte";
-  import { commands, type SharingView } from "$lib/bindings";
+  import { commands, type EffectMapStatus, type SharingView } from "$lib/bindings";
   import { UNITS, UNIT_DIMS, UNIT_PRESETS, unitPrefs } from "$lib/units";
   import { advanced, toggleAdvanced } from "$lib/advanced.svelte";
   import { reopenOnboarding } from "$lib/onboarding.svelte";
@@ -36,8 +36,15 @@
   let sharingError = $state("");
   let sharingOverride = $state("");
 
+  // --- effect map (built in the background from all tuning history) ---
+  let mapStatus: EffectMapStatus | null | undefined = $state(undefined);
+
   $effect(() => {
     refreshSharing();
+    commands
+      .effectMapStatus()
+      .then((s) => (mapStatus = s))
+      .catch(() => (mapStatus = null));
   });
 
   async function refreshSharing() {
@@ -184,6 +191,31 @@
       tool: raw driving telemetry, setup values, and setup deltas. No names, no free text: project names,
       descriptions, and notes are stripped before anything leaves this machine. Off by default; turn it
       off any time. Quote your sender id to have your data deleted.
+    </div>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+      <h2 style="margin:0">Effect map</h2>
+      <span style="color:var(--muted);font-size:13px">
+        {#if mapStatus === undefined}
+          &nbsp;
+        {:else if mapStatus === null}
+          not built yet — it appears once a project has measured tune changes
+        {:else}
+          {mapStatus.samples} measurement{mapStatus.samples === 1 ? "" : "s"} across
+          {mapStatus.campaigns} campaign{mapStatus.campaigns === 1 ? "" : "s"}
+          {#if mapStatus.updatedMs != null}
+            · updated {new Date(mapStatus.updatedMs).toLocaleString()}
+          {/if}
+        {/if}
+      </span>
+    </div>
+    <div style="color:var(--muted);font-size:12px;margin-top:6px;max-width:640px">
+      Every measured tune change across your projects (and any shared data you ingest) is pooled into a
+      map of what each adjustment does. Advice uses it to suggest untried adjustments, clearly marked as
+      coming from the map rather than from this project's own runs. Kept fresh automatically in the
+      background.
     </div>
   </div>
 

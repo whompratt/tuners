@@ -232,6 +232,34 @@ pub fn effect_fields() -> Vec<EffectFieldView> {
 
 // ------------------------------------------------------------------- sharing
 
+/// Effect-map state for the Settings screen: what the background refresher
+/// last produced. None = no map yet (nothing journaled anywhere).
+#[derive(Serialize, Type, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectMapStatus {
+    pub samples: u32,
+    pub campaigns: u32,
+    /// Unix ms of the map file's last write.
+    pub updated_ms: f64,
+}
+
+pub fn effect_map_status() -> Option<EffectMapStatus> {
+    let path = crate::util::data_path("effect-map.tsv");
+    let text = std::fs::read_to_string(&path).ok()?;
+    let map = crate::effectmap::parse(&text).ok()?;
+    let updated_ms = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as f64;
+    Some(EffectMapStatus {
+        samples: map.samples.len() as u32,
+        campaigns: map.floors.len() as u32,
+        updated_ms,
+    })
+}
+
 /// Telemetry-collection state: consent flag, pseudonymous sender
 /// id, and outbox depth. The token itself never leaves the config file.
 #[derive(Serialize, Type, Debug, Clone)]

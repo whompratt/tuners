@@ -30,6 +30,12 @@ export const commands = {
 	 */
 	exportStint: (file: string, dest: string) => typedError<string, ApiError>(__TAURI_INVOKE("export_stint", { file, dest })),
 	effectFields: () => __TAURI_INVOKE<EffectFieldView[]>("effect_fields"),
+	effectMapStatus: () => __TAURI_INVOKE<{
+	samples: number,
+	campaigns: number,
+	/**  Unix ms of the map file's last write. */
+	updatedMs: number | null,
+} | null>("effect_map_status"),
 	pending: () => __TAURI_INVOKE<{
 	/**  The netted journal note the next run will be journaled under. */
 	note: string,
@@ -138,6 +144,17 @@ export type EffectFieldView = {
 	label: string,
 	unit: string,
 	floor: number | null,
+};
+
+/**
+ *  Effect-map state for the Settings screen: what the background refresher
+ *  last produced. None = no map yet (nothing journaled anywhere).
+ */
+export type EffectMapStatus = {
+	samples: number,
+	campaigns: number,
+	/**  Unix ms of the map file's last write. */
+	updatedMs: number | null,
 };
 
 export type ErrorKind = "badRequest" | "forbidden" | "notFound" | "conflict" | "internal";

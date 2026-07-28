@@ -2,7 +2,7 @@
 //! engine's api module, TS bindings via tauri-specta, and the recorder/live/
 //! drainer lifecycle that `tuners serve` used to own.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tauri::Manager as _;
@@ -166,6 +166,12 @@ fn effect_fields() -> Vec<api::EffectFieldView> {
 
 #[tauri::command]
 #[specta::specta]
+fn effect_map_status() -> Option<api::EffectMapStatus> {
+    api::effect_map_status()
+}
+
+#[tauri::command]
+#[specta::specta]
 fn sharing(state: S) -> api::SharingView {
     api::sharing_view(&state.config, &state.outbox)
 }
@@ -307,6 +313,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             record_split,
             export_stint,
             effect_fields,
+            effect_map_status,
             pending,
             lan_ip,
             in_flatpak,
@@ -362,6 +369,43 @@ fn run_emitter(
             let _ = QualityEvent(q).emit(&app);
         }
         std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// Keeps the cross-campaign effect map fresh: a cheap mtime-based staleness
+/// check every pass, the harvest only when campaigns actually changed and
+/// telemetry is idle (decoding a campaign's stints while the recorder is
+/// busy would fight the drive for CPU). First pass runs shortly after boot
+/// so a stale map catches up before the first advise.
+fn run_map_refresher(live: tuners::live::SharedLive) {
+    let mut delay = Duration::from_secs(5);
+    loop {
+        std::thread::sleep(delay);
+        delay = Duration::from_secs(60);
+        let busy = live
+            .lock()
+            .unwrap()
+            .last_data
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(30));
+        if busy {
+            continue;
+        }
+        let scratch = std::env::temp_dir().join(format!("tuners-map-{}", std::process::id()));
+        match tuners::effectmap::refresh(
+            Path::new("."),
+            "sessions",
+            &tuners::util::data_path("effect-map.tsv"),
+            &scratch,
+            false,
+        ) {
+            Ok((_, report)) => {
+                for line in report.iter().filter(|l| l.as_str() != "up to date") {
+                    println!("effect map: {line}");
+                }
+            }
+            Err(e) => println!("effect map: {e}"),
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }
 
@@ -449,6 +493,10 @@ pub fn run() {
                 let live = live.clone();
                 let (config, outbox) = (config.clone(), outbox.clone());
                 std::thread::spawn(move || run_drainer(live, config, outbox));
+            }
+            {
+                let live = live.clone();
+                std::thread::spawn(move || run_map_refresher(live));
             }
             {
                 let handle = app.handle().clone();
