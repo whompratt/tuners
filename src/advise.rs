@@ -527,6 +527,12 @@ enum CampaignBound {
     Since(String),
 }
 
+/// Whether a journal's campaign is parked in the archive (nothing new can
+/// join it) — the effect map's staleness check for closed campaigns.
+pub(crate) fn campaign_closed(journal_text: &str) -> bool {
+    matches!(campaign_bound(journal_text), CampaignBound::Closed)
+}
+
 fn campaign_bound(journal_text: &str) -> CampaignBound {
     let mut bound = CampaignBound::Open;
     for line in journal_text.lines() {
@@ -1045,6 +1051,135 @@ pub(crate) fn load_campaign<'s>(
     })
 }
 
+/// One Low-confidence suggestion from the cross-campaign effect map (built
+/// by `tuners map`): the best grounded, context-matched cell whose pooled
+/// behavioural movement aligns with the pace trends, for a family without
+/// trustworthy local evidence. Graded gating: a family with any NON-WEAK
+/// local measurement is owned by that evidence; weak-only local evidence
+/// tempers the prior (quoted) instead of silencing it. A cell must also be
+/// a distribution, not an anecdote: one attributed clause from one other
+/// car (n=1, no direct A/B) never carries a suggestion. None = the map is
+/// silent.
+fn map_prior(
+    emap: &crate::effectmap::EffectMap,
+    trends: &[crate::effectmap::PaceTrend],
+    ctx: &crate::effectmap::MapContext,
+    measurements: &[Measurement],
+    recs: &[analysis::recommend::Recommendation],
+) -> Option<analysis::recommend::Recommendation> {
+    let cells = crate::effectmap::aggregate(emap);
+    let ranked = crate::effectmap::rank(&cells, trends, ctx);
+    if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
+        for (score, cell) in &ranked {
+            eprintln!(
+                "  ranked: {} softer={} score={score:+.2} n={}",
+                cell.family, cell.softer, cell.n
+            );
+        }
+    }
+    let (cell, family) = ranked.into_iter().find_map(|(score, cell)| {
+        let family = journal::family_for_area(&cell.family)?;
+        let grounded = cell.n >= 2 || cell.direct_n >= 1;
+        let tried = measurements
+            .iter()
+            .any(|m| m.change.family == family && !m.weak);
+        let advised = recs
+            .iter()
+            .any(|r| r.implied.is_some_and(|i| i.family == family));
+        (grounded && !tried && !advised && score >= 1.0).then_some((cell, family))
+    })?;
+    let dir = crate::effectmap::direction_word(&cell.family, cell.softer);
+    let movers: effects::Effects = cell
+        .fields
+        .iter()
+        .filter(|(k, _, m, _)| m.abs() >= effects::noise_floor(k))
+        .map(|(k, _, m, _)| (*k, *m))
+        .collect();
+    // Quote only the trends this cell's movement actually matches: the
+    // intersection is the case for the suggestion.
+    let trend_desc: Vec<String> = trends
+        .iter()
+        .filter(|t| movers.iter().any(|(k, _)| *k == t.key))
+        .map(|t| {
+            format!(
+                "faster stints moved {} {} (r {:+.2}, {} pairs{})",
+                effects::label(t.key),
+                if t.r > 0.0 { "down" } else { "up" },
+                t.r,
+                t.n,
+                if t.history {
+                    " across your other cars"
+                } else {
+                    ""
+                },
+            )
+        })
+        .collect();
+    // Weak-only local evidence tempers rather than silences: say so.
+    let weak_local = measurements
+        .iter()
+        .find(|m| m.change.family == family && m.weak)
+        .map(|m| {
+            format!(
+                "local evidence exists but is weak (\"{}\", {}); \
+                 the prior stands until a trustworthy measurement lands",
+                m.desc,
+                m.outcome.word(),
+            )
+        });
+    Some(analysis::recommend::Recommendation {
+        apply: Vec::new(),
+        area: journal::family_area(family),
+        suggestion: None,
+        advice: format!(
+            "untried this campaign: on similar builds, {} {} moved the \
+             behaviours your pace has tracked; worth one probing step \
+             (map prior, not a measurement)",
+            cell.family, dir,
+        ),
+        evidence: {
+            let mut ev = vec![
+                format!("pace trend: {}", trend_desc.join("; ")),
+                format!(
+                    "effect map ({} {}{}): {} {} over n={} ({} direct{}) read {}; \
+                     measured {:+.2}s ±{:.2} there",
+                    if cell.surface_loose { "dirt" } else { "tarmac" },
+                    crate::packet::drivetrain_name(cell.drivetrain),
+                    match cell.aero {
+                        Some(true) => " aero",
+                        Some(false) => " no-aero",
+                        None => "",
+                    },
+                    cell.family,
+                    dir,
+                    cell.n,
+                    cell.direct_n,
+                    if cell.own_n < cell.n {
+                        format!(", {} yours", cell.own_n)
+                    } else {
+                        String::new()
+                    },
+                    if movers.is_empty() {
+                        "no above-floor movement".to_string()
+                    } else {
+                        effects::describe(&movers)
+                    },
+                    cell.delta_mean,
+                    cell.delta_sd,
+                ),
+            ];
+            ev.extend(weak_local);
+            ev
+        },
+        confidence: analysis::recommend::Confidence::Low,
+        implied: Some(journal::Change {
+            family,
+            softer: cell.softer,
+            magnitude: None,
+        }),
+    })
+}
+
 /// Full advise: journal trajectory when one exists, blind fallback otherwise.
 pub fn advise(
     journal_path: &str,
@@ -1063,6 +1198,30 @@ pub fn advise(
             .ok_or("no stints recorded yet; drive first")?;
         let stint = analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
         let mut recs = blind_recommendations(&stint, &path, &rule_context(&session))?;
+        // Cold start: no journal means no local trends, but the driver's
+        // pooled history from other cars can still rank one untried lever
+        // from the effect map — the first informed suggestion of a fresh
+        // campaign (plan 007).
+        if let Ok(text) = std::fs::read_to_string(crate::util::data_path("effect-map.tsv"))
+            && let Ok(emap) = crate::effectmap::parse(&text)
+            && let Some(met) = stint_overall_metrics(&stint)
+        {
+            let trends = crate::effectmap::driver_trends(&emap, "local", car_of(&stint));
+            if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
+                eprintln!("map-prior trace (blind): trends:");
+                for t in &trends {
+                    eprintln!("  {} r={:+.2} n={} (history)", t.key, t.r, t.n);
+                }
+            }
+            let ctx = crate::effectmap::MapContext {
+                drivetrain: met.drivetrain_type,
+                surface_loose: met.surface_loose,
+                aero: rule_context(&session).aero_tunable,
+            };
+            if let Some(rec) = map_prior(&emap, &trends, &ctx, &[], &recs) {
+                recs.push(rec);
+            }
+        }
         let current_tune = enrich_with_tune(&mut recs, &session);
         return Ok(AdviseView {
             journal: None,
@@ -1686,126 +1845,8 @@ pub fn advise(
             surface_loose: met.surface_loose,
             aero: rule_context(&session).aero_tunable,
         };
-        let cells = crate::effectmap::aggregate(&emap);
-        if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
-            for (score, cell) in crate::effectmap::rank(&cells, &trends, &ctx) {
-                eprintln!(
-                    "  ranked: {} softer={} score={score:+.2} n={}",
-                    cell.family, cell.softer, cell.n
-                );
-            }
-        }
-        // Graded gating: a family with any NON-WEAK local measurement is
-        // owned by that evidence; weak-only local evidence tempers the prior
-        // (noted below) instead of silencing it. A cell must also be a
-        // distribution, not an anecdote: one attributed clause from one
-        // other car (n=1, no direct A/B) never carries a suggestion.
-        let candidate = crate::effectmap::rank(&cells, &trends, &ctx)
-            .into_iter()
-            .find_map(|(score, cell)| {
-                let family = journal::family_for_area(&cell.family)?;
-                let grounded = cell.n >= 2 || cell.direct_n >= 1;
-                let tried = c
-                    .measurements
-                    .iter()
-                    .any(|m| m.change.family == family && !m.weak);
-                let advised = recs
-                    .iter()
-                    .any(|r| r.implied.is_some_and(|i| i.family == family));
-                (grounded && !tried && !advised && score >= 1.0).then_some((cell, family))
-            });
-        if let Some((cell, family)) = candidate {
-            let dir = crate::effectmap::direction_word(&cell.family, cell.softer);
-            let movers: effects::Effects = cell
-                .fields
-                .iter()
-                .filter(|(k, _, m, _)| m.abs() >= effects::noise_floor(k))
-                .map(|(k, _, m, _)| (*k, *m))
-                .collect();
-            // Quote only the trends this cell's movement actually matches:
-            // the intersection is the case for the suggestion.
-            let trend_desc: Vec<String> = trends
-                .iter()
-                .filter(|t| movers.iter().any(|(k, _)| *k == t.key))
-                .map(|t| {
-                    format!(
-                        "faster stints moved {} {} (r {:+.2}, {} pairs{})",
-                        effects::label(t.key),
-                        if t.r > 0.0 { "down" } else { "up" },
-                        t.r,
-                        t.n,
-                        if t.history {
-                            " across your other cars"
-                        } else {
-                            ""
-                        },
-                    )
-                })
-                .collect();
-            // Weak-only local evidence tempers rather than silences: say so.
-            let weak_local = c
-                .measurements
-                .iter()
-                .find(|m| m.change.family == family && m.weak)
-                .map(|m| {
-                    format!(
-                        "local evidence exists but is weak (\"{}\", {}); \
-                         the prior stands until a trustworthy measurement lands",
-                        m.desc,
-                        m.outcome.word(),
-                    )
-                });
-            recs.push(analysis::recommend::Recommendation {
-                apply: Vec::new(),
-                area: journal::family_area(family),
-                suggestion: None,
-                advice: format!(
-                    "untried this campaign: on similar builds, {} {} moved the \
-                     behaviours your pace has tracked; worth one probing step \
-                     (map prior, not a measurement)",
-                    cell.family, dir,
-                ),
-                evidence: {
-                    let mut ev = vec![
-                        format!("pace trend: {}", trend_desc.join("; ")),
-                        format!(
-                            "effect map ({} {}{}): {} {} over n={} ({} direct{}) read {}; \
-                             measured {:+.2}s ±{:.2} there",
-                            if cell.surface_loose { "dirt" } else { "tarmac" },
-                            crate::packet::drivetrain_name(cell.drivetrain),
-                            match cell.aero {
-                                Some(true) => " aero",
-                                Some(false) => " no-aero",
-                                None => "",
-                            },
-                            cell.family,
-                            dir,
-                            cell.n,
-                            cell.direct_n,
-                            if cell.own_n < cell.n {
-                                format!(", {} yours", cell.own_n)
-                            } else {
-                                String::new()
-                            },
-                            if movers.is_empty() {
-                                "no above-floor movement".to_string()
-                            } else {
-                                effects::describe(&movers)
-                            },
-                            cell.delta_mean,
-                            cell.delta_sd,
-                        ),
-                    ];
-                    ev.extend(weak_local);
-                    ev
-                },
-                confidence: analysis::recommend::Confidence::Low,
-                implied: Some(journal::Change {
-                    family,
-                    softer: cell.softer,
-                    magnitude: None,
-                }),
-            });
+        if let Some(rec) = map_prior(&emap, &trends, &ctx, &c.measurements, &recs) {
+            recs.push(rec);
         }
     }
 
