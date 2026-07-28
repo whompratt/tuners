@@ -161,6 +161,14 @@ pub fn key_of(name: &str) -> Option<&'static str> {
     FIELDS.iter().find(|(k, ..)| *k == name).map(|(k, ..)| *k)
 }
 
+/// Human label for a field key ("balance" -> "balance index").
+pub fn label(key: &str) -> &str {
+    FIELDS
+        .iter()
+        .find(|(k, ..)| *k == key)
+        .map_or(key, |(_, l, _)| *l)
+}
+
 fn get(v: &Effects, key: &str) -> Option<f32> {
     v.iter().find(|(k, _)| *k == key).map(|(_, x)| *x)
 }

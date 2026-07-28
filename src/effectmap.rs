@@ -587,6 +587,138 @@ pub fn aggregate(map: &EffectMap) -> Vec<Cell> {
     out
 }
 
+// ---- phase D: the map as a prior for untried levers ----
+
+/// A field's measured correlation with pace within one campaign.
+#[derive(Debug, Clone)]
+pub struct PaceTrend {
+    pub key: &'static str,
+    /// Pearson r between the field's movement and the time delta (positive =
+    /// the field rising cost time).
+    pub r: f32,
+    /// Measurement pairs behind it (above-floor movements only).
+    pub n: usize,
+}
+
+/// Trend gates: a campaign yields ~5-15 measurements against 26 coordinates,
+/// so an unconstrained fit is underdetermined; per-field correlation over
+/// above-floor movements, with a minimum sample count and a strong-|r| cut,
+/// is the honest version.
+const TREND_MIN_PAIRS: usize = 4;
+const TREND_MIN_R: f32 = 0.7;
+
+fn pearson(pts: &[(f32, f32)]) -> f32 {
+    let n = pts.len() as f32;
+    let (mx, my) = (
+        pts.iter().map(|p| p.0).sum::<f32>() / n,
+        pts.iter().map(|p| p.1).sum::<f32>() / n,
+    );
+    let (mut sxy, mut sxx, mut syy) = (0.0f32, 0.0f32, 0.0f32);
+    for (x, y) in pts {
+        sxy += (x - mx) * (y - my);
+        sxx += (x - mx) * (x - mx);
+        syy += (y - my) * (y - my);
+    }
+    if sxx <= 0.0 || syy <= 0.0 {
+        return 0.0;
+    }
+    sxy / (sxx * syy).sqrt()
+}
+
+/// Which effect fields tracked pace across a campaign's measurements:
+/// (effect delta, time delta) pairs in, per-field correlations out. Only
+/// movements at or above max(library, campaign) floor count, so the trend
+/// can't be built out of noise.
+pub fn pace_trends(
+    pairs: &[(effects::Effects, f32)],
+    campaign_floor: Option<&effects::Effects>,
+) -> Vec<PaceTrend> {
+    let mut out = Vec::new();
+    for (key, ..) in effects::FIELDS {
+        let base = effects::noise_floor(key);
+        let floor = campaign_floor
+            .and_then(|f| f.iter().find(|(k, _)| k == key).map(|(_, v)| v.abs()))
+            .map_or(base, |c| c.max(base));
+        let pts: Vec<(f32, f32)> = pairs
+            .iter()
+            .filter_map(|(fx, dt)| {
+                let v = fx.iter().find(|(k, _)| k == key).map(|(_, v)| *v)?;
+                (v.abs() >= floor).then_some((v, *dt))
+            })
+            .collect();
+        if pts.len() < TREND_MIN_PAIRS {
+            continue;
+        }
+        let r = pearson(&pts);
+        if r.abs() >= TREND_MIN_R {
+            out.push(PaceTrend {
+                key,
+                r,
+                n: pts.len(),
+            });
+        }
+    }
+    out
+}
+
+/// The build context a map lookup must match.
+#[derive(Debug, Clone, Copy)]
+pub struct MapContext {
+    pub drivetrain: i32,
+    pub surface_loose: bool,
+    pub aero: Option<bool>,
+}
+
+/// Rank map cells by how well their pooled behavioural movement aligns with
+/// the campaign's pace trends. Context must match (aero only when known on
+/// both sides); cells that measured clearly slower elsewhere are excluded —
+/// the map must not recommend known losers on behavioural grounds alone.
+/// Positive score = the family-direction moves behaviour the way this
+/// campaign has been gaining time.
+pub fn rank<'a>(cells: &'a [Cell], trends: &[PaceTrend], ctx: &MapContext) -> Vec<(f32, &'a Cell)> {
+    let mut out = Vec::new();
+    for cell in cells {
+        if cell.n == 0
+            || cell.drivetrain != ctx.drivetrain
+            || cell.surface_loose != ctx.surface_loose
+        {
+            continue;
+        }
+        if let (Some(a), Some(b)) = (cell.aero, ctx.aero)
+            && a != b
+        {
+            continue;
+        }
+        if cell.delta_mean > 0.10 {
+            continue;
+        }
+        let mut score = 0.0;
+        for t in trends {
+            let Some((_, _, mean, _)) = cell.fields.iter().find(|(k, ..)| *k == t.key) else {
+                continue;
+            };
+            let floor = effects::noise_floor(t.key);
+            if mean.abs() < floor {
+                continue;
+            }
+            let strength = (mean.abs() / floor).min(3.0);
+            // r > 0: the field rising cost time, so movement AGAINST the
+            // costly direction (mean * r < 0) is what we want more of.
+            let aligned = mean * t.r < 0.0;
+            score += if aligned {
+                strength * t.r.abs()
+            } else {
+                -strength * t.r.abs()
+            };
+        }
+        if score > 0.0 {
+            out.push((score, cell));
+        }
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0).reverse());
+    out
+}
+
 /// The journal's generic softer/stiffer flag in each family's own
 /// vocabulary (`softer` = the value decreased, per the Family docs).
 pub fn direction_word(family: &str, softer: bool) -> &'static str {
@@ -793,6 +925,67 @@ mod tests {
         assert_eq!(cells.len(), 1);
         assert_eq!((cells[0].n, cells[0].weak_n), (0, 1));
         assert!(summary(&cells).contains("weak-only"));
+    }
+
+    #[test]
+    fn pace_trends_gate_on_floor_count_and_r() {
+        // balance rising costs time, cleanly: r ~ +1 over 4 above-floor pairs.
+        let pairs: Vec<(effects::Effects, f32)> = vec![
+            (vec![("balance", 0.04)], 0.1),
+            (vec![("balance", 0.08)], 0.3),
+            (vec![("balance", -0.05)], -0.2),
+            (vec![("balance", -0.10)], -0.4),
+            // below the 0.03 floor: must not count as a 5th pair
+            (vec![("balance", 0.01)], 5.0),
+        ];
+        let trends = pace_trends(&pairs, None);
+        assert_eq!(trends.len(), 1);
+        assert_eq!(trends[0].key, "balance");
+        assert_eq!(trends[0].n, 4);
+        assert!(trends[0].r > 0.9, "r={}", trends[0].r);
+        // Only 3 above-floor pairs -> silent.
+        assert!(pace_trends(&pairs[..3], None).is_empty());
+        // A campaign floor above every movement -> silent.
+        let raised = vec![("balance", 0.2)];
+        assert!(pace_trends(&pairs, Some(&raised)).is_empty());
+    }
+
+    #[test]
+    fn rank_scores_aligned_cells_and_filters_context() {
+        let trend = PaceTrend {
+            key: "balance",
+            r: 0.9,
+            n: 5,
+        };
+        let cell = |mean: f32, drivetrain: i32, delta_mean: f32| Cell {
+            family: "rear roll".into(),
+            softer: true,
+            drivetrain,
+            surface_loose: false,
+            aero: Some(true),
+            n: 2,
+            direct_n: 1,
+            weak_n: 0,
+            delta_mean,
+            delta_sd: 0.1,
+            fields: vec![("balance", 2, mean, 0.01)],
+        };
+        let ctx = MapContext {
+            drivetrain: 2,
+            surface_loose: false,
+            aero: Some(true),
+        };
+        let trend = std::slice::from_ref(&trend);
+        // Aligned: balance FELL where the campaign says balance-up = slower.
+        let aligned = [cell(-0.06, 2, -0.2)];
+        let ranked = rank(&aligned, trend, &ctx);
+        assert_eq!(ranked.len(), 1);
+        assert!(ranked[0].0 > 0.0);
+        // Contra movement scores negative -> dropped.
+        assert!(rank(&[cell(0.06, 2, -0.2)], trend, &ctx).is_empty());
+        // Wrong drivetrain and known-loser cells never rank.
+        assert!(rank(&[cell(-0.06, 1, -0.2)], trend, &ctx).is_empty());
+        assert!(rank(&[cell(-0.06, 2, 0.5)], trend, &ctx).is_empty());
     }
 
     #[test]
