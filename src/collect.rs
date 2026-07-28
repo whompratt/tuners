@@ -382,7 +382,16 @@ fn upload(endpoint: &str, token: &str, path: &Path) -> Result<u16, String> {
         .into_owned();
     let url = format!("{}/v1/bundle/{name}", endpoint.trim_end_matches('/'));
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
-    let out = Command::new("curl")
+    let mut cmd = Command::new("curl");
+    // The app is a windows-subsystem GUI process: a spawned console child
+    // pops a visible CMD window for every upload unless suppressed.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = cmd
         .args([
             "-s",
             "-o",
