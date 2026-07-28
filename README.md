@@ -58,6 +58,52 @@ tuners receive    local telemetry-collection endpoint
 See [docs/guide.md](docs/guide.md) for capture practice (rewinds, lap counts,
 A-B-A protocol).
 
+## Data Collection
+
+_tuners_ can optionally share your telemetry to improve the advice engine for
+everyone. It is **off by default** and nothing leaves your machine until you
+turn it on (Settings → telemetry sharing).
+
+**Why share?** The advice engine learns which setup changes actually move
+which behaviours - an "effect map" built from real A/B measurements. From a
+single player's sessions it can only learn about the cars and changes that
+player happened to try; pooled across many players, cars, surfaces, and
+drivetrains it can tell a new user "other people who changed this saw that"
+before they've tried anything themselves. More data directly means better,
+earlier suggestions - including for you.
+
+**What is sent** - one bundle per recorded stint, containing:
+
+- the raw telemetry recording, exactly as the game emitted it (car physics
+  channels only: speed, slip, suspension, tire temps, and so on - the Data Out
+  packet contains no personal information),
+- the car and tune-revision context needed to interpret it, with **all free
+  text structurally stripped**: session facts are allowlisted, and journal
+  notes are rebuilt from parsed setup deltas ("front arb -2"). Anything that
+  doesn't match the machine grammar simply isn't exported - text is never
+  redacted in place, it's absent by construction.
+
+**What is never sent** - names, notes, comments, file paths, or anything you
+typed as prose. There are no accounts: at opt-in the app generates a random
+token locally, and the server sees only a hash of it as a pseudonymous sender
+id. Nothing links a bundle to you as a person.
+
+**When it's sent** - bundles queue in a local outbox and upload only while
+telemetry is idle (no uploads compete with your driving), oldest first. A
+bundle is removed from the queue only once the server confirms receipt. The
+receiving side re-validates every bundle on arrival - recordings are fully
+re-decoded and the free-text strip is verified - and quarantines anything that
+doesn't check out.
+
+**Staying in control** - turn sharing off at any time; disabling asks whether
+to discard anything still queued. Previously recorded stints are only shared
+if you explicitly choose "share existing recordings", which shows a
+count-and-size preview first. You can inspect exactly what a bundle contains
+with `tuners export`, which writes the same archive to a file instead of
+uploading it.
+
+
+
 ## Docs
 
 - [docs/design.md](docs/design.md) - objectives, constraints, architecture, design principles
