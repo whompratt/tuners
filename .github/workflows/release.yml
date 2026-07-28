@@ -17,15 +17,23 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-22.04
-    outputs:
-      release_id: ${{ steps.create.outputs.result }}
     steps:
-      - id: create
-        uses: actions/github-script@v9
+      - uses: actions/github-script@v9
         with:
           script: |
             const tag = context.ref.replace('refs/tags/', '');
             const version = tag.replace(/^v/, '');
+            // Idempotent: a draft for this tag left by an earlier attempt
+            // (failed run, re-pushed tag) is reused; same-version assets
+            // get replaced by name on upload.
+            const existing = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            if (existing.data.some(r => r.tag_name === tag && r.draft)) {
+              return;
+            }
             const dl = (name) =>
               `[${name}](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/${tag}/${name})`;
             const body = [
@@ -66,6 +74,32 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Resolve the tag's draft release at the point of use instead of
+      # trusting the id minted by create-release: a re-run of failed jobs
+      # after the draft was deleted, or stale drafts left by a
+      # delete-and-retag, otherwise 404 the asset upload. Newest release
+      # for the tag wins.
+      - id: release
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const rel = data
+              .filter(r => r.tag_name === tag)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (!rel) {
+              throw new Error(
+                `no release found for ${tag}; the draft was deleted - re-run ` +
+                `ALL jobs (or re-push the tag) so create-release makes a new one`
+              );
+            }
+            return rel.id;
+
       - name: install linux webview/bundler deps
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -100,7 +134,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: app
-          releaseId: ${{ needs.create-release.outputs.release_id }}
+          releaseId: ${{ steps.release.outputs.result }}
 
       - name: hand the deb to the flatpak job
         if: matrix.platform == 'ubuntu-22.04'
@@ -146,11 +180,21 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const rel = data
+              .filter(r => r.tag_name === tag)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+            if (!rel) throw new Error(`no release found for ${tag}`);
             const name = fs.readdirSync('flatpak').find(f => f.endsWith('.flatpak'));
             await github.rest.repos.uploadReleaseAsset({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release_id }},
+              release_id: rel.id,
               name,
               data: fs.readFileSync(`flatpak/${name}`),
             });
@@ -164,9 +208,31 @@ jobs:
       - uses: actions/github-script@v9
         with:
           script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const same = data
+              .filter(r => r.tag_name === tag)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at));
+            if (!same.length) throw new Error(`no release found for ${tag}`);
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release_id }},
+              release_id: same[0].id,
               draft: false,
             });
+            // Stale drafts for the same tag (delete-and-retag leftovers)
+            // would shadow future lookups; drop them now that the real
+            // release is published.
+            for (const r of same.slice(1)) {
+              if (r.draft) {
+                await github.rest.repos.deleteRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: r.id,
+                });
+              }
+            }
