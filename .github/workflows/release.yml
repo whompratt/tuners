@@ -48,8 +48,6 @@ jobs:
               `| Linux (Debian/Ubuntu) | ${dl(`tuners_${version}_amd64.deb`)} |`,
               `| Linux (Fedora) | ${dl(`tuners-${version}-1.x86_64.rpm`)} |`,
               '',
-              'The `.sig` files and `latest.json` are used by the in-app updater; no need to download them.',
-              '',
             ].join('\n');
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
