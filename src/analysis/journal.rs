@@ -512,6 +512,26 @@ fn outcome_word(o: Outcome) -> &'static str {
     }
 }
 
+/// Stable fine-grained name per family — the inverse of `family_for_area`.
+/// Distinguishes front/rear and accel/decel where `family_area` pools them
+/// for display: the effect map must not mix opposite-end interventions.
+pub fn family_key(f: Family) -> &'static str {
+    match f {
+        Family::FrontRoll => "front roll",
+        Family::RearRoll => "rear roll",
+        Family::Gearing => "gearing",
+        Family::FrontAero => "front aero",
+        Family::RearAero => "rear aero",
+        Family::DiffAccel => "diff accel",
+        Family::DiffDecel => "diff decel",
+        Family::Brakes => "brakes",
+        Family::Damping => "damping",
+        Family::TirePressure => "tire pressure",
+        Family::Alignment => "alignment",
+        Family::RideHeight => "ride height",
+    }
+}
+
 pub fn family_area(f: Family) -> &'static str {
     match f {
         Family::FrontRoll | Family::RearRoll => "balance",

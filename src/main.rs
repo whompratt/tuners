@@ -23,6 +23,12 @@ USAGE:
                     active session car's journal (tune-journal-<car>.txt),
                     falling back to tune-journal.txt with no session;
                     journal lines: <stint-file> | <change since previous stint>
+  tuners map      [--out effect-map.tsv]
+                    build the cross-campaign effect map: harvest every
+                    campaign on disk (active, archived, legacy, blind) plus
+                    the ingested sender library into per family x direction
+                    behaviour distributions, write the sample file, and print
+                    the aggregated summary
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
                     send synthetic telemetry (stand-in for the game); timescale
                     compresses in-game time for headless lap testing
@@ -67,6 +73,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "compare" => cmd_compare(&args[1..]),
         "recommend" => cmd_recommend(&args[1..]),
         "advise" => cmd_advise(&args[1..]),
+        "map" => cmd_map(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "receive" => cmd_receive(&args[1..]),
         "export" => cmd_export(&args[1..]),
@@ -419,6 +426,43 @@ fn cmd_compare(args: &[String]) -> Result<(), String> {
     let cmp = analysis::compare::compare(&a, &b)?;
     println!("A = {path_a}\nB = {path_b}\n");
     print!("{}", analysis::compare::render(&a, &b, &cmp));
+    Ok(())
+}
+
+fn cmd_map(args: &[String]) -> Result<(), String> {
+    let mut out = tuners::util::data_path("effect-map.tsv");
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--out" => out = PathBuf::from(it.next().ok_or("--out needs a value")?),
+            other => return Err(format!("unknown flag '{other}' for map")),
+        }
+    }
+    let root = tuners::util::data_root().to_path_buf();
+    let scratch = std::env::temp_dir().join(format!("tuners-map-{}", std::process::id()));
+    let (map, report) = tuners::effectmap::build(
+        &root,
+        &tuners::util::data_path("sessions").to_string_lossy(),
+        &scratch,
+    );
+    let _ = std::fs::remove_dir_all(&scratch);
+    for line in &report {
+        println!("{line}");
+    }
+    if map.samples.is_empty() {
+        return Err("no measurements harvested; the map needs journaled campaigns".into());
+    }
+    std::fs::write(&out, tuners::effectmap::render(&map)).map_err(|e| format!("{e}"))?;
+    println!(
+        "\nwrote {} ({} samples, {} campaigns)\n",
+        out.display(),
+        map.samples.len(),
+        map.floors.len(),
+    );
+    print!(
+        "{}",
+        tuners::effectmap::summary(&tuners::effectmap::aggregate(&map))
+    );
     Ok(())
 }
 

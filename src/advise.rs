@@ -171,7 +171,7 @@ fn splice_trusted(p: &analysis::profile::StintProfile) -> bool {
 }
 
 /// The car driven in a stint: first frame with a car ordinal set.
-fn car_of(stint: &analysis::Stint) -> Option<i32> {
+pub(crate) fn car_of(stint: &analysis::Stint) -> Option<i32> {
     stint
         .frames
         .iter()

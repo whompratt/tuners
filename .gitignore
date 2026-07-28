@@ -2,6 +2,7 @@
 /sessions
 /tune-journal*.txt
 /tune-session*.txt
+/effect-map.tsv
 .env
 
 # local working notes

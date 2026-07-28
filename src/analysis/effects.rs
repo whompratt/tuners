@@ -155,6 +155,12 @@ pub fn vector(m: &StintMetrics) -> Effects {
     out
 }
 
+/// The registry's static key for a serialized field name, for parsers
+/// rebuilding `Effects` from text.
+pub fn key_of(name: &str) -> Option<&'static str> {
+    FIELDS.iter().find(|(k, ..)| *k == name).map(|(k, ..)| *k)
+}
+
 fn get(v: &Effects, key: &str) -> Option<f32> {
     v.iter().find(|(k, _)| *k == key).map(|(_, x)| *x)
 }

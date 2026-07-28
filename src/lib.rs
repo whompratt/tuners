@@ -5,6 +5,7 @@ pub mod bundle;
 pub mod capture;
 pub mod cars;
 pub mod collect;
+pub mod effectmap;
 pub mod ingest;
 pub mod live;
 pub mod packet;
