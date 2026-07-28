@@ -1241,16 +1241,26 @@ pub fn advise(
 
     // A journal for another car (explicitly passed while a different session
     // is active) resolves that car's ARCHIVED session file, so its setups,
-    // facts, and landscapes work instead of degrading to blind mode.
+    // facts, and landscapes work instead of degrading to blind mode. The
+    // journal's own sibling (tune-journal-X.txt -> tune-session-X.txt, the
+    // pair naming both the named-session archives and the legacy per-car
+    // scheme use) wins over the legacy per-car derivation, which cannot see
+    // stamped archives.
     if let Some(first) = entries.first()
         && let Ok(stint) = analysis::Stint::load(first.path.as_ref())
     {
         let journal_car = car_of(&stint);
         if journal_car.is_some() && journal_car != session.car {
-            let per_car =
-                crate::tuning::journal_path_for(journal_car, &session_path.to_string_lossy());
-            let archived = TuningSession::load(per_car.as_ref());
-            if archived.car == journal_car {
+            let sibling = journal_path.replace("tune-journal", "tune-session");
+            let candidates = [
+                sibling,
+                crate::tuning::journal_path_for(journal_car, &session_path.to_string_lossy()),
+            ];
+            if let Some(archived) = candidates
+                .iter()
+                .map(|p| TuningSession::load(p.as_ref()))
+                .find(|s| s.car == journal_car)
+            {
                 session = archived;
             }
         }
