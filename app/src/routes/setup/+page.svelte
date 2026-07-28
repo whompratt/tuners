@@ -104,6 +104,23 @@
     await loadPending();
   }
 
+  /** Alt-tabbing to the game does NOT blur the focused input (Chromium keeps
+   * element focus when the window deactivates), so a value typed right before
+   * switching away never fires its change event: the run driven next would be
+   * journaled without the edit, and the eventual commit would net into the
+   * NEXT change as a bogus compound step. The window losing focus is exactly
+   * "the user went back to the game" — flush every dirty field then.
+   * Sequential: concurrent partial saves would race on the session file. */
+  async function flushDirty() {
+    if (baselineMode) return;
+    for (const [, fields] of TUNE_GROUPS) {
+      for (const [k] of fields) {
+        if (dirty(k)) await commitField(k);
+        await commitLimit(k);
+      }
+    }
+  }
+
   async function commitLimit(k: string) {
     const mn = String(limDraft[k]?.min ?? "").trim();
     const mx = String(limDraft[k]?.max ?? "").trim();
@@ -191,6 +208,8 @@
     TUNE_GROUPS.flatMap(([, fields]) => fields).filter(([k]) => String(draft[k] ?? "").trim() !== "").length,
   );
 </script>
+
+<svelte:window onblur={flushDirty} />
 
 <div class="screen">
   {#if !app.booted}
