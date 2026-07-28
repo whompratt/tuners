@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "tuners",
-  "version": "0.1.4",
   "identifier": "com.whompratt.tuners",
   "build": {
     "beforeDevCommand": "pnpm dev",

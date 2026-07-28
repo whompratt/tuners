@@ -1,6 +1,11 @@
 [workspace]
 members = ["app/src-tauri"]
 
+# The single place the app version is bumped: both crates inherit it, and
+# tauri.conf.json (no version key) picks it up from the app crate.
+[workspace.package]
+version = "0.1.4"
+
 [profile.release]
 codegen-units = 1
 lto = true
@@ -8,7 +13,7 @@ strip = true
 
 [package]
 name = "tuners"
-version = "0.1.4"
+version.workspace = true
 edition = "2024"
 license = "GPL-3.0-or-later"
 

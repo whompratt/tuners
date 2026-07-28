@@ -18,6 +18,25 @@ jobs:
       contents: write
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v7
+
+      # The version lives in ONE place: [workspace.package] in the root
+      # Cargo.toml (tauri.conf.json has no version key and inherits it).
+      # Refuse to release a tag that doesn't match it — catches tagging
+      # before bumping, which once shipped a v0.1.1 that reported 0.1.0.
+      - name: check tag matches the workspace version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [ -z "$version" ]; then
+            echo "could not read [workspace.package] version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [ "$tag" != "$version" ]; then
+            echo "tag v$tag != Cargo.toml version $version - bump the version, commit, then re-tag" >&2
+            exit 1
+          fi
+
       - uses: actions/github-script@v9
         with:
           script: |
