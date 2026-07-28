@@ -90,6 +90,16 @@ describe("slider limits", () => {
     expect(limToDisp("tire_pressure_f", canon)).toBe("1..3.8");
   });
 
+  it("keeps typed decimals on ends even when the dimension displays whole numbers", () => {
+    // aero displays whole kgf under UK prefs (dp 0); a typed limit like
+    // 150.5 must survive the canonical round-trip, not reseed as "151".
+    Object.assign(unitPrefs, UNIT_PRESETS.uk);
+    const canon = limToCanon("aero_f", "150.5..332");
+    expect(limToDisp("aero_f", canon)).toBe("150.5..332");
+    const rh = limToCanon("ride_height_f", "12.55..15");
+    expect(limToDisp("ride_height_f", rh)).toBe("12.55..15");
+  });
+
   it("knows the universal FH6 slider ranges", () => {
     expect(UNIVERSAL_LIMITS("tire_pressure_f")).toBe("15..55");
     expect(UNIVERSAL_LIMITS("arb_r")).toBe("1..65");

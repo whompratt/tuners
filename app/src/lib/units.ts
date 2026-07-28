@@ -85,9 +85,18 @@ export const UNIVERSAL_LIMITS = (k: string): string | null =>
   : /^diff_/.test(k) || k === "brake_balance" ? "0..100"
   : null;
 
-// slider-limit facts hold "min..max" in canonical units; convert per side
+// slider-limit facts hold "min..max" in canonical units; convert per side.
+// Ends are typed by the user off the game's slider, not produced by it, so
+// they keep at least 2 decimals regardless of the dimension's display dp
+// (aero shows whole kgf, but a typed "150.5" limit must survive the
+// round-trip instead of reseeding back as "151").
+const limDispEnd = (k: string, x: string): string => {
+  const u = unitOf(k);
+  const n = parseFloat(x);
+  return !u || isNaN(n) ? x : trimZeros((n * u.k).toFixed(Math.max(u.dp, 2)));
+};
 export const limToDisp = (k: string, v: string): string =>
-  v ? v.split("..").map((x) => toDisp(k, x)).join("..") : "";
+  v ? v.split("..").map((x) => limDispEnd(k, x)).join("..") : "";
 export const limToCanon = (k: string, v: string): string => {
   const m = v.trim().match(/^(-?[\d.]+)\s*\.\.\s*(-?[\d.]+)$/);
   return m ? `${toCanon(k, m[1])}..${toCanon(k, m[2])}` : "";

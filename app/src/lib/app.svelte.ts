@@ -122,11 +122,18 @@ export async function loadStints(resetFilter: boolean) {
 
 export async function loadSession() {
   app.session = await commands.session();
+  // Bump the units signal only when prefs actually changed: {#key unitsTick}
+  // blocks recreate their whole subtree (inputs lose focus mid-tab), so a
+  // bump on every session reload would tear down forms on every field commit.
+  let changed = false;
   for (const [dim] of UNIT_DIMS) {
     const v = app.session?.facts[`unit_${dim}`];
-    if (v) unitPrefs[dim] = v;
+    if (v && unitPrefs[dim] !== v) {
+      unitPrefs[dim] = v;
+      changed = true;
+    }
   }
-  app.unitsTick++;
+  if (changed) app.unitsTick++;
   // Scope the stint list to the session's car by default.
   if (
     app.session?.car != null &&

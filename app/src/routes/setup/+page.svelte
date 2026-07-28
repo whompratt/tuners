@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { app, errMsg, loadAdvice, loadPending, loadSession } from "$lib/app.svelte";
   import { AREA_GROUP, isAccepted, isHold, primaryRec } from "$lib/advice";
@@ -23,6 +24,10 @@
   let limDraft: Record<string, { min: string; max: string }> = $state({});
   let expanded: Record<string, boolean> = $state({});
   let msg = $state("");
+  // Field whose inputs currently hold focus. Commits reload the session
+  // asynchronously, and the reseed below must not clobber whatever the user
+  // has already tabbed into and started typing meanwhile.
+  let editing: string | null = $state(null);
 
   // Re-seed the draft from the saved version whenever it (or units) change.
   // In baseline mode the draft IS the user's in-progress transcription and
@@ -38,8 +43,16 @@
     baselineSeededFor = baselineMode ? car : null;
     const d: Record<string, string> = {};
     const ld: Record<string, { min: string; max: string }> = {};
+    // Untracked: the reseed must not depend on the drafts it writes, nor
+    // rerun on focus moves — `editing` matters only at reseed moments.
+    const keep = untrack(() => (editing ? { k: editing, v: draft[editing], l: limDraft[editing] } : null));
     for (const [, fields] of TUNE_GROUPS) {
       for (const [k] of fields) {
+        if (keep && k === keep.k) {
+          d[k] = keep.v ?? "";
+          ld[k] = keep.l ?? { min: "", max: "" };
+          continue;
+        }
         d[k] = toDisp(k, vals?.[k] ?? "");
         const [min = "", max = ""] = limToDisp(k, facts[`limit_${k}`] ?? "").split("..");
         ld[k] = { min, max };
@@ -78,6 +91,9 @@
     const facts: [string, string][] = Object.entries(UNIT_PRESETS[preset]).map(([dim, u]) => [`unit_${dim}`, u]);
     await commands.updateSession(false, null, facts);
     await loadSession();
+    // Prefs were mutated directly above, so loadSession sees no change and
+    // won't signal: unit labels still need the re-render.
+    app.unitsTick++;
   }
 
   const dirty = (k: string) => {
@@ -283,6 +299,8 @@
                   step="any"
                   class:dirty={dirty(k)}
                   bind:value={draft[k]}
+                  onfocus={() => (editing = k)}
+                  onblur={() => editing === k && (editing = null)}
                   onchange={() => commitField(k)}
                 />
                 <span class="unit">{unitOf(k)?.l ?? ""}</span>
@@ -293,9 +311,25 @@
                     </span>
                   {:else if limDraft[k]}
                     <span class="lim" title="slider range on this car (for limit-aware advice)">
-                      <input type="number" step="any" placeholder="min" bind:value={limDraft[k].min} onchange={() => commitLimit(k)} />
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="min"
+                        bind:value={limDraft[k].min}
+                        onfocus={() => (editing = k)}
+                        onblur={() => editing === k && (editing = null)}
+                        onchange={() => commitLimit(k)}
+                      />
                       –
-                      <input type="number" step="any" placeholder="max" bind:value={limDraft[k].max} onchange={() => commitLimit(k)} />
+                      <input
+                        type="number"
+                        step="any"
+                        placeholder="max"
+                        bind:value={limDraft[k].max}
+                        onfocus={() => (editing = k)}
+                        onblur={() => editing === k && (editing = null)}
+                        onchange={() => commitLimit(k)}
+                      />
                     </span>
                   {/if}
                 {/if}
