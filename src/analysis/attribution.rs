@@ -17,7 +17,7 @@
 //! shared between chassis and driveline, so attributed conclusions are capped
 //! at Medium confidence and always carry the split as evidence.
 
-use super::profile::StintProfile;
+use super::profile::{BinStats, StintProfile};
 
 /// Mean combined-slip level (1.0 = grip limit) above which a bin counts as
 /// cornering. Calibrated on the real McLaren F1 session: 33% of bins sit
@@ -45,15 +45,11 @@ pub struct Attribution {
     pub corners: usize,
 }
 
-/// Split a comparison's per-bin time delta by baseline road class and corner
-/// phase.
-pub fn split_delta(baseline: &StintProfile, bin_delta_s: &[f32]) -> Attribution {
-    let bins = &baseline.composite.bins;
-    let n = bin_delta_s.len().min(bins.len());
-
-    // Corner bins by slip, then bridge short sub-threshold gaps BETWEEN
-    // corner bins so one corner stays one run.
-    let mut corner: Vec<bool> = bins[..n]
+/// Corner bins by slip, with short sub-threshold gaps BETWEEN corner bins
+/// bridged so one corner stays one run.
+fn corner_mask(bins: &[BinStats]) -> Vec<bool> {
+    let n = bins.len();
+    let mut corner: Vec<bool> = bins
         .iter()
         .map(|b| (b.slip_front + b.slip_rear) / 2.0 >= CORNER_SLIP_THRESHOLD)
         .collect();
@@ -71,6 +67,52 @@ pub fn split_delta(baseline: &StintProfile, bin_delta_s: &[f32]) -> Attribution 
             corner[start..i].iter_mut().for_each(|c| *c = true);
         }
     }
+    corner
+}
+
+/// Mean apex-speed movement across position-matched corners (m/s, positive =
+/// `other` carries more minimum speed). Corners are the BASELINE's corner
+/// runs on the shared distance-bin grid; each contributes the delta of the
+/// minimum bin speed inside its span, so the apex may migrate within the
+/// corner without breaking the match. Only meaningful for profiles of the
+/// same route (call where `compare` succeeded); the route-mix variance that
+/// drowns stint-level apex averages cancels here.
+pub fn apex_speed_delta(baseline: &StintProfile, other: &StintProfile) -> Option<f32> {
+    let (a, b) = (&baseline.composite.bins, &other.composite.bins);
+    let n = a.len().min(b.len());
+    if n == 0 {
+        return None;
+    }
+    let corner = corner_mask(&a[..n]);
+    let min_speed = |bins: &[BinStats], run: std::ops::Range<usize>| {
+        bins[run]
+            .iter()
+            .map(|x| x.speed_avg)
+            .fold(f32::MAX, f32::min)
+    };
+    let (mut sum, mut corners) = (0.0f32, 0usize);
+    let mut i = 0;
+    while i < n {
+        if !corner[i] {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < n && corner[i] {
+            i += 1;
+        }
+        sum += min_speed(b, start..i) - min_speed(a, start..i);
+        corners += 1;
+    }
+    (corners > 0).then(|| sum / corners as f32)
+}
+
+/// Split a comparison's per-bin time delta by baseline road class and corner
+/// phase.
+pub fn split_delta(baseline: &StintProfile, bin_delta_s: &[f32]) -> Attribution {
+    let bins = &baseline.composite.bins;
+    let n = bin_delta_s.len().min(bins.len());
+    let corner = corner_mask(&bins[..n]);
 
     let mut a = Attribution {
         corner_delta_s: 0.0,

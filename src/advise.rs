@@ -668,6 +668,17 @@ fn pair_weak(stints: &[CampaignStint], i: usize, j: usize) -> bool {
     pair_thin(stints, i, j) || stints[i].suspect || stints[j].suspect
 }
 
+/// A stint pair's behavioural movement: per-stint field deltas plus the
+/// pair-level corner-matched apex speed (position-matched corner runs on the
+/// earlier stint's route — computable because campaign stints share one).
+fn pair_effects(from: &CampaignStint, to: &CampaignStint) -> effects::Effects {
+    let mut d = effects::delta(&from.fx, &to.fx);
+    if let Some(v) = analysis::attribution::apex_speed_delta(&from.profile, &to.profile) {
+        d.push(("apex_speed", v));
+    }
+    d
+}
+
 /// A campaign loaded for analysis: every journaled stint with its per-stint
 /// products, setup states, campaign noise floors, and the harvested
 /// measurement set. The shared substrate of `advise` and the cross-campaign
@@ -881,10 +892,7 @@ pub(crate) fn load_campaign<'s>(
                 drift_obs.push(cmp.ideal_delta_s.abs());
                 // Same-setup behavioural movement is pure drift too: the
                 // campaign's own per-field noise floor.
-                effects::fold_floor(
-                    &mut effect_floor,
-                    &effects::delta(&stints[i].fx, &stints[j].fx),
-                );
+                effects::fold_floor(&mut effect_floor, &pair_effects(&stints[i], &stints[j]));
             }
         }
     }
@@ -953,7 +961,7 @@ pub(crate) fn load_campaign<'s>(
                     mattr.straight_delta_s,
                 )),
                 clean: true,
-                effects: effects::delta(&stints[i].fx, &stints[j].fx),
+                effects: pair_effects(&stints[i], &stints[j]),
             });
         }
     }
@@ -977,7 +985,7 @@ pub(crate) fn load_campaign<'s>(
                 key: key_from_phrase(&note),
                 split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
                 clean: true,
-                effects: effects::delta(&stints[j - 1].fx, &stints[j].fx),
+                effects: pair_effects(&stints[j - 1], &stints[j]),
             });
         } else {
             let evidence = format!(
@@ -1020,7 +1028,7 @@ pub(crate) fn load_campaign<'s>(
                     direct: false,
                     key: key_from_phrase(clause_text),
                     split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
-                    effects: effects::delta(&stints[j - 1].fx, &stints[j].fx),
+                    effects: pair_effects(&stints[j - 1], &stints[j]),
                     clean: clauses.iter().all(|c| {
                         // Judged-channel overlap: gearing reads straights,
                         // brakes reads entry, everything else the corner
@@ -1394,7 +1402,7 @@ pub fn advise(
             weak,
             reconciled: anchor_change.is_some(),
             split: (attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s),
-            effects: effects::delta(&c.stints[i].fx, &c.stints[n - 1].fx),
+            effects: pair_effects(&c.stints[i], &c.stints[n - 1]),
         });
     }
 
@@ -1423,8 +1431,8 @@ pub fn advise(
                 effect_s: (d_exc - d_rev) / 2.0,
                 drift_s: (d_exc + d_rev) / 2.0,
                 effects: effects::aba(
-                    &effects::delta(&c.stints[n - 3].fx, &c.stints[n - 2].fx),
-                    &effects::delta(&c.stints[n - 2].fx, &c.stints[n - 1].fx),
+                    &pair_effects(&c.stints[n - 3], &c.stints[n - 2]),
+                    &pair_effects(&c.stints[n - 2], &c.stints[n - 1]),
                 ),
             })
         })

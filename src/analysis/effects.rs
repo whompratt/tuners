@@ -27,7 +27,7 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
     ("balance_brake", "balance while braking", ""),
     ("entry_balance", "corner-entry balance", ""),
     ("exit_balance", "corner-exit balance", ""),
-    ("apex_speed", "avg apex speed", "m/s"),
+    ("apex_speed", "matched-corner apex speed", "m/s"),
     ("front_slip", "front share of limit", "frac"),
     ("rear_slip", "rear share of limit", "frac"),
     ("countersteer", "counter-steer share", "frac"),
@@ -59,7 +59,10 @@ pub fn noise_floor(key: &str) -> f32 {
         "balance_on" => 0.04,
         "balance_off" | "balance_brake" => 0.05,
         "entry_balance" | "exit_balance" => 0.05,
-        "apex_speed" => 5.0, // m/s; corner-mix dominated at stint level
+        // m/s, pair-level corner-matched. Same-setup pairs measured 0.33
+        // (McLaren) / 0.38 (Ford GT) 2026-07-28; the stint-level average
+        // this replaced needed 5.0 (corner-mix dominated).
+        "apex_speed" => 0.5,
         "front_slip" | "rear_slip" => 0.04,
         "countersteer" => 0.010,
         "os_flash" => 0.015,
@@ -106,10 +109,13 @@ pub fn vector(m: &StintMetrics) -> Effects {
     push("balance_on", band(&m.balance_on_throttle));
     push("balance_off", band(&m.balance_off_throttle));
     push("balance_brake", band(&m.balance_on_brake));
+    // apex_speed is NOT a per-stint field: the stint-level average is
+    // corner-mix dominated (floor 5 m/s, useless). It enters effect DELTAS
+    // pair-level via attribution::apex_speed_delta (position-matched
+    // corners), injected by the campaign loader.
     if let Some(c) = &m.corners {
         push("entry_balance", band(&c.entry));
         push("exit_balance", band(&c.exit));
-        push("apex_speed", Some(c.avg_apex_speed));
     }
     push("front_slip", m.cornering_front_slip);
     push("rear_slip", m.cornering_rear_slip);
