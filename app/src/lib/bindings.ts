@@ -83,6 +83,7 @@ export type AdviseView = {
 	effectFloor: { [key in string]: number | null },
 	inProgress: string | null,
 	missing: string[],
+	noLaps: string[],
 	recommendations: RecommendationView[],
 	currentTune: TuneFieldView[],
 };

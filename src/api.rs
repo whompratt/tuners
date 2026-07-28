@@ -1417,6 +1417,7 @@ pub struct AdviseView {
     pub effect_floor: BTreeMap<String, f32>,
     pub in_progress: Option<String>,
     pub missing: Vec<String>,
+    pub no_laps: Vec<String>,
     pub recommendations: Vec<RecommendationView>,
     pub current_tune: Vec<TuneFieldView>,
 }
@@ -1513,6 +1514,7 @@ pub fn advise_view(v: &crate::advise::AdviseView) -> AdviseView {
         effect_floor: effects_map(&v.effect_floor),
         in_progress: v.in_progress.clone(),
         missing: v.missing.clone(),
+        no_laps: v.no_laps.clone(),
         recommendations: v
             .recommendations
             .iter()

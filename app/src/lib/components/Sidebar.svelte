@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, show, pick, deleteStint, exportBundle } from "$lib/app.svelte";
+  import { app, baseName, show, pick, deleteStint, exportBundle } from "$lib/app.svelte";
   import { advanced, toggleAdvanced } from "$lib/advanced.svelte";
 
   const carLabel = (s: { carName: string; car: number }) => s.carName || `car #${s.car}`;
@@ -53,8 +53,8 @@
           tabindex="0"
           onkeydown={(e) => e.key === "Enter" && show(s.file)}
         >
-          <div class="s-name" title={s.file.split("/").pop()}>
-            {(s.file.split("/").pop() ?? "").replace(/^stint-/, "").replace(/\.ftel$/, "")}
+          <div class="s-name" title={baseName(s.file)}>
+            {baseName(s.file).replace(/^stint-/, "").replace(/\.ftel$/, "")}
           </div>
           <div class="s-meta">
           <span class="car">{carLabel(s)}</span> ·

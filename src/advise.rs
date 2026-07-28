@@ -144,6 +144,9 @@ pub struct AdviseView {
     /// dashboard): skipped, with their notes merged into the next step so
     /// slider positions stay honest.
     pub missing: Vec<String>,
+    /// Mid-campaign stints with no completed laps (menu-pause artifacts):
+    /// skipped the same way.
+    pub no_laps: Vec<String>,
     /// Per-family measured landscapes (see LandscapeView).
     pub landscapes: Vec<LandscapeView>,
     /// Largest |ideal delta| measured between SAME-setup stints: the
@@ -694,6 +697,10 @@ pub(crate) struct Campaign<'s> {
     pub in_progress: Option<String>,
     /// Journaled stints whose recordings no longer exist.
     pub missing: Vec<String>,
+    /// Mid-campaign stints with no completed laps (an event entered and
+    /// immediately abandoned auto-cuts a tiny recording): skipped, any note
+    /// merged into the next step.
+    pub no_laps: Vec<String>,
     /// (same-setup pair count, largest |ideal delta| across them): the
     /// campaign's own outcome noise floor.
     pub drift_floor: Option<(usize, f32)>,
@@ -803,8 +810,18 @@ pub(crate) fn load_campaign<'s>(
 
     let mut stints: Vec<CampaignStint> = Vec::new();
     let mut in_progress = None;
+    let mut no_laps: Vec<String> = Vec::new();
+    // Note of a skipped lap-less stint, merged into the next step so slider
+    // positions stay honest (same contract as missing recordings).
+    let mut carry: Option<String> = None;
     let last = entries.len() - 1;
-    for (i, entry) in entries.into_iter().enumerate() {
+    for (i, mut entry) in entries.into_iter().enumerate() {
+        if let Some(c) = carry.take() {
+            entry.note = Some(match entry.note.take() {
+                Some(n) => format!("{c}; {n}"),
+                None => c,
+            });
+        }
         let stint = analysis::Stint::load(entry.path.as_ref())
             .map_err(|e| format!("{}: {e}", entry.path))?;
         let profile = match analysis::profile::stint_profile(&stint.frames) {
@@ -813,7 +830,15 @@ pub(crate) fn load_campaign<'s>(
                 in_progress = Some(entry.path.clone());
                 continue;
             }
-            Err(e) => return Err(format!("{}: {e}", entry.path)),
+            Err(_) => {
+                // A lap-less middle stint (an event entered and abandoned in
+                // the pause menu auto-cuts into a tiny recording) is a menu
+                // artifact, not data trouble: skip it. Anything unreadable
+                // still fails hard at Stint::load above.
+                no_laps.push(entry.path.clone());
+                carry = entry.note.take();
+                continue;
+            }
         };
         let met = stint_overall_metrics(&stint);
         let fx = met.as_ref().map(effects::vector).unwrap_or_default();
@@ -1053,6 +1078,7 @@ pub(crate) fn load_campaign<'s>(
         positions,
         in_progress,
         missing,
+        no_laps,
         drift_floor,
         effect_floor,
         measurements,
@@ -1238,6 +1264,7 @@ pub fn advise(
             aba: None,
             in_progress: None,
             missing: Vec::new(),
+            no_laps: Vec::new(),
             landscapes: Vec::new(),
             drift_floor: None,
             effect_floor: Vec::new(),
@@ -1961,6 +1988,7 @@ pub fn advise(
         aba,
         in_progress: c.in_progress.clone(),
         missing: c.missing.clone(),
+        no_laps: c.no_laps.clone(),
         landscapes,
         drift_floor: c.drift_floor,
         effect_floor: c.effect_floor.clone(),
@@ -2199,6 +2227,69 @@ mod tests {
             campaign_bound("# resumed 20260724-210000\n# parked 20260724-220000\n"),
             CampaignBound::Closed
         ));
+    }
+
+    /// Minimal profileable stint: 3 laps at 30 m/s so lap 1 is a completed
+    /// flying lap (time from lap 2's LastLap, captured from its start).
+    fn write_stint_with_laps(path: &Path) {
+        let mut w = crate::stint::StintWriter::create(path).unwrap();
+        for l in 0..3u16 {
+            for i in 0..60 {
+                let t = (l as f32 * 60.0 + i as f32) * 0.1;
+                let f = crate::packet::TelemetryFrame {
+                    is_race_on: true,
+                    lap_number: l,
+                    current_lap: i as f32 * 0.1,
+                    current_race_time: t,
+                    last_lap: if l > 0 { 6.0 } else { 0.0 },
+                    distance_traveled: t * 30.0 + 1.0,
+                    speed: 30.0,
+                    car_ordinal: 42,
+                    ..Default::default()
+                };
+                w.write_packet((t * 1e6) as u64 + 1, &crate::packet::encode(&f))
+                    .unwrap();
+            }
+        }
+    }
+
+    /// A mid-campaign stint with no completed laps (event entered, abandoned
+    /// in the pause menu) is skipped with its note merged forward, not a hard
+    /// error that kills advise.
+    #[test]
+    fn lapless_middle_stint_is_skipped_note_merged() {
+        let dir = std::env::temp_dir().join(format!("tuners-lapless-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let laps = dir.join("stint-20260101-000000.ftel");
+        write_stint_with_laps(&laps);
+        let laps = laps.to_string_lossy().into_owned();
+        // Real capture with no completed lap: the shape the pause-menu
+        // auto-cut produces.
+        let no_laps = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/real-01.ftel");
+        let entries = vec![
+            journal::Entry {
+                path: laps.clone(),
+                note: None,
+            },
+            journal::Entry {
+                path: no_laps.to_string(),
+                note: Some("front arb +1".to_string()),
+            },
+            journal::Entry {
+                path: laps.clone(),
+                note: Some("rear arb -1".to_string()),
+            },
+        ];
+        let session = TuningSession::default();
+        let c = load_campaign(entries, &session, "test").expect("lap-less middle stint tolerated");
+        assert_eq!(c.stints.len(), 2);
+        assert_eq!(c.no_laps, vec![no_laps.to_string()]);
+        assert_eq!(
+            c.stints[1].entry.note.as_deref(),
+            Some("front arb +1; rear arb -1")
+        );
+        assert!(c.in_progress.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

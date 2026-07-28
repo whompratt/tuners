@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, errMsg } from "$lib/app.svelte";
+  import { app, baseName, errMsg } from "$lib/app.svelte";
   import { commands, type CompareView } from "$lib/bindings";
   import { SPD, fmtLap } from "$lib/units";
   import {
@@ -144,7 +144,7 @@
       <div class="legend-row">
         {#each [[A_COLOR, "A", cmpData.a], [B_COLOR, "B", cmpData.b]] as [c, tag, s] (tag)}
           <span>
-            <span class="chip" style="background:{c}"></span>{tag}: {(s as typeof cmpData.a).file.split("/").pop()} ·
+            <span class="chip" style="background:{c}"></span>{tag}: {baseName((s as typeof cmpData.a).file)} ·
             best <span class="num">{fmtLap((s as typeof cmpData.a).best)}</span>, optimal
             <span class="num">{fmtLap((s as typeof cmpData.a).ideal)}</span> ({(s as typeof cmpData.a).laps} laps)
           </span>

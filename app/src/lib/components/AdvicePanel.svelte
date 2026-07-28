@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { app, errMsg, loadAdvice, loadPending, show } from "$lib/app.svelte";
+  import { app, baseName, errMsg, loadAdvice, loadPending, show } from "$lib/app.svelte";
   import { isAccepted } from "$lib/advice";
   import { advanced } from "$lib/advanced.svelte";
   import { commands } from "$lib/bindings";
@@ -31,8 +31,7 @@
   const dcol = (v: number | null) => (N(v) > 0.02 ? "#e66767" : N(v) < -0.02 ? "#199e70" : "var(--muted)");
   const fl = (v: number | null) => fmtLap(N(v));
   // Run identity is the stamp: strip the constant prefix/suffix for display.
-  const base = (p: string) =>
-    (p.split("/").pop() ?? p).replace(/^stint-/, "").replace(/\.ftel$/, "");
+  const base = (p: string) => baseName(p).replace(/^stint-/, "").replace(/\.ftel$/, "");
 
   async function refresh() {
     acceptNote = "";
@@ -197,6 +196,11 @@
       {#each a.missing as p (p)}
         <div style="margin-top:6px;font-size:13px;color:var(--muted)">
           {base(p)} is in the history but its recording was deleted: skipped, its setup change merged into the next step
+        </div>
+      {/each}
+      {#each a.noLaps as p (p)}
+        <div style="margin-top:6px;font-size:13px;color:var(--muted)">
+          {base(p)} has no completed laps (an event entered and abandoned?): skipped
         </div>
       {/each}
       {#if a.anchor}

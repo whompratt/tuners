@@ -394,6 +394,12 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
              (deleted?), so it was skipped; its tune change was merged into the next step"
         );
     }
+    for p in &view.no_laps {
+        println!(
+            "\nnote: {p} has no completed laps (an event entered and abandoned?), \
+             so it was skipped; any tune change was merged into the next step"
+        );
+    }
     let asks = view
         .recommendations
         .iter()

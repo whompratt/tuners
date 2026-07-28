@@ -65,6 +65,11 @@ export const app = $state({
   pending: null as PendingView | null,
 });
 
+/** Stint file paths come from the engine with the OS's separator (backslash
+ * on Windows, where the app actually runs); every basename extraction must
+ * split on both or commands like delete get handed the whole path. */
+export const baseName = (file: string) => file.split(/[\\/]/).pop() ?? file;
+
 /** The car currently on track, from live telemetry: a fresh driving frame
  * when racing, else the raw-packet ordinal (free roam streams packets but no
  * frames, and detection must not require starting an event). Call inside a
@@ -146,7 +151,7 @@ export function pick(side: "a" | "b", file: string) {
 }
 
 export async function deleteStint(file: string) {
-  const name = file.split("/").pop()!;
+  const name = baseName(file);
   const ok = await confirmDialog({
     title: "Delete run",
     body: `Delete ${name}?\n\nThis cannot be undone.`,
@@ -185,7 +190,7 @@ export async function deleteStint(file: string) {
 }
 
 export async function exportBundle(file: string) {
-  const name = file.split("/").pop()!;
+  const name = baseName(file);
   const dest = await save({ defaultPath: name.replace(/\.ftel$/, ".tar.zst") });
   if (!dest) return;
   const r = await commands.exportStint(name, dest);
