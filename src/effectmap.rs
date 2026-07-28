@@ -495,6 +495,10 @@ pub struct Cell {
     pub aero: Option<bool>,
     /// Non-weak samples aggregated below.
     pub n: usize,
+    /// How many of `n` are this machine's own driving (driver "local").
+    /// Own data outranks pooled tester data when ranking levers: the
+    /// controller effect makes weights driver-dependent (plan 011 phase B).
+    pub own_n: usize,
     /// How many of `n` are direct setup A/Bs (the rest are note-based or
     /// channel-attributed compound clauses).
     pub direct_n: usize,
@@ -548,6 +552,7 @@ pub fn aggregate(map: &EffectMap) -> Vec<Cell> {
                 surface_loose,
                 aero,
                 n: 0,
+                own_n: 0,
                 direct_n: 0,
                 weak_n,
                 delta_mean: 0.0,
@@ -577,6 +582,7 @@ pub fn aggregate(map: &EffectMap) -> Vec<Cell> {
             surface_loose,
             aero,
             n: samples.len(),
+            own_n: samples.iter().filter(|s| s.driver == "local").count(),
             direct_n: samples.iter().filter(|s| s.direct).count(),
             weak_n,
             delta_mean,
@@ -589,7 +595,8 @@ pub fn aggregate(map: &EffectMap) -> Vec<Cell> {
 
 // ---- phase D: the map as a prior for untried levers ----
 
-/// A field's measured correlation with pace within one campaign.
+/// A field's measured correlation with pace: within one campaign, or pooled
+/// from the driver's history across other cars.
 #[derive(Debug, Clone)]
 pub struct PaceTrend {
     pub key: &'static str,
@@ -598,6 +605,9 @@ pub struct PaceTrend {
     pub r: f32,
     /// Measurement pairs behind it (above-floor movements only).
     pub n: usize,
+    /// True when pooled from the driver's past campaigns rather than
+    /// measured in the current one.
+    pub history: bool,
 }
 
 /// Trend gates: a campaign yields ~5-15 measurements against 26 coordinates,
@@ -655,6 +665,55 @@ pub fn pace_trends(
                 key,
                 r,
                 n: pts.len(),
+                history: false,
+            });
+        }
+    }
+    out
+}
+
+/// The driver's pooled pace trends across their OTHER cars' campaigns: the
+/// per-driver profitable-direction prior (plan 007), available before the
+/// current campaign has measured anything. The current car is excluded
+/// wholesale — its campaigns' samples would double-count the local evidence,
+/// and same-car other-build campaigns are invalidated by upgrades anyway
+/// (named-sessions doctrine). Each sample gates on max(library, its own
+/// campaign's) floor.
+pub fn driver_trends(map: &EffectMap, driver: &str, exclude_car: Option<i32>) -> Vec<PaceTrend> {
+    let floor_of = |campaign: &str, key: &str| -> f32 {
+        let base = effects::noise_floor(key);
+        map.floors
+            .iter()
+            .find(|f| f.driver == driver && f.campaign == campaign)
+            .and_then(|f| {
+                f.effects
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v.abs())
+            })
+            .map_or(base, |c| c.max(base))
+    };
+    let mut out = Vec::new();
+    for (key, ..) in effects::FIELDS {
+        let pts: Vec<(f32, f32)> = map
+            .samples
+            .iter()
+            .filter(|s| s.driver == driver && !s.weak && Some(s.car) != exclude_car)
+            .filter_map(|s| {
+                let v = s.effects.iter().find(|(k, _)| k == key).map(|(_, v)| *v)?;
+                (v.abs() >= floor_of(&s.campaign, key)).then_some((v, s.delta_s))
+            })
+            .collect();
+        if pts.len() < TREND_MIN_PAIRS {
+            continue;
+        }
+        let r = pearson(&pts);
+        if r.abs() >= TREND_MIN_R {
+            out.push(PaceTrend {
+                key,
+                r,
+                n: pts.len(),
+                history: true,
             });
         }
     }
@@ -712,7 +771,10 @@ pub fn rank<'a>(cells: &'a [Cell], trends: &[PaceTrend], ctx: &MapContext) -> Ve
             };
         }
         if score > 0.0 {
-            out.push((score, cell));
+            // Own-driver evidence outranks pooled tester data: an all-own
+            // cell counts double, a purely foreign one stands as-is.
+            let own_frac = cell.own_n as f32 / cell.n as f32;
+            out.push((score * (1.0 + own_frac), cell));
         }
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0).reverse());
@@ -766,10 +828,16 @@ pub fn summary(cells: &[Cell]) -> String {
             continue;
         }
         out.push_str(&format!(
-            "{} {dir}  [{ctx}]  n={} ({} direct{})  time {:+.2}s ±{:.2}\n",
+            "{} {dir}  [{ctx}]  n={} ({} direct{}{})  time {:+.2}s ±{:.2}\n",
             c.family,
             c.n,
             c.direct_n,
+            // Own share only worth calling out once foreign data exists.
+            if c.own_n < c.n {
+                format!(", {} yours", c.own_n)
+            } else {
+                String::new()
+            },
             if c.weak_n > 0 {
                 format!(", {} weak excluded", c.weak_n)
             } else {
@@ -956,6 +1024,7 @@ mod tests {
             key: "balance",
             r: 0.9,
             n: 5,
+            history: false,
         };
         let cell = |mean: f32, drivetrain: i32, delta_mean: f32| Cell {
             family: "rear roll".into(),
@@ -964,6 +1033,7 @@ mod tests {
             surface_loose: false,
             aero: Some(true),
             n: 2,
+            own_n: 2,
             direct_n: 1,
             weak_n: 0,
             delta_mean,
@@ -986,6 +1056,83 @@ mod tests {
         // Wrong drivetrain and known-loser cells never rank.
         assert!(rank(&[cell(-0.06, 1, -0.2)], trend, &ctx).is_empty());
         assert!(rank(&[cell(-0.06, 2, 0.5)], trend, &ctx).is_empty());
+    }
+
+    #[test]
+    fn rank_prefers_own_driver_evidence() {
+        let trend = PaceTrend {
+            key: "balance",
+            r: 0.9,
+            n: 5,
+            history: false,
+        };
+        let cell = |own_n: usize, family: &str| Cell {
+            family: family.into(),
+            softer: true,
+            drivetrain: 2,
+            surface_loose: false,
+            aero: Some(true),
+            n: 2,
+            own_n,
+            direct_n: 1,
+            weak_n: 0,
+            delta_mean: -0.2,
+            delta_sd: 0.1,
+            fields: vec![("balance", 2, -0.06, 0.01)],
+        };
+        let ctx = MapContext {
+            drivetrain: 2,
+            surface_loose: false,
+            aero: Some(true),
+        };
+        // Identical stats: the all-own cell must outrank the all-foreign one.
+        let cells = [cell(0, "rear roll"), cell(2, "damping")];
+        let ranked = rank(&cells, std::slice::from_ref(&trend), &ctx);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].1.family, "damping");
+        assert!((ranked[0].0 - 2.0 * ranked[1].0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn driver_trends_pool_across_campaigns_and_exclude_the_current_car() {
+        let mut s1 = sample("front roll", true, 0.1, false);
+        s1.effects = vec![("balance", 0.04)];
+        let mut s2 = sample("front roll", true, 0.3, false);
+        s2.effects = vec![("balance", 0.08)];
+        s2.campaign = "tune-journal-2.txt".into();
+        let mut s3 = sample("front roll", true, -0.2, false);
+        s3.effects = vec![("balance", -0.05)];
+        let mut s4 = sample("front roll", true, -0.4, false);
+        s4.effects = vec![("balance", -0.10)];
+        // A foreign driver's sample must not join "local" trends.
+        let mut foreign = sample("front roll", true, 5.0, false);
+        foreign.driver = "abcd".into();
+        foreign.effects = vec![("balance", 0.2)];
+        let map = EffectMap {
+            samples: vec![s1, s2, s3, s4, foreign],
+            floors: Vec::new(),
+        };
+        let trends = driver_trends(&map, "local", None);
+        assert_eq!(trends.len(), 1);
+        assert_eq!(trends[0].key, "balance");
+        assert!(trends[0].history);
+        assert_eq!(trends[0].n, 4);
+        assert!(trends[0].r > 0.9, "r={}", trends[0].r);
+        // Excluding the samples' car (1) removes them all -> silent.
+        assert!(driver_trends(&map, "local", Some(1)).is_empty());
+        // A campaign floor above a sample's movement gates that sample out.
+        let map = EffectMap {
+            floors: vec![CampaignFloor {
+                driver: "local".into(),
+                campaign: "tune-journal-1.txt".into(),
+                drift_s: None,
+                effects: vec![("balance", 0.06)],
+            }],
+            ..map
+        };
+        // s1 (0.04) and s3 (0.05) fall under the raised floor of campaign 1;
+        // only 4 - 2 = 2 pairs remain -> under the minimum, silent.
+        assert!(driver_trends(&map, "local", None).is_empty());
     }
 
     #[test]
