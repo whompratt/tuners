@@ -95,6 +95,17 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   diverges from the route spline). Snap points are lap-consistent, so distance
   binning stays aligned, but bins crossed by a snap get no frames and must be
   back-filled (profile binning spreads the hop across the crossed bins).
+- **`DistanceTraveled` units are NOT real meters**: on the McLaren rivals circuit
+  it advances ~2.4x faster than `Speed` integrated over time (5.86 "km" of spline
+  covered in 44.8 s at 45-75 m/s true speed). The scale varies by track, so no
+  absolute time = distance/speed check is valid on binned data; cross-lap
+  comparison at the same bin is the only sound consistency test.
+- **Spline snaps can be lap-specific and large**: individual laps have shown
+  hundreds of "meters" snapped in one frame (one real lap hid 2.5 s of its time
+  this way — its distance-binned time sum read 42.9 s against an authoritative
+  45.4 s lap time). Any consumer summing binned time must treat bins whose time
+  is far below the cross-lap median for that bin as data holes (profile splicing
+  charges such bins the median time and bars them from corroborating).
 - **Lap semantics (verified in a rivals session)**: `LapNumber` is 0-based and lap 0
   is the standing-start out lap (~6.5s slower than flying laps in the observed
   session; never compare it to them). `CurrentLap` resets to 0 at each boundary;

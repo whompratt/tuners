@@ -90,8 +90,10 @@ pub enum Band {
     Good,
 }
 
-/// Corroboration score at or above this reads green.
-pub const GOOD_MIN_SCORE: f32 = 0.75;
+/// Corroboration score at or above this reads green. Recalibrated when
+/// hole-aware, corner-atomic splicing tightened the score distribution:
+/// tarmac multi-lap sessions now read 0.85+, the real dirt sessions ~0.75.
+pub const GOOD_MIN_SCORE: f32 = 0.70;
 /// At or above this reads orange; below is red.
 pub const OK_MIN_SCORE: f32 = 0.50;
 

@@ -2,12 +2,17 @@
 //!
 //! Laps are resampled onto 10 m distance bins so the same piece of road lines up
 //! across laps and sessions. The ideal lap is composited by splicing laps together
-//! ONLY at points where their speeds match: between two equal-speed crossovers a
-//! lap's span is taken whole, judged on total elapsed time. This keeps a mistake's
-//! fast corner entry chained to its slow exit: a missed braking point is faster
-//! into the corner and can never be combined with a clean lap's exit, which would
-//! fabricate a physically impossible lap.
+//! ONLY at points where their speeds match AND neither lap is cornering: between
+//! two such crossovers a lap's span is taken whole, judged on total elapsed time.
+//! This keeps a corner's entry chained to its exit. Speed match alone is not
+//! enough inside a corner: a lap driven slow-in/fast-out passes through the
+//! pack's speed near the apex, but its early-power exit is only reachable from
+//! its own entry line — splicing the pack's fast entry onto that exit fabricates
+//! a physically impossible corner. Corners (slip-classified, braking zones
+//! included) are therefore atomic: a differently-driven corner is adopted whole
+//! together with the exit advantage it carries, or not at all.
 
+use super::attribution::corner_mask;
 use super::{LapSlice, TimedFrame, driving_segments, split_laps};
 use std::collections::BTreeSet;
 
@@ -19,6 +24,28 @@ pub const SPLICE_SPEED_TOLERANCE_MPS: f32 = 2.5;
 pub const SPLICE_MIN_GAIN_S: f32 = 0.03;
 /// A lap must start within this many seconds of its beginning to be profiled.
 const LAP_START_TOLERANCE_S: f32 = 1.0;
+/// A lap's bin is a data hole when its time is below this share of the
+/// cross-lap median time for the same bin. A route-spline teleport spreads one
+/// frame's ~16 ms across every bin it crossed, leaving bins that claim 10 m of
+/// road in near-zero time (2.5 s vanished from one real lap this way). The test
+/// is relative to the other laps because DistanceTraveled is spline progress,
+/// not meters — its scale versus true speed varies by track — so no absolute
+/// time/speed/distance check holds. Hole bins never contribute fabricated pace:
+/// the splicer charges them the median time, and they cannot corroborate.
+const HOLE_TIME_SHARE: f32 = 0.5;
+
+/// Per-bin cross-lap median time: the consensus cost of each bin of road.
+fn median_bin_times(laps: &[LapProfile], shared: usize) -> Vec<f32> {
+    let mut buf: Vec<f32> = Vec::with_capacity(laps.len());
+    (0..shared)
+        .map(|b| {
+            buf.clear();
+            buf.extend(laps.iter().map(|l| l.bins[b].time_s));
+            buf.sort_by(f32::total_cmp);
+            buf[buf.len() / 2]
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BinStats {
@@ -141,17 +168,29 @@ pub fn build_composite(laps: &[LapProfile], shared: usize) -> Composite {
         .min_by(|a, b| a.1.time_s.total_cmp(&b.1.time_s))
         .map(|(i, _)| i)
         .unwrap_or(0);
+    let med = median_bin_times(laps, shared);
     let mut bins: Vec<BinStats> = laps[base].bins[..shared].to_vec();
+    // Repair the base's own holes up front so the composite's time is honest.
+    for (bin, m) in bins.iter_mut().zip(&med) {
+        if bin.time_s < HOLE_TIME_SHARE * m {
+            bin.time_s = *m;
+        }
+    }
     let mut source = vec![base; shared];
 
     for (li, lap) in laps.iter().enumerate() {
         if li == base {
             continue;
         }
-        // Splice boundaries: bins where the candidate's speed matches the composite's.
+        // Splice boundaries: bins where the candidate's speed matches the
+        // composite's, on road neither lap is cornering (corners are atomic).
+        let comp_corner = corner_mask(&bins);
+        let cand_corner = corner_mask(&lap.bins[..shared]);
         let mut bounds = vec![0usize];
         bounds.extend((0..shared).filter(|b| {
-            (bins[*b].speed_avg - lap.bins[*b].speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
+            !comp_corner[*b]
+                && !cand_corner[*b]
+                && (bins[*b].speed_avg - lap.bins[*b].speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
         }));
         bounds.push(shared);
         bounds.dedup();
@@ -159,9 +198,25 @@ pub fn build_composite(laps: &[LapProfile], shared: usize) -> Composite {
         for w in bounds.windows(2) {
             let (s, e) = (w[0], w[1]);
             let current: f32 = bins[s..e].iter().map(|b| b.time_s).sum();
-            let candidate: f32 = lap.bins[s..e].iter().map(|b| b.time_s).sum();
+            // Hole bins are charged the median time, so a teleport can never
+            // read as pace; only genuinely measured speed wins a span.
+            let candidate: f32 = (s..e)
+                .map(|b| {
+                    let t = lap.bins[b].time_s;
+                    if t < HOLE_TIME_SHARE * med[b] {
+                        med[b]
+                    } else {
+                        t
+                    }
+                })
+                .sum();
             if candidate < current - SPLICE_MIN_GAIN_S {
                 bins[s..e].copy_from_slice(&lap.bins[s..e]);
+                for b in s..e {
+                    if bins[b].time_s < HOLE_TIME_SHARE * med[b] {
+                        bins[b].time_s = med[b];
+                    }
+                }
                 source[s..e].fill(li);
             }
         }
@@ -205,6 +260,7 @@ pub struct Corroboration {
 
 impl StintProfile {
     pub fn corroboration(&self) -> Corroboration {
+        let med = median_bin_times(&self.laps, self.shared_bins);
         let mut corroborated = vec![false; self.shared_bins];
         let (mut time_ok, mut time_total) = (0.0f32, 0.0f32);
         for (b, ok) in corroborated.iter_mut().enumerate() {
@@ -212,6 +268,7 @@ impl StintProfile {
             let src = self.composite.source[b];
             *ok = self.laps.iter().enumerate().any(|(li, lap)| {
                 li != src
+                    && lap.bins[b].time_s >= HOLE_TIME_SHARE * med[b]
                     && (lap.bins[b].speed_avg - cb.speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
             });
             time_total += cb.time_s;
@@ -326,6 +383,119 @@ mod tests {
             (c.time_s - clean.time_s).abs() < 1e-4,
             "ideal == the clean lap"
         );
+    }
+
+    /// Marks a bin range as cornering road (slip above the classifier threshold).
+    fn mark_corner(lap: &mut LapProfile, range: std::ops::Range<usize>) {
+        for b in &mut lap.bins[range] {
+            b.slip_front = 0.6;
+            b.slip_rear = 0.6;
+        }
+    }
+
+    /// The real-data failure the synthetic overshoot test missed: a lap driven
+    /// slow-in/fast-out passes through the pack's speed near the apex, so a
+    /// matching bin EXISTS mid-corner. Its fast exit must not be spliced onto
+    /// the pack's fast entry — the corner is atomic.
+    #[test]
+    fn slow_entry_fast_exit_is_not_cherry_picked_at_the_apex() {
+        // Pack lap: 50 flat, corner bins 10..26 sweeping 44..30..44.
+        let mut pack = [50.0f32; 50];
+        pack[10..26].copy_from_slice(&[
+            44.0, 42.0, 40.0, 38.0, 36.0, 34.0, 32.0, 30.0, 32.0, 34.0, 36.0, 38.0, 40.0, 42.0,
+            44.0, 47.0,
+        ]);
+        // Outlier: brakes early (slower bins 6..17), same 30 m/s apex at bin 17
+        // (the crossover the old splicer exploited), then powers out earlier and
+        // carries the advantage onto the straight. Net slower over the lap.
+        let mut outlier = pack;
+        outlier[6..17].copy_from_slice(&[
+            40.0, 36.0, 33.0, 31.0, 30.0, 29.5, 29.0, 29.0, 29.0, 29.5, 30.0,
+        ]);
+        outlier[17..30].copy_from_slice(&[
+            30.0, 34.0, 38.0, 42.0, 46.0, 50.0, 53.0, 55.0, 55.0, 55.0, 54.0, 53.0, 52.0,
+        ]);
+
+        let mut a = lap_from_speeds(1, &pack);
+        let mut b = lap_from_speeds(2, &outlier);
+        assert!(b.time_s > a.time_s, "outlier is net slower");
+        mark_corner(&mut a, 10..26);
+        mark_corner(&mut b, 6..22);
+
+        let c = build_composite(&[a.clone(), b], 50);
+        assert!(
+            c.source.iter().all(|s| *s == 0),
+            "no exit-only span may be taken from the outlier: {:?}",
+            c.source
+        );
+        assert!((c.time_s - a.time_s).abs() < 1e-4, "ideal == the pack lap");
+    }
+
+    /// The honest counterpart: when the slow-in/fast-out corner is net FASTER,
+    /// it is adopted WHOLE — slow entry included — never entry-from-one-lap,
+    /// exit-from-another.
+    #[test]
+    fn net_faster_corner_is_adopted_whole() {
+        let mut pack = [50.0f32; 50];
+        pack[10..26].copy_from_slice(&[
+            44.0, 42.0, 40.0, 38.0, 36.0, 34.0, 32.0, 30.0, 32.0, 34.0, 36.0, 38.0, 40.0, 42.0,
+            44.0, 47.0,
+        ]);
+        // Mildly slower entry, much stronger exit: net faster through the corner.
+        let mut outlier = pack;
+        outlier[8..17].copy_from_slice(&[42.0, 39.0, 37.0, 35.0, 33.0, 31.0, 30.0, 30.0, 30.0]);
+        outlier[17..30].copy_from_slice(&[
+            32.0, 37.0, 42.0, 47.0, 51.0, 54.0, 56.0, 57.0, 57.0, 56.0, 55.0, 54.0, 53.0,
+        ]);
+
+        let mut a = lap_from_speeds(1, &pack);
+        let mut b = lap_from_speeds(2, &outlier);
+        assert!(b.time_s < a.time_s, "outlier is net faster");
+        mark_corner(&mut a, 10..26);
+        mark_corner(&mut b, 8..22);
+
+        // Outlier is the base (fastest); the pack lap must not overwrite its
+        // entry with a fast-entry span that dead-ends at the apex.
+        let c = build_composite(&[a, b.clone()], 50);
+        assert!(
+            (8..30).all(|i| c.source[i] == 1),
+            "corner stays whole from the outlier: {:?}",
+            &c.source[6..32]
+        );
+    }
+
+    /// A route-spline teleport leaves bins claiming 10 m in one frame's time.
+    /// Such a span reads impossibly fast and must never be adopted, and the
+    /// hole's bins must not corroborate the composite either.
+    #[test]
+    fn teleport_hole_is_neither_adopted_nor_corroborating() {
+        // Base is authoritatively fastest; the holed lap's REAL lap time is
+        // honest (holes hide time in bins, not in the game's lap timing).
+        let base = lap_from_speeds(1, &[50.5; 50]);
+        let mut holed = lap_from_speeds(2, &[50.0; 50]);
+        for b in &mut holed.bins[20..30] {
+            b.time_s = 0.016; // one 60 Hz frame spread across the crossed bins
+        }
+        let hole_span: f32 = holed.bins[20..30].iter().map(|b| b.time_s).sum();
+        assert!(hole_span < 0.2, "the hole reads impossibly fast");
+
+        let laps = vec![base, holed];
+        let c = build_composite(&laps, 50);
+        assert!(
+            c.source.iter().all(|s| *s == 0),
+            "hole span must not be spliced in: {:?}",
+            &c.source[18..32]
+        );
+
+        let p = profile_of(laps);
+        let cor = p.corroboration();
+        // Composite bins 20..30 match the holed lap on speed, but the hole is
+        // not evidence; outside the hole the two laps corroborate normally.
+        assert!(
+            (20..30).all(|b| !cor.corroborated[b]),
+            "teleport bins must not corroborate"
+        );
+        assert!((0..20).chain(30..50).all(|b| cor.corroborated[b]));
     }
 
     /// A genuine sustained gain (higher speed, no compensating loss) IS adopted,

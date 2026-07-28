@@ -47,7 +47,7 @@ pub struct Attribution {
 
 /// Corner bins by slip, with short sub-threshold gaps BETWEEN corner bins
 /// bridged so one corner stays one run.
-fn corner_mask(bins: &[BinStats]) -> Vec<bool> {
+pub fn corner_mask(bins: &[BinStats]) -> Vec<bool> {
     let n = bins.len();
     let mut corner: Vec<bool> = bins
         .iter()
