@@ -591,6 +591,460 @@ pub fn latest_stint_for_car(dir: &str, car: Option<i32>) -> Option<String> {
     })
 }
 
+/// One measured effect for a family, harvested from the campaign: a stint
+/// pair whose setups isolate it (DIRECT: setups differ in exactly one area,
+/// a clean A/B regardless of how many steps lie between) or an adjacent-step
+/// note reading (single-family notes measure on the total delta, compound
+/// notes get channel-attributed per family, capped Medium downstream). The
+/// unit of evidence for reconciliation, landscapes, and the cross-campaign
+/// effect map.
+pub(crate) struct Measurement {
+    pub change: journal::Change,
+    pub outcome: journal::Outcome,
+    pub desc: String,
+    pub attributed: Option<String>,
+    pub weak: bool,
+    /// Stint indices of the underlying pair (from, to).
+    pub i: usize,
+    pub j: usize,
+    pub direct: bool,
+    /// The single slider the measurement moved, when identifiable;
+    /// lets advice resolve concrete target values.
+    pub key: Option<String>,
+    /// (entry, exit, straights) split of the pair's delta.
+    pub split: Option<(f32, f32, f32)>,
+    /// Fit for response-curve building: direct pairs and single-family
+    /// notes always; attributed compound clauses only when every sibling
+    /// clause is judged on a disjoint channel (a corner-channel sibling
+    /// would contaminate the curve).
+    pub clean: bool,
+    /// Behavioural movement of the stint pair. For an attributed compound
+    /// clause this is the WHOLE pair's movement; siblings share it.
+    pub effects: effects::Effects,
+}
+
+/// One journaled stint, loaded and profiled, with its per-stint analysis
+/// products and the comparison against its chronological neighbor.
+pub(crate) struct CampaignStint {
+    pub entry: journal::Entry,
+    pub stint: analysis::Stint,
+    pub profile: analysis::profile::StintProfile,
+    /// Overall metrics of the longest driving segment (None when too short).
+    pub met: Option<analysis::metrics::StintMetrics>,
+    /// Effect vector from `met` (empty when metrics are absent).
+    pub fx: effects::Effects,
+    /// Parsed clauses of the journal note.
+    pub changes: Vec<journal::Change>,
+    /// "suspect" in the note is the driver's own verdict on the stint
+    /// (unfamiliar car, chaotic drive, traffic): every measurement touching
+    /// it is weak — kept visible, never trusted alone.
+    pub suspect: bool,
+    /// Comparison vs the previous stint: (ideal delta, phase attribution),
+    /// or why it isn't comparable. None for the first stint.
+    pub vs_prev: Option<Result<(f32, analysis::attribution::Attribution), String>>,
+}
+
+/// A stint-pair comparison is THIN when either side ran a single flying lap
+/// (no corroboration) or failed the splice-trust gate.
+fn pair_thin(stints: &[CampaignStint], i: usize, j: usize) -> bool {
+    stints[i]
+        .profile
+        .laps
+        .len()
+        .min(stints[j].profile.laps.len())
+        < 2
+        || !splice_trusted(&stints[i].profile)
+        || !splice_trusted(&stints[j].profile)
+}
+
+/// WEAK adds the driver's own suspect verdict on either side.
+fn pair_weak(stints: &[CampaignStint], i: usize, j: usize) -> bool {
+    pair_thin(stints, i, j) || stints[i].suspect || stints[j].suspect
+}
+
+/// A campaign loaded for analysis: every journaled stint with its per-stint
+/// products, setup states, campaign noise floors, and the harvested
+/// measurement set. The shared substrate of `advise` and the cross-campaign
+/// effect map.
+pub(crate) struct Campaign<'s> {
+    pub stints: Vec<CampaignStint>,
+    /// Setup state per stint: the latest tune revision saved before it began
+    /// (None for foreign cars and blind campaigns).
+    pub setups: Vec<Option<&'s crate::tuning::Revision>>,
+    /// Slider positions relative to baseline, from the note trail.
+    pub positions: Vec<(Option<f32>, Option<f32>)>,
+    /// Journaled stint with no completed laps yet (still recording).
+    pub in_progress: Option<String>,
+    /// Journaled stints whose recordings no longer exist.
+    pub missing: Vec<String>,
+    /// (same-setup pair count, largest |ideal delta| across them): the
+    /// campaign's own outcome noise floor.
+    pub drift_floor: Option<(usize, f32)>,
+    /// Per-field campaign noise floor from the same same-setup pairs.
+    pub effect_floor: effects::Effects,
+    pub measurements: Vec<Measurement>,
+}
+
+impl Campaign<'_> {
+    pub fn thin(&self, i: usize, j: usize) -> bool {
+        pair_thin(&self.stints, i, j)
+    }
+
+    pub fn weak_pair(&self, i: usize, j: usize) -> bool {
+        pair_weak(&self.stints, i, j)
+    }
+
+    /// Latest evidence per family: newest endpoint wins; a direct setup A/B
+    /// beats a note-based reading of the same endpoint; nearest ancestor
+    /// breaks remaining ties (least drift).
+    pub fn latest(&self) -> Vec<&Measurement> {
+        let mut latest: Vec<&Measurement> = Vec::new();
+        for m in &self.measurements {
+            match latest
+                .iter_mut()
+                .find(|l| l.change.family == m.change.family)
+            {
+                Some(l) => {
+                    if (m.j, m.direct, m.i) > (l.j, l.direct, l.i) {
+                        *l = m;
+                    }
+                }
+                None => latest.push(m),
+            }
+        }
+        latest
+    }
+}
+
+/// Stints of the session car recorded AFTER the last journal entry join the
+/// trajectory as implicit no-change steps. Journal lines are written on tune
+/// saves, so a stint driven without touching anything (the same-setup repeat
+/// that measures pure drift) would otherwise be invisible. Campaign
+/// boundaries bound the scan: a parked (archived) journal accrues nothing,
+/// and a resumed one only takes stints newer than the resume; stints driven
+/// in ANOTHER campaign of the same car while this one was parked must not
+/// leak in.
+pub(crate) fn implicit_steps(
+    journal_text: &str,
+    entries: &mut Vec<journal::Entry>,
+    session_car: Option<i32>,
+    stints_dir: &str,
+) {
+    let bound = campaign_bound(journal_text);
+    if matches!(bound, CampaignBound::Closed) {
+        return;
+    }
+    let Some(last_stamp) = entries.last().and_then(|e| stint_stamp(&e.path)) else {
+        return;
+    };
+    let mut last_stamp = last_stamp.to_string();
+    if let CampaignBound::Since(s) = &bound
+        && s.as_str() > last_stamp.as_str()
+    {
+        last_stamp = s.clone();
+    }
+    let mut extra: Vec<String> = std::fs::read_dir(stints_dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            (path.extension().is_some_and(|x| x == "ftel")
+                && stint_stamp(&path.to_string_lossy()).is_some_and(|s| s > last_stamp.as_str())
+                && session_car.is_some()
+                && crate::api::stint_car(&path) == session_car)
+                .then(|| format!("{stints_dir}/{}", e.file_name().to_string_lossy()))
+        })
+        .collect();
+    extra.sort();
+    entries.extend(
+        extra
+            .into_iter()
+            .map(|path| journal::Entry { path, note: None }),
+    );
+}
+
+/// Load and profile a campaign's journal entries, in chronological order,
+/// and harvest every stint pair as evidence. The LAST entry may still be
+/// recording (journaled at the tune save, no completed laps yet): dropped
+/// gracefully into `in_progress`. A middle entry failing is real data
+/// trouble and stays a hard error. `label` names the campaign in errors
+/// (the journal path for advise).
+pub(crate) fn load_campaign<'s>(
+    entries: Vec<journal::Entry>,
+    session: &'s TuningSession,
+    label: &str,
+) -> Result<Campaign<'s>, String> {
+    let (entries, missing) = drop_missing_entries(entries, |p| Path::new(p).exists());
+    if entries.is_empty() {
+        return Err(format!(
+            "{label}: every journaled stint recording is missing; the files \
+             were deleted"
+        ));
+    }
+
+    let mut stints: Vec<CampaignStint> = Vec::new();
+    let mut in_progress = None;
+    let last = entries.len() - 1;
+    for (i, entry) in entries.into_iter().enumerate() {
+        let stint = analysis::Stint::load(entry.path.as_ref())
+            .map_err(|e| format!("{}: {e}", entry.path))?;
+        let profile = match analysis::profile::stint_profile(&stint.frames) {
+            Ok(profile) => profile,
+            Err(_) if i == last => {
+                in_progress = Some(entry.path.clone());
+                continue;
+            }
+            Err(e) => return Err(format!("{}: {e}", entry.path)),
+        };
+        let met = stint_overall_metrics(&stint);
+        let fx = met.as_ref().map(effects::vector).unwrap_or_default();
+        let changes = entry
+            .note
+            .as_deref()
+            .map(journal::parse_clauses)
+            .unwrap_or_default();
+        let suspect = entry
+            .note
+            .as_deref()
+            .is_some_and(|n| n.to_lowercase().contains("suspect"));
+        let vs_prev = stints.last().map(|prev: &CampaignStint| {
+            analysis::compare::compare(&prev.profile, &profile).map(|cmp| {
+                let attr = analysis::attribution::split_delta(&prev.profile, &cmp.bin_delta_s);
+                (cmp.ideal_delta_s, attr)
+            })
+        });
+        stints.push(CampaignStint {
+            entry,
+            stint,
+            profile,
+            met,
+            fx,
+            changes,
+            suspect,
+            vs_prev,
+        });
+    }
+    if stints.is_empty() {
+        return Err(format!(
+            "{label}: no stints with completed laps in the journal yet; drive a lap first"
+        ));
+    }
+    let n = stints.len();
+
+    let all_changes: Vec<Vec<journal::Change>> = stints.iter().map(|s| s.changes.clone()).collect();
+    let positions = journal::track_positions(&all_changes);
+
+    // Setup state per stint: the latest tune revision saved before the stint
+    // began. Only bound when the stint really is the session car's, since an
+    // explicitly passed foreign journal must not inherit this car's tunes.
+    let setups: Vec<Option<&'s crate::tuning::Revision>> = stints
+        .iter()
+        .map(|cs| {
+            let car = car_of(&cs.stint);
+            if car.is_none() || car != session.car {
+                return None;
+            }
+            let stamp = stint_stamp(&cs.entry.path)?;
+            session
+                .revisions
+                .iter()
+                .rev()
+                .find(|r| r.stamp.as_str() < stamp)
+        })
+        .collect();
+
+    // The campaign's own noise floor: |ideal delta| across SAME-setup stint
+    // pairs is pure driver/track drift. Verdicts with margins below the
+    // worst observed drift are provisional, and advice must say so.
+    let mut drift_obs: Vec<f32> = Vec::new();
+    let mut effect_floor: effects::Effects = Vec::new();
+    for j in 1..n {
+        for i in 0..j {
+            let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
+                continue;
+            };
+            if !crate::tuning::diff_keys(si, sj).is_empty() {
+                continue;
+            }
+            if pair_thin(&stints, i, j) {
+                continue;
+            }
+            if let Ok(cmp) = analysis::compare::compare(&stints[i].profile, &stints[j].profile) {
+                drift_obs.push(cmp.ideal_delta_s.abs());
+                // Same-setup behavioural movement is pure drift too: the
+                // campaign's own per-field noise floor.
+                effects::fold_floor(
+                    &mut effect_floor,
+                    &effects::delta(&stints[i].fx, &stints[j].fx),
+                );
+            }
+        }
+    }
+    let drift_floor = (!drift_obs.is_empty()).then(|| {
+        (
+            drift_obs.len(),
+            drift_obs.iter().fold(0.0f32, |a, b| a.max(*b)),
+        )
+    });
+
+    // ------ campaign measurements: every stint pair is evidence ------
+    // Reconciliation then uses each family's LATEST measurement, so
+    // knowledge from earlier steps keeps tempering advice instead of
+    // evaporating when the experiment topic changes.
+    let mut measurements: Vec<Measurement> = Vec::new();
+    for j in 1..n {
+        for i in 0..j {
+            let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
+                continue;
+            };
+            let keys = crate::tuning::diff_keys(si, sj);
+            if keys.is_empty() {
+                continue;
+            }
+            let [area] = area_list(&keys)[..] else {
+                continue;
+            };
+            let Some(family) = journal::family_for_area(area) else {
+                continue;
+            };
+            let Ok(cmp) = analysis::compare::compare(&stints[i].profile, &stints[j].profile) else {
+                continue;
+            };
+            let mattr = analysis::attribution::split_delta(&stints[i].profile, &cmp.bin_delta_s);
+            let vals: Vec<f32> = keys
+                .iter()
+                .filter_map(|k| {
+                    Some(
+                        sj.values.get(k)?.parse::<f32>().ok()?
+                            - si.values.get(k)?.parse::<f32>().ok()?,
+                    )
+                })
+                .collect();
+            measurements.push(Measurement {
+                change: journal::Change {
+                    family,
+                    softer: vals.iter().sum::<f32>() < 0.0,
+                    magnitude: (vals.len() == 1).then(|| vals[0]),
+                },
+                outcome: journal::judge(cmp.ideal_delta_s),
+                desc: format!(
+                    "{} (steps {}→{})",
+                    crate::tuning::diff_note(si, sj),
+                    i + 1,
+                    j + 1
+                ),
+                attributed: None,
+                weak: pair_weak(&stints, i, j),
+                i,
+                j,
+                direct: true,
+                key: Some(keys[0].clone()),
+                split: Some((
+                    mattr.entry_delta_s,
+                    mattr.exit_delta_s,
+                    mattr.straight_delta_s,
+                )),
+                clean: true,
+                effects: effects::delta(&stints[i].fx, &stints[j].fx),
+            });
+        }
+    }
+    for j in 1..n {
+        let Some(note) = stints[j].entry.note.clone() else {
+            continue;
+        };
+        let Some(Ok((delta, attr))) = stints[j].vs_prev else {
+            continue;
+        };
+        if let Some(change) = journal::parse_change(&note) {
+            measurements.push(Measurement {
+                change,
+                outcome: journal::judge(delta),
+                desc: note.clone(),
+                attributed: None,
+                weak: pair_weak(&stints, j - 1, j),
+                i: j - 1,
+                j,
+                direct: false,
+                key: key_from_phrase(&note),
+                split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
+                clean: true,
+                effects: effects::delta(&stints[j - 1].fx, &stints[j].fx),
+            });
+        } else {
+            let evidence = format!(
+                "outcome attributed from a compound step (\"{note}\"): corner entry \
+                 {:+.2}s / exit {:+.2}s / straights {:+.2}s of {delta:+.2}s total \
+                 ({:.0}% of lap time is cornering); inferred from where the time \
+                 moved, not measured in isolation",
+                attr.entry_delta_s,
+                attr.exit_delta_s,
+                attr.straight_delta_s,
+                attr.corner_share * 100.0,
+            );
+            let clauses: Vec<journal::Change> = journal::parse_clauses(&note);
+            let mut seen = Vec::new();
+            for clause_text in note.split(';').map(str::trim) {
+                let Some(clause) = journal::parse_change(clause_text) else {
+                    continue;
+                };
+                if seen.contains(&clause.family) {
+                    continue;
+                }
+                seen.push(clause.family);
+                // Judged on the road the family's fingerprint lives on.
+                // Calibrated 2026-07-21: brake bias shows cleanly on entry
+                // even inside a compound step; diff lock (accel AND decel)
+                // measured SPREAD across phases -> corner total.
+                let channel_delta = match clause.family {
+                    journal::Family::Gearing => attr.straight_delta_s,
+                    journal::Family::Brakes => attr.entry_delta_s,
+                    _ => attr.corner_delta_s,
+                };
+                measurements.push(Measurement {
+                    change: clause,
+                    outcome: journal::judge(channel_delta),
+                    desc: clause_text.to_string(),
+                    attributed: Some(evidence.clone()),
+                    weak: pair_weak(&stints, j - 1, j),
+                    i: j - 1,
+                    j,
+                    direct: false,
+                    key: key_from_phrase(clause_text),
+                    split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
+                    effects: effects::delta(&stints[j - 1].fx, &stints[j].fx),
+                    clean: clauses.iter().all(|c| {
+                        // Judged-channel overlap: gearing reads straights,
+                        // brakes reads entry, everything else the corner
+                        // total (entry included). Siblings on a disjoint
+                        // channel can't contaminate this clause's reading.
+                        let chan = |f: journal::Family| match f {
+                            journal::Family::Gearing => 0u8, // straights
+                            journal::Family::Brakes => 1,    // entry
+                            _ => 2,                          // corner total
+                        };
+                        let (a, b) = (chan(clause.family), chan(c.family));
+                        c.family == clause.family || (a != b && !(a >= 1 && b >= 1)) // entry ⊂ corner
+                    }),
+                });
+            }
+        }
+    }
+
+    Ok(Campaign {
+        stints,
+        setups,
+        positions,
+        in_progress,
+        missing,
+        drift_floor,
+        effect_floor,
+        measurements,
+    })
+}
+
 /// Full advise: journal trajectory when one exists, blind fallback otherwise.
 pub fn advise(
     journal_path: &str,
@@ -601,46 +1055,7 @@ pub fn advise(
     let text = std::fs::read_to_string(journal_path).unwrap_or_default();
     let mut entries = journal::parse_journal(&text);
 
-    // Stints of the session car recorded AFTER the last journal entry join
-    // the trajectory as implicit no-change steps. Journal lines are written
-    // on tune saves, so a stint driven without touching anything (the
-    // same-setup repeat that measures pure drift) would otherwise be
-    // invisible to advice. Campaign boundaries bound the scan: a parked
-    // (archived) journal accrues nothing, and a resumed one only takes
-    // stints newer than the resume; stints driven in ANOTHER campaign of
-    // the same car while this one was parked must not leak in.
-    let bound = campaign_bound(&text);
-    if !matches!(bound, CampaignBound::Closed)
-        && let Some(last_stamp) = entries.last().and_then(|e| stint_stamp(&e.path))
-    {
-        let mut last_stamp = last_stamp.to_string();
-        if let CampaignBound::Since(s) = &bound
-            && s.as_str() > last_stamp.as_str()
-        {
-            last_stamp = s.clone();
-        }
-        let mut extra: Vec<String> = std::fs::read_dir(stints_dir)
-            .ok()
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| {
-                let path = e.path();
-                (path.extension().is_some_and(|x| x == "ftel")
-                    && stint_stamp(&path.to_string_lossy())
-                        .is_some_and(|s| s > last_stamp.as_str())
-                    && session.car.is_some()
-                    && crate::api::stint_car(&path) == session.car)
-                    .then(|| format!("{stints_dir}/{}", e.file_name().to_string_lossy()))
-            })
-            .collect();
-        extra.sort();
-        entries.extend(
-            extra
-                .into_iter()
-                .map(|path| journal::Entry { path, note: None }),
-        );
-    }
+    implicit_steps(&text, &mut entries, session.car, stints_dir);
 
     if entries.is_empty() {
         // No journal yet: blind advice on the session car's latest stint.
@@ -682,125 +1097,38 @@ pub fn advise(
         }
     }
 
-    let missing;
-    (entries, missing) = drop_missing_entries(entries, |p| Path::new(p).exists());
-    if entries.is_empty() {
-        return Err(format!(
-            "{journal_path}: every journaled stint recording is missing; the files \
-             were deleted"
-        ));
-    }
-
-    // Load and profile every stint, in journal (chronological) order. The
-    // LAST entry may still be recording (journaled at the tune save, no
-    // completed laps yet): drop it gracefully and advise on the prefix. A
-    // middle entry failing is real data trouble and stays a hard error.
-    let mut loaded = Vec::new();
-    let mut in_progress = None;
-    for (i, entry) in entries.iter().enumerate() {
-        let stint = analysis::Stint::load(entry.path.as_ref())
-            .map_err(|e| format!("{}: {e}", entry.path))?;
-        match analysis::profile::stint_profile(&stint.frames) {
-            Ok(profile) => loaded.push((entry, stint, profile)),
-            Err(_) if i == entries.len() - 1 => in_progress = Some(entry.path.clone()),
-            Err(e) => return Err(format!("{}: {e}", entry.path)),
-        }
-    }
-    if loaded.is_empty() {
-        return Err(format!(
-            "{}: no stints with completed laps in the journal yet; drive a lap first",
-            journal_path
-        ));
-    }
-
-    let changes: Vec<_> = loaded
-        .iter()
-        .map(|(e, _, _)| {
-            e.note
-                .as_deref()
-                .map(journal::parse_clauses)
-                .unwrap_or_default()
-        })
-        .collect();
-    let positions = journal::track_positions(&changes);
-
-    // Per-stint overall metrics (computed once) and their effect vectors:
-    // every stint-pair comparison below carries its behavioural movement
-    // alongside the time delta.
-    let mets: Vec<Option<analysis::metrics::StintMetrics>> = loaded
-        .iter()
-        .map(|(_, stint, _)| stint_overall_metrics(stint))
-        .collect();
-    let fx: Vec<effects::Effects> = mets
-        .iter()
-        .map(|m| m.as_ref().map(effects::vector).unwrap_or_default())
-        .collect();
-
-    // "suspect" in a journal note is the driver's own verdict on that stint
-    // (unfamiliar car, chaotic drive, traffic): every measurement touching it
-    // is treated as weak: kept visible, never trusted alone.
-    let suspect: Vec<bool> = loaded
-        .iter()
-        .map(|(e, _, _)| {
-            e.note
-                .as_deref()
-                .is_some_and(|n| n.to_lowercase().contains("suspect"))
-        })
-        .collect();
-    // A stint-pair comparison is THIN when either side ran a single flying
-    // lap (no corroboration) or failed the splice-trust gate; WEAK adds the
-    // driver's own suspect verdict on either side.
-    let thin = |i: usize, j: usize| {
-        loaded[i].2.laps.len().min(loaded[j].2.laps.len()) < 2
-            || !splice_trusted(&loaded[i].2)
-            || !splice_trusted(&loaded[j].2)
-    };
-    let weak_pair = |i: usize, j: usize| thin(i, j) || suspect[i] || suspect[j];
+    let c = load_campaign(entries, &session, journal_path)?;
+    let n = c.stints.len();
 
     let mut steps = Vec::new();
-    // Per-step comparison products vs the previous step, for the measurement
-    // harvest and A-B-A decomposition below.
-    let mut deltas: Vec<Option<f32>> = Vec::new();
-    let mut attrs: Vec<Option<analysis::attribution::Attribution>> = Vec::new();
-    for i in 0..loaded.len() {
-        let (entry, _stint, profile) = &loaded[i];
+    for (i, cs) in c.stints.iter().enumerate() {
         let mut split = None;
-        deltas.push(None);
-        attrs.push(None);
-        let outcome = if i == 0 {
-            None
-        } else {
-            let prev = &loaded[i - 1].2;
-            match analysis::compare::compare(prev, profile) {
-                Ok(cmp) => {
-                    let attr = analysis::attribution::split_delta(prev, &cmp.bin_delta_s);
-                    split = Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s));
-                    *deltas.last_mut().unwrap() = Some(cmp.ideal_delta_s);
-                    *attrs.last_mut().unwrap() = Some(attr);
-                    let word = journal::judge(cmp.ideal_delta_s).word();
-                    Some(Ok((
-                        word,
-                        cmp.ideal_delta_s,
-                        prev.laps.len() != profile.laps.len(),
-                    )))
-                }
-                Err(e) => Some(Err(e)),
+        let outcome = match (i, &cs.vs_prev) {
+            (0, _) | (_, None) => None,
+            (_, Some(Ok((delta, attr)))) => {
+                split = Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s));
+                Some(Ok((
+                    journal::judge(*delta).word(),
+                    *delta,
+                    c.stints[i - 1].profile.laps.len() != cs.profile.laps.len(),
+                )))
             }
+            (_, Some(Err(e))) => Some(Err(e.clone())),
         };
         steps.push(StepView {
-            path: entry.path.clone(),
-            laps: profile.laps.len(),
-            best_s: profile.best_lap_time_s,
-            ideal_s: profile.composite.time_s,
-            balance: mets[i].as_ref().and_then(|m| {
+            path: cs.entry.path.clone(),
+            laps: cs.profile.laps.len(),
+            best_s: cs.profile.best_lap_time_s,
+            ideal_s: cs.profile.composite.time_s,
+            balance: cs.met.as_ref().and_then(|m| {
                 Some((
                     m.understeer_index?,
                     m.cornering_front_slip?,
                     m.cornering_rear_slip?,
                 ))
             }),
-            note: entry.note.clone(),
-            pos: match positions[i] {
+            note: cs.entry.note.clone(),
+            pos: match c.positions[i] {
                 (Some(f), Some(r)) if f != 0.0 || r != 0.0 => Some((f, r)),
                 _ => None,
             },
@@ -808,7 +1136,7 @@ pub fn advise(
             split,
             anchor: None,
             families: {
-                let mut fams: Vec<journal::Family> = changes[i].iter().map(|c| c.family).collect();
+                let mut fams: Vec<journal::Family> = cs.changes.iter().map(|c| c.family).collect();
                 fams.dedup();
                 fams.into_iter()
                     .map(|f| StepFamily {
@@ -824,78 +1152,32 @@ pub fn advise(
         });
     }
 
-    // Setup state per step: the latest tune revision saved before the stint
-    // began. Only bound when the stint really is the session car's, since an
-    // explicitly passed foreign journal must not inherit this car's tunes.
-    let setups: Vec<Option<&crate::tuning::Revision>> = loaded
-        .iter()
-        .map(|(entry, stint, _)| {
-            let car = car_of(stint);
-            if car.is_none() || car != session.car {
-                return None;
-            }
-            let stamp = stint_stamp(&entry.path)?;
-            session
-                .revisions
-                .iter()
-                .rev()
-                .find(|r| r.stamp.as_str() < stamp)
-        })
-        .collect();
-
-    // The campaign's own noise floor: |ideal delta| across SAME-setup stint
-    // pairs is pure driver/track drift. Verdicts with margins below the
-    // worst observed drift are provisional, and advice must say so.
-    let mut drift_obs: Vec<f32> = Vec::new();
-    let mut effect_floor: effects::Effects = Vec::new();
-    for j in 1..loaded.len() {
-        for i in 0..j {
-            let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
-                continue;
-            };
-            if !crate::tuning::diff_keys(si, sj).is_empty() {
-                continue;
-            }
-            if thin(i, j) {
-                continue;
-            }
-            if let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) {
-                drift_obs.push(cmp.ideal_delta_s.abs());
-                // Same-setup behavioural movement is pure drift too: the
-                // campaign's own per-field noise floor.
-                effects::fold_floor(&mut effect_floor, &effects::delta(&fx[i], &fx[j]));
-            }
-        }
-    }
-    let drift_floor = (!drift_obs.is_empty()).then(|| {
-        (
-            drift_obs.len(),
-            drift_obs.iter().fold(0.0f32, |a, b| a.max(*b)),
-        )
-    });
-
     // Per-row honest verdicts: each step compared against its minimal-diff
     // ancestor, shown only when that ancestor is NOT the previous step (the
     // row's own outcome column already covers the neighbor) and not for the
     // last step (the prominent anchor line below covers it).
-    let n = loaded.len();
-    for j in 1..n.saturating_sub(1) {
-        let Some(sj) = setups[j] else { continue };
-        let Some((i, keys)) = min_diff_ancestor(&setups[..j], sj) else {
+    for (j, step) in steps
+        .iter_mut()
+        .enumerate()
+        .take(n.saturating_sub(1))
+        .skip(1)
+    {
+        let Some(sj) = c.setups[j] else { continue };
+        let Some((i, keys)) = min_diff_ancestor(&c.setups[..j], sj) else {
             continue;
         };
         if i == j - 1 {
             continue;
         }
-        let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else {
+        let Ok(cmp) = analysis::compare::compare(&c.stints[i].profile, &c.stints[j].profile) else {
             continue;
         };
-        steps[j].anchor = Some(RowAnchor {
+        step.anchor = Some(RowAnchor {
             vs_step: i + 1,
             areas: area_list(&keys).join(", "),
             delta_s: cmp.ideal_delta_s,
             word: journal::judge(cmp.ideal_delta_s).word(),
-            weak: thin(i, j),
+            weak: c.thin(i, j),
         });
     }
 
@@ -905,16 +1187,15 @@ pub fn advise(
     // shared baseline is a clean single-area A/B.
     let mut anchor = None;
     let mut anchor_change: Option<(journal::Change, journal::Outcome, String, bool)> = None;
-    let n = loaded.len();
-    if let Some(Some(last_setup)) = setups.last()
+    if let Some(Some(last_setup)) = c.setups.last()
         && n >= 2
-        && let Some((i, keys)) = min_diff_ancestor(&setups[..n - 1], last_setup)
-        && let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[n - 1].2)
+        && let Some((i, keys)) = min_diff_ancestor(&c.setups[..n - 1], last_setup)
+        && let Ok(cmp) = analysis::compare::compare(&c.stints[i].profile, &c.stints[n - 1].profile)
     {
-        let attr = analysis::attribution::split_delta(&loaded[i].2, &cmp.bin_delta_s);
+        let attr = analysis::attribution::split_delta(&c.stints[i].profile, &cmp.bin_delta_s);
         let areas = area_list(&keys);
-        let changes = crate::tuning::diff_note(setups[i].unwrap(), last_setup);
-        let weak = weak_pair(i, n - 1);
+        let changes = crate::tuning::diff_note(c.setups[i].unwrap(), last_setup);
+        let weak = c.weak_pair(i, n - 1);
         let outcome = journal::judge(cmp.ideal_delta_s);
         let single_family = (areas.len() == 1)
             .then(|| journal::family_for_area(areas[0]))
@@ -923,7 +1204,7 @@ pub fn advise(
             let deltas: Vec<f32> = keys
                 .iter()
                 .filter_map(|k| {
-                    let old = setups[i].unwrap().values.get(k)?.parse::<f32>().ok()?;
+                    let old = c.setups[i].unwrap().values.get(k)?.parse::<f32>().ok()?;
                     let new = last_setup.values.get(k)?.parse::<f32>().ok()?;
                     Some(new - old)
                 })
@@ -944,7 +1225,7 @@ pub fn advise(
             weak,
             reconciled: anchor_change.is_some(),
             split: (attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s),
-            effects: effects::delta(&fx[i], &fx[n - 1]),
+            effects: effects::delta(&c.stints[i].fx, &c.stints[n - 1].fx),
         });
     }
 
@@ -952,15 +1233,20 @@ pub fn advise(
     // effect = (d_exc − d_rev)/2, drift = (d_exc + d_rev)/2. Requires 2+
     // flying laps on all three stints involved; single-lap ideals are the
     // same trap this decomposition exists to avoid.
-    let n = loaded.len();
+    let delta_of = |idx: usize| {
+        c.stints[idx]
+            .vs_prev
+            .as_ref()
+            .and_then(|r| r.as_ref().ok().map(|(d, _)| *d))
+    };
     let aba = (n >= 3)
         .then(|| {
-            let (exc, rev) = (&changes[n - 2], &changes[n - 1]);
-            let laps_ok = loaded[n - 3..].iter().all(|(_, _, p)| p.laps.len() >= 2);
+            let (exc, rev) = (&c.stints[n - 2].changes, &c.stints[n - 1].changes);
+            let laps_ok = c.stints[n - 3..].iter().all(|s| s.profile.laps.len() >= 2);
             if !laps_ok || !journal::is_reverse(exc, rev) {
                 return None;
             }
-            let (d_exc, d_rev) = (deltas[n - 2]?, deltas[n - 1]?);
+            let (d_exc, d_rev) = (delta_of(n - 2)?, delta_of(n - 1)?);
             let mut areas: Vec<&str> = exc.iter().map(|c| journal::family_area(c.family)).collect();
             areas.dedup();
             Some(AbaView {
@@ -968,203 +1254,17 @@ pub fn advise(
                 effect_s: (d_exc - d_rev) / 2.0,
                 drift_s: (d_exc + d_rev) / 2.0,
                 effects: effects::aba(
-                    &effects::delta(&fx[n - 3], &fx[n - 2]),
-                    &effects::delta(&fx[n - 2], &fx[n - 1]),
+                    &effects::delta(&c.stints[n - 3].fx, &c.stints[n - 2].fx),
+                    &effects::delta(&c.stints[n - 2].fx, &c.stints[n - 1].fx),
                 ),
             })
         })
         .flatten();
 
-    // ------ campaign measurements: every stint pair is evidence ------
-    // DIRECT: ordered pairs whose setups differ in exactly one area, a clean
-    // A/B for that family regardless of how many steps lie between. NOTE-
-    // BASED: adjacent steps via their journal note; single-family notes
-    // measure on the total delta, compound notes get channel-attributed per
-    // family (capped Medium downstream). Reconciliation then uses each
-    // family's LATEST measurement, so knowledge from earlier steps keeps
-    // tempering advice instead of evaporating when the topic changes.
-    struct Measurement {
-        change: journal::Change,
-        outcome: journal::Outcome,
-        desc: String,
-        attributed: Option<String>,
-        weak: bool,
-        i: usize,
-        j: usize,
-        direct: bool,
-        /// The single slider the measurement moved, when identifiable;
-        /// lets advice resolve concrete target values.
-        key: Option<String>,
-        /// (entry, exit, straights) split of the pair's delta.
-        split: Option<(f32, f32, f32)>,
-        /// Fit for response-curve building: direct pairs and single-family
-        /// notes always; attributed compound clauses only when every sibling
-        /// clause is gearing (judged on straights, orthogonal to the corner
-        /// share this clause is judged on). A corner-channel sibling would
-        /// contaminate the curve.
-        clean: bool,
-        /// Behavioural movement of the stint pair.
-        effects: effects::Effects,
-    }
-    let mut measurements: Vec<Measurement> = Vec::new();
-    for j in 1..n {
-        for i in 0..j {
-            let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
-                continue;
-            };
-            let keys = crate::tuning::diff_keys(si, sj);
-            if keys.is_empty() {
-                continue;
-            }
-            let [area] = area_list(&keys)[..] else {
-                continue;
-            };
-            let Some(family) = journal::family_for_area(area) else {
-                continue;
-            };
-            let Ok(cmp) = analysis::compare::compare(&loaded[i].2, &loaded[j].2) else {
-                continue;
-            };
-            let mattr = analysis::attribution::split_delta(&loaded[i].2, &cmp.bin_delta_s);
-            let vals: Vec<f32> = keys
-                .iter()
-                .filter_map(|k| {
-                    Some(
-                        sj.values.get(k)?.parse::<f32>().ok()?
-                            - si.values.get(k)?.parse::<f32>().ok()?,
-                    )
-                })
-                .collect();
-            measurements.push(Measurement {
-                change: journal::Change {
-                    family,
-                    softer: vals.iter().sum::<f32>() < 0.0,
-                    magnitude: (vals.len() == 1).then(|| vals[0]),
-                },
-                outcome: journal::judge(cmp.ideal_delta_s),
-                desc: format!(
-                    "{} (steps {}→{})",
-                    crate::tuning::diff_note(si, sj),
-                    i + 1,
-                    j + 1
-                ),
-                attributed: None,
-                weak: weak_pair(i, j),
-                i,
-                j,
-                direct: true,
-                key: Some(keys[0].clone()),
-                split: Some((
-                    mattr.entry_delta_s,
-                    mattr.exit_delta_s,
-                    mattr.straight_delta_s,
-                )),
-                clean: true,
-                effects: effects::delta(&fx[i], &fx[j]),
-            });
-        }
-    }
-    for j in 1..n {
-        let Some(note) = &loaded[j].0.note else {
-            continue;
-        };
-        let (Some(delta), Some(attr)) = (deltas[j], attrs[j]) else {
-            continue;
-        };
-        if let Some(change) = journal::parse_change(note) {
-            measurements.push(Measurement {
-                change,
-                outcome: journal::judge(delta),
-                desc: note.clone(),
-                attributed: None,
-                weak: weak_pair(j - 1, j),
-                i: j - 1,
-                j,
-                direct: false,
-                key: key_from_phrase(note),
-                split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
-                clean: true,
-                effects: effects::delta(&fx[j - 1], &fx[j]),
-            });
-        } else {
-            let evidence = format!(
-                "outcome attributed from a compound step (\"{note}\"): corner entry \
-                 {:+.2}s / exit {:+.2}s / straights {:+.2}s of {delta:+.2}s total \
-                 ({:.0}% of lap time is cornering); inferred from where the time \
-                 moved, not measured in isolation",
-                attr.entry_delta_s,
-                attr.exit_delta_s,
-                attr.straight_delta_s,
-                attr.corner_share * 100.0,
-            );
-            let clauses: Vec<journal::Change> = journal::parse_clauses(note);
-            let mut seen = Vec::new();
-            for clause_text in note.split(';').map(str::trim) {
-                let Some(clause) = journal::parse_change(clause_text) else {
-                    continue;
-                };
-                if seen.contains(&clause.family) {
-                    continue;
-                }
-                seen.push(clause.family);
-                // Judged on the road the family's fingerprint lives on.
-                // Calibrated 2026-07-21: brake bias shows cleanly on entry
-                // even inside a compound step; diff lock (accel AND decel)
-                // measured SPREAD across phases -> corner total.
-                let channel_delta = match clause.family {
-                    journal::Family::Gearing => attr.straight_delta_s,
-                    journal::Family::Brakes => attr.entry_delta_s,
-                    _ => attr.corner_delta_s,
-                };
-                measurements.push(Measurement {
-                    change: clause,
-                    outcome: journal::judge(channel_delta),
-                    desc: clause_text.to_string(),
-                    attributed: Some(evidence.clone()),
-                    weak: weak_pair(j - 1, j),
-                    i: j - 1,
-                    j,
-                    direct: false,
-                    key: key_from_phrase(clause_text),
-                    split: Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s)),
-                    effects: effects::delta(&fx[j - 1], &fx[j]),
-                    clean: clauses.iter().all(|c| {
-                        // Judged-channel overlap: gearing reads straights,
-                        // brakes reads entry, everything else the corner
-                        // total (entry included). Siblings on a disjoint
-                        // channel can't contaminate this clause's reading.
-                        let chan = |f: journal::Family| match f {
-                            journal::Family::Gearing => 0u8, // straights
-                            journal::Family::Brakes => 1,    // entry
-                            _ => 2,                          // corner total
-                        };
-                        let (a, b) = (chan(clause.family), chan(c.family));
-                        c.family == clause.family || (a != b && !(a >= 1 && b >= 1)) // entry ⊂ corner
-                    }),
-                });
-            }
-        }
-    }
-    // Latest evidence per family: newest endpoint wins; a direct setup A/B
-    // beats a note-based reading of the same endpoint; nearest ancestor
-    // breaks remaining ties (least drift).
-    let mut latest: Vec<&Measurement> = Vec::new();
-    for m in &measurements {
-        match latest
-            .iter_mut()
-            .find(|l| l.change.family == m.change.family)
-        {
-            Some(l) => {
-                if (m.j, m.direct, m.i) > (l.j, l.direct, l.i) {
-                    *l = m;
-                }
-            }
-            None => latest.push(m),
-        }
-    }
+    let latest = c.latest();
 
-    let (last_entry, last_stint, _) = loaded.last().unwrap();
-    let mut recs = blind_recommendations(last_stint, &last_entry.path, &rule_context(&session))?;
+    let last = c.stints.last().unwrap();
+    let mut recs = blind_recommendations(&last.stint, &last.entry.path, &rule_context(&session))?;
     let mut matched_families: Vec<journal::Family> = Vec::new();
     for m in &latest {
         if journal::reconcile(
@@ -1188,7 +1288,7 @@ pub fn advise(
     {
         if let Some(a) = &anchor
             && let (Some(Some(anchor_setup)), Some(Some(last_setup))) =
-                (setups.get(a.vs_step - 1), setups.last())
+                (c.setups.get(a.vs_step - 1), c.setups.last())
         {
             let restore: Vec<(String, String)> = crate::tuning::diff_keys(anchor_setup, last_setup)
                 .into_iter()
@@ -1220,7 +1320,7 @@ pub fn advise(
         && let Some(a) = &anchor
     {
         let (e, x, st) = a.split;
-        let moved = effects::movers(&a.effects, Some(&effect_floor));
+        let moved = effects::movers(&a.effects, Some(&c.effect_floor));
         for r in recs
             .iter_mut()
             .filter(|r| r.implied.is_some_and(|i| i.family == change.family))
@@ -1246,14 +1346,15 @@ pub fn advise(
     // interpolation over the mapped landscape instead of last-step bisection.
     // Every family's landscape is kept on the view for the history panel.
     let mut curve_fams: Vec<journal::Family> = Vec::new();
-    for m in &measurements {
+    for m in &c.measurements {
         if !curve_fams.contains(&m.change.family) {
             curve_fams.push(m.change.family);
         }
     }
     let mut landscapes: Vec<LandscapeView> = Vec::new();
     for family in curve_fams {
-        let fam_all: Vec<&Measurement> = measurements
+        let fam_all: Vec<&Measurement> = c
+            .measurements
             .iter()
             .filter(|m| m.change.family == family)
             .collect();
@@ -1287,7 +1388,7 @@ pub fn advise(
         let mut nodes: Vec<(f32, f32, usize)> = Vec::new();
         if let Some(key) = key.as_deref() {
             let value_of = |idx: usize| -> Option<f32> {
-                setups
+                c.setups
                     .get(idx)?
                     .as_ref()?
                     .values
@@ -1347,7 +1448,8 @@ pub fn advise(
                 let phrase = crate::tuning::field_phrase(key);
                 // Already there? Then the ask is NOTHING; repeats tighten
                 // the estimate, but no change is being requested.
-                let at_optimum = setups
+                let at_optimum = c
+                    .setups
                     .last()
                     .copied()
                     .flatten()
@@ -1382,7 +1484,8 @@ pub fn advise(
                     .iter_mut()
                     .filter(|r| r.implied.is_some_and(|i| i.family == family))
                 {
-                    let cur = setups
+                    let cur = c
+                        .setups
                         .last()
                         .copied()
                         .flatten()
@@ -1392,8 +1495,8 @@ pub fn advise(
                     // the move; when it is under the campaign's measured
                     // noise floor, holding is equally defensible and the
                     // advice must say so instead of implying a sure win.
-                    let floor = drift_floor.map_or(0.10, |(_, f)| f.max(0.10));
-                    let gain = cur.map(|c| a * (c - vertex) * (c - vertex));
+                    let floor = c.drift_floor.map_or(0.10, |(_, f)| f.max(0.10));
+                    let gain = cur.map(|v| a * (v - vertex) * (v - vertex));
                     if at_optimum {
                         r.suggestion = Some(format!("{phrase}: hold {disp}"));
                         r.advice = format!(
@@ -1443,7 +1546,8 @@ pub fn advise(
         // bisection between it and here. (The fit path owns interior optima.)
         if vertex_out.is_none()
             && let Some(key) = key.as_deref()
-            && let Some(cur) = setups
+            && let Some(cur) = c
+                .setups
                 .last()
                 .copied()
                 .flatten()
@@ -1451,7 +1555,7 @@ pub fn advise(
             && let Some(best) = nodes.iter().min_by(|a, b| a.1.total_cmp(&b.1)).copied()
             && let Some(cur_node) = nodes.iter().find(|n| (n.0 - cur).abs() < 1e-3)
             && (best.0 - cur).abs() > 1e-3
-            && cur_node.1 - best.1 >= drift_floor.map_or(0.10, |(_, f)| f.max(0.10))
+            && cur_node.1 - best.1 >= c.drift_floor.map_or(0.10, |(_, f)| f.max(0.10))
         {
             let phrase = crate::tuning::field_phrase(key);
             let gap = cur_node.1 - best.1;
@@ -1541,7 +1645,7 @@ pub fn advise(
     // comparison whose margin is under the measured same-setup drift gets
     // capped and labeled. Multi-point landscapes are less exposed (averaged
     // nodes), so curve-based Medium suggestions stand with a note.
-    if let Some((pairs, floor)) = drift_floor {
+    if let Some((pairs, floor)) = c.drift_floor {
         for r in recs.iter_mut() {
             let Some(implied) = r.implied else { continue };
             let Some(m) = latest.iter().find(|m| m.change.family == implied.family) else {
@@ -1569,7 +1673,7 @@ pub fn advise(
     // Cite tune absolutes only when the journal's stints are the session
     // car's; an explicitly passed foreign journal must not quote this car's
     // sliders as if they were its own.
-    let current_tune = if car_of(last_stint) == session.car {
+    let current_tune = if car_of(&last.stint) == session.car {
         enrich_with_tune(&mut recs, &session)
     } else {
         Vec::new()
@@ -1581,7 +1685,7 @@ pub fn advise(
     // Values base on the last stint's setup (the state the advice was
     // judged against), never a saved-but-undriven revision.
     let round = |v: f32| (v * 1e4).round() / 1e4;
-    let base = setups.last().copied().flatten();
+    let base = c.setups.last().copied().flatten();
     for r in recs.iter_mut() {
         if r.suggestion.is_some() {
             continue;
@@ -1628,12 +1732,12 @@ pub fn advise(
         steps,
         anchor,
         aba,
-        in_progress,
-        missing,
+        in_progress: c.in_progress.clone(),
+        missing: c.missing.clone(),
         landscapes,
-        drift_floor,
-        effect_floor,
-        advice_for: last_entry.path.clone(),
+        drift_floor: c.drift_floor,
+        effect_floor: c.effect_floor.clone(),
+        advice_for: last.entry.path.clone(),
         recommendations: recs,
         current_tune,
     })
