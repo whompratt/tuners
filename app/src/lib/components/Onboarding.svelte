@@ -13,6 +13,26 @@
   let manualCar = $state("");
   let creating = $state(false);
 
+  // Telemetry sharing is asked up front (it's otherwise buried in Settings);
+  // the guide can be reopened, so reflect an already-on state honestly.
+  let sharingOn = $state<boolean | null>(null);
+  commands.sharing().then(
+    (s) => (sharingOn = s.enabled),
+    () => (sharingOn = false),
+  );
+  let enabling = $state(false);
+  async function enableSharing() {
+    enabling = true;
+    const r = await commands.setSharing(true, null, false);
+    enabling = false;
+    if (r.status === "error") {
+      await alertDialog("Telemetry sharing", errMsg(r.error));
+      return;
+    }
+    sharingOn = true;
+    step = 2;
+  }
+
   // This machine's LAN IP, for console players: the game must be pointed at
   // the PC running the app, and guessing it from a router page is error-prone.
   let lanIp = $state<string | null>(null);
@@ -62,7 +82,7 @@
       return;
     }
     await loadSession();
-    step = 3;
+    step = 4;
   }
 
   function enterBaseline() {
@@ -75,7 +95,7 @@
 <div class="wiz-backdrop">
   <div class="wiz" role="dialog" aria-modal="true" aria-label="first-time setup">
     <div class="wiz-progress">
-      {#each ["welcome", "telemetry", "project", "baseline"] as label, i (label)}
+      {#each ["welcome", "sharing", "telemetry", "project", "baseline"] as label, i (label)}
         <span class:done={i < step} class:current={i === step}>{label}</span>
       {/each}
     </div>
@@ -95,6 +115,35 @@
         <button class="wiz-skip" onclick={finishOnboarding}>skip, I know what I'm doing</button>
       </div>
     {:else if step === 1}
+      <h2>Share telemetry to improve the advice?</h2>
+      <p>
+        tuners learns from real setup changes and their measured results. The
+        more driving it has seen - across more cars, surfaces, and drivers -
+        the better its suggestions get, for everyone. You can help by sharing
+        your recordings.
+      </p>
+      <p class="muted">
+        Shared: raw driving telemetry and setup values, under a random
+        anonymous id. Never any names, notes, or free text - and uploads never
+        run while you're driving. You can change your mind any time in
+        Settings.
+      </p>
+      {#if sharingOn}
+        <p class="muted">Sharing is already on.</p>
+      {/if}
+      <div class="wiz-actions">
+        <Button onclick={() => (step = 0)}>back</Button>
+        {#if sharingOn}
+          <Button go onclick={() => (step = 2)}>continue</Button>
+        {:else}
+          <Button go disabled={enabling} onclick={enableSharing}>
+            {enabling ? "turning on…" : "share my telemetry"}
+          </Button>
+          <Button onclick={() => (step = 2)}>not now</Button>
+        {/if}
+        <button class="wiz-skip" onclick={finishOnboarding}>skip setup</button>
+      </div>
+    {:else if step === 2}
       <h2>Hook up the telemetry</h2>
       <p>In Forza Horizon 6, set these once:</p>
       <ol>
@@ -122,11 +171,11 @@
         </p>
       {/if}
       <div class="wiz-actions">
-        <Button onclick={() => (step = 0)}>back</Button>
-        <Button go={!!detected} onclick={() => (step = 2)}>continue</Button>
+        <Button onclick={() => (step = 1)}>back</Button>
+        <Button go={!!detected} onclick={() => (step = 3)}>continue</Button>
         <button class="wiz-skip" onclick={finishOnboarding}>skip setup</button>
       </div>
-    {:else if step === 2}
+    {:else if step === 3}
       <h2>Create your project</h2>
       <p>
         A project is one build of one car: its setup history and advice live
@@ -154,7 +203,7 @@
         {/if}
       </div>
       <div class="wiz-actions">
-        <Button onclick={() => (step = 1)}>back</Button>
+        <Button onclick={() => (step = 2)}>back</Button>
         <Button go disabled={creating || (!chosen && !String(manualCar ?? "").trim())} onclick={createProject}>
           {creating ? "creating…" : "create project"}
         </Button>
