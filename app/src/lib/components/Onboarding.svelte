@@ -1,7 +1,8 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { app, errMsg, loadSession } from "$lib/app.svelte";
+  import { app, detectedCar, errMsg, loadSession } from "$lib/app.svelte";
   import { commands } from "$lib/bindings";
+  import CarPicker from "$lib/components/CarPicker.svelte";
   import { finishOnboarding } from "$lib/onboarding.svelte";
   import { alertDialog } from "$lib/ui/dialogs.svelte";
   import Button from "$lib/ui/Button.svelte";
@@ -10,7 +11,6 @@
 
   let step = $state(0);
   let name = $state("");
-  let manualCar = $state("");
   let creating = $state(false);
 
   // Telemetry sharing is asked up front (it's otherwise buried in Settings);
@@ -47,15 +47,7 @@
     const u = app.live?.recorder.udpAgeMs;
     return (u != null && u < STALE_MS) || (fresh && !!app.live?.frame);
   });
-  let liveCar = $derived.by(() => {
-    const f = app.live?.frame;
-    if (fresh && f?.raceOn && f.car) return { car: f.car, name: f.carName };
-    // Free roam is never recorded (no frames), but raw packets carry the
-    // ordinal, so detection must not require starting an event.
-    const r = app.live?.recorder;
-    if (r?.udpCar) return { car: r.udpCar, name: r.udpCarName ?? null };
-    return null;
-  });
+  let liveCar = $derived(detectedCar(STALE_MS));
 
   // Once seen, the detected car sticks (the user pauses the game to click).
   let detected = $state<{ car: number; name: string | null } | null>(null);
@@ -67,15 +59,15 @@
     const s = app.stints.at(-1);
     return s ? { car: s.car, name: s.carName || null } : null;
   });
-  let chosen = $derived(detected ?? lastRunCar);
+  // A manual pick from the searchable list beats detection: the user said so.
+  let picked = $state<{ car: number; name: string | null } | null>(null);
+  let chosen = $derived(picked ?? detected ?? lastRunCar);
   const carLabel = (c: { car: number; name: string | null }) => c.name || `car #${c.car}`;
 
   async function createProject() {
-    // bind:value on the number input stores a number; stringify before IPC.
-    const car = String(manualCar ?? "").trim() || (chosen ? String(chosen.car) : "");
-    if (!car) return;
+    if (!chosen) return;
     creating = true;
-    const r = await commands.updateSession(false, car, [["name", name.trim()]]);
+    const r = await commands.updateSession(false, String(chosen.car), [["name", name.trim()]]);
     creating = false;
     if (r.status === "error") {
       await alertDialog("Create project failed", errMsg(r.error));
@@ -183,11 +175,14 @@
         just the tune.
       </p>
       {#if chosen}
-        <p>Car: <b>{carLabel(chosen)}</b> {detected ? "(detected from telemetry)" : "(from your last recorded run)"}</p>
+        <p>
+          Car: <b>{carLabel(chosen)}</b>
+          {picked ? "(picked by you)" : detected ? "(detected from telemetry)" : "(from your last recorded run)"}
+        </p>
       {:else}
         <p class="muted">
-          No car detected yet. Go back and drive a few seconds, or enter the
-          car ordinal by hand below.
+          No car detected yet. Go back and drive a few seconds, or search for
+          your car below.
         </p>
       {/if}
       <div class="wiz-form">
@@ -195,16 +190,14 @@
           project name (optional)
           <input type="text" placeholder="e.g. rwd no-aero build" bind:value={name} />
         </label>
-        {#if !chosen}
-          <label>
-            car ordinal
-            <input type="number" bind:value={manualCar} />
-          </label>
-        {/if}
+        <label>
+          {chosen ? "or pick a different car" : "car"}
+          <CarPicker onpick={(c) => (picked = c)} />
+        </label>
       </div>
       <div class="wiz-actions">
         <Button onclick={() => (step = 2)}>back</Button>
-        <Button go disabled={creating || (!chosen && !String(manualCar ?? "").trim())} onclick={createProject}>
+        <Button go disabled={creating || !chosen} onclick={createProject}>
           {creating ? "creating…" : "create project"}
         </Button>
         <button class="wiz-skip" onclick={finishOnboarding}>skip setup</button>

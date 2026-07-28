@@ -218,6 +218,26 @@ pub struct EffectFieldView {
     pub floor: f32,
 }
 
+/// One car of the bundled ordinal->name dataset, for pickers: the user should
+/// never have to look an ordinal up themselves.
+#[derive(Serialize, Type, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CarView {
+    pub car: i32,
+    pub name: String,
+}
+
+/// All known cars, name-sorted.
+pub fn car_list() -> Vec<CarView> {
+    crate::cars::all()
+        .into_iter()
+        .map(|(car, name)| CarView {
+            car,
+            name: name.to_string(),
+        })
+        .collect()
+}
+
 pub fn effect_fields() -> Vec<EffectFieldView> {
     crate::analysis::effects::FIELDS
         .iter()

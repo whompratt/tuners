@@ -36,6 +36,7 @@ export const commands = {
 	/**  Unix ms of the map file's last write. */
 	updatedMs: number | null,
 } | null>("effect_map_status"),
+	carList: () => __TAURI_INVOKE<CarView[]>("car_list"),
 	pending: () => __TAURI_INVOKE<{
 	/**  The netted journal note the next run will be journaled under. */
 	note: string,
@@ -106,6 +107,15 @@ export type AnchorView = {
 export type ApiError = {
 	kind: ErrorKind,
 	message: string,
+};
+
+/**
+ *  One car of the bundled ordinal->name dataset, for pickers: the user should
+ *  never have to look an ordinal up themselves.
+ */
+export type CarView = {
+	car: number,
+	name: string,
 };
 
 /**  One side of an A/B comparison. */

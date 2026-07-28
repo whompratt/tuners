@@ -166,6 +166,12 @@ fn effect_fields() -> Vec<api::EffectFieldView> {
 
 #[tauri::command]
 #[specta::specta]
+fn car_list() -> Vec<api::CarView> {
+    api::car_list()
+}
+
+#[tauri::command]
+#[specta::specta]
 fn effect_map_status() -> Option<api::EffectMapStatus> {
     api::effect_map_status()
 }
@@ -314,6 +320,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             export_stint,
             effect_fields,
             effect_map_status,
+            car_list,
             pending,
             lan_ip,
             in_flatpak,

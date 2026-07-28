@@ -65,6 +65,19 @@ export const app = $state({
   pending: null as PendingView | null,
 });
 
+/** The car currently on track, from live telemetry: a fresh driving frame
+ * when racing, else the raw-packet ordinal (free roam streams packets but no
+ * frames, and detection must not require starting an event). Call inside a
+ * $derived so pickers update as the user gets in a car. */
+export function detectedCar(staleMs = 3000): { car: number; name: string | null } | null {
+  const fresh = app.live?.ageMs != null && app.live.ageMs < staleMs;
+  const f = app.live?.frame;
+  if (fresh && f?.raceOn && f.car) return { car: f.car, name: f.carName };
+  const r = app.live?.recorder;
+  if (r?.udpCar) return { car: r.udpCar, name: r.udpCarName ?? null };
+  return null;
+}
+
 // Failures reaching the frontend are usually typed ApiErrors, but an invoke
 // can also reject with a plain string (e.g. argument deserialization), and a
 // dialog must never render an empty body.

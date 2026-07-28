@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { app, errMsg, loadAdvice, loadSession, loadStints } from "$lib/app.svelte";
-  import { commands, type SessionsView } from "$lib/bindings";
+  import { app, detectedCar, errMsg, loadAdvice, loadSession, loadStints } from "$lib/app.svelte";
+  import { commands, type CarView, type SessionsView } from "$lib/bindings";
+  import { allCars } from "$lib/cars";
+  import CarPicker from "$lib/components/CarPicker.svelte";
   import { COMPOUNDS, FACT_FIELDS, label } from "$lib/fields";
   import { toCanon, toDisp, unitLabel } from "$lib/units";
   import { alertDialog, confirmDialog } from "$lib/ui/dialogs.svelte";
@@ -12,9 +14,13 @@
   let ssName = $state("");
   let ssDescription = $state("");
   let ssCar = $state("");
-  let ssCarManual = $state("");
   let ssFacts: Record<string, string> = $state({});
   let ssChecks: Record<string, boolean> = $state({});
+
+  // Full dataset, for naming a car chosen by search/detection that has no
+  // recorded runs yet.
+  let carsAll: CarView[] = $state([]);
+  allCars().then((v) => (carsAll = v));
 
   // --- library state ---
   let list: SessionsView | null = $state(null);
@@ -26,6 +32,9 @@
     for (const st of app.stints) m.set(st.car, st.carName || `car #${st.car}`);
     return m;
   });
+  const carLabelFor = (o: number) => cars.get(o) ?? carsAll.find((c) => c.car === o)?.name ?? `car #${o}`;
+  let chosenLabel = $derived(ssCar ? carLabelFor(Number(ssCar)) : null);
+  let liveCar = $derived(formOpen ? detectedCar() : null);
   let s = $derived(app.session);
   let active = $derived(!!s && s.car != null);
   let shownFacts = $derived(
@@ -54,8 +63,7 @@
     const cur = s?.car;
     ssName = s?.facts.name || "";
     ssDescription = s?.facts.description || "";
-    ssCar = cur != null && cars.has(cur) ? String(cur) : cars.size ? String([...cars.keys()][0]) : "";
-    ssCarManual = cur != null && !cars.has(cur) ? String(cur) : "";
+    ssCar = cur != null ? String(cur) : "";
     ssFacts = {};
     ssChecks = {};
     for (const [k, , type] of FACT_FIELDS) {
@@ -73,8 +81,7 @@
     for (const [k, , type] of FACT_FIELDS) {
       facts.push([k, type === "check" ? (ssChecks[k] ? "on" : "off") : toCanon(k, ssFacts[k] ?? "")]);
     }
-    // bind:value on the number input stores a number, but the IPC arg is a string.
-    const r = await commands.updateSession(false, String(ssCarManual || ssCar), facts);
+    const r = await commands.updateSession(false, ssCar, facts);
     if (r.status === "error") {
       await alertDialog("Save failed", errMsg(r.error));
       return;
@@ -203,27 +210,43 @@
             <label for="ss-description">description</label>
             <input id="ss-description" type="text" placeholder="optional notes to find this project later" bind:value={ssDescription} />
           </div>
-          <div>
-            <label for="ss-car">car (from recorded runs)</label>
-            <select id="ss-car" bind:value={ssCar} disabled={!cars.size}>
-              {#if !cars.size}
-                <option value="">no recorded runs yet</option>
-              {:else}
-                {#each cars as [o, n] (o)}
-                  <option value={String(o)}>{n}</option>
-                {/each}
-              {/if}
-            </select>
-            {#if !cars.size}
-              <div style="font-size:12px;color:var(--muted);margin-top:2px">
-                this list fills from recordings: drive once with the app open, or enter the ordinal manually
-              </div>
+          <div style="grid-column:1/-1;font-size:14px">
+            car:
+            {#if chosenLabel}
+              <b>{chosenLabel}</b>
+            {:else}
+              <span style="color:var(--muted)">not chosen yet — pick one of these ways:</span>
+            {/if}
+            {#if liveCar && String(liveCar.car) !== ssCar}
+              <span style="margin-left:12px;color:var(--muted)">
+                in the game now: <b style="color:var(--ink)">{liveCar.name ?? `car #${liveCar.car}`}</b>
+              </span>
+              <Button onclick={() => (ssCar = String(liveCar!.car))}>use this car</Button>
             {/if}
           </div>
           <div>
-            <label for="ss-car-manual">or car ordinal (manual)</label>
-            <input id="ss-car-manual" type="number" bind:value={ssCarManual} />
+            <label for="ss-car">previously driven</label>
+            <select
+              id="ss-car"
+              value={cars.has(Number(ssCar)) ? ssCar : ""}
+              onchange={(e) => (ssCar = e.currentTarget.value)}
+              disabled={!cars.size}
+            >
+              <option value="" disabled>{cars.size ? "pick from your runs…" : "no recorded runs yet"}</option>
+              {#each cars as [o, n] (o)}
+                <option value={String(o)}>{n}</option>
+              {/each}
+            </select>
           </div>
+          <div>
+            <label for="ss-car-search">search all cars</label>
+            <CarPicker id="ss-car-search" onpick={(c) => (ssCar = String(c.car))} />
+          </div>
+          {#if !liveCar}
+            <div style="grid-column:1/-1;font-size:12px;color:var(--muted);margin-top:-6px">
+              or just get in the car in game — with telemetry hooked up it's detected automatically
+            </div>
+          {/if}
           {#each FACT_FIELDS as [k, l, type] (k)}
             {#if type === "check"}
               <div style="display:flex;align-items:flex-end;padding-bottom:4px">
@@ -253,7 +276,7 @@
           {/each}
         </div>
         <div style="margin-top:10px;display:flex;gap:8px">
-          <Button go onclick={saveProject}>save project</Button>
+          <Button go disabled={!ssCar} onclick={saveProject}>save project</Button>
           <Button onclick={() => { formOpen = false; loadSession(); }}>cancel</Button>
         </div>
       </form>
