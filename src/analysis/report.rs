@@ -311,7 +311,7 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
 
     writeln!(
         out,
-        "\n  suspension (normalized travel avg | bottomed | topped | reversals/s)"
+        "\n  suspension (normalized travel avg | bottomed | topped | reversals/s | per 100m)"
     )
     .unwrap();
     for (label, s) in [
@@ -322,11 +322,12 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     ] {
         writeln!(
             out,
-            "    {label} {:.2} | {} | {} | {:.1}/s",
+            "    {label} {:.2} | {} | {} | {:.1}/s | {:.1}/100m",
             s.avg,
             pct(s.bottomed_frac),
             pct(s.topped_frac),
             s.reversals_per_sec,
+            s.reversals_per_100m,
         )
         .unwrap();
     }

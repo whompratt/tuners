@@ -134,6 +134,14 @@ const OVERDAMPED_REV_TARMAC: f32 = 3.0;
 /// topped <3%) must stay silent.
 const OVERDAMPED_BUMP_REV: f32 = 5.5;
 const OVERDAMPED_BUMP_TOPPED: f32 = 0.10;
+/// Speed-robust form of the same gate: reversals are per BUMP, and bumps are
+/// spatial, so per-100m rates hold across driving speed where the raw /s
+/// gate is blind (a setup reading 4.8/s at 51 m/s reads ~6.1/s at 65 m/s —
+/// past OVERDAMPED_BUMP_REV — but ~9.4 per 100m either way). Healthy tarmac
+/// reads 11-16 per 100m across all ten library cars; the bump-max exemplar
+/// 9.4; the rebound-only-max stint (behaviourally invisible on smooth
+/// tarmac, correctly so) 11.5.
+const OVERDAMPED_SPATIAL_TARMAC: f32 = 10.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
@@ -1095,6 +1103,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
 
     for (axle, a, b) in [("front", s.fl, s.fr), ("rear", s.rl, s.rr)] {
         let rev = (a.reversals_per_sec + b.reversals_per_sec) / 2.0;
+        let spatial = (a.reversals_per_100m + b.reversals_per_100m) / 2.0;
         let topped = a.topped_frac.max(b.topped_frac);
 
         if topped >= OVERDAMPED_TOPPED_FRAC {
@@ -1152,7 +1161,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             });
         } else if !loose
             && rev > 0.0
-            && rev <= OVERDAMPED_BUMP_REV
+            && (rev <= OVERDAMPED_BUMP_REV || spatial <= OVERDAMPED_SPATIAL_TARMAC)
             && topped >= OVERDAMPED_BUMP_TOPPED
         {
             recs.push(Recommendation {
@@ -1167,8 +1176,9 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 evidence: vec![
                     format!(
                         "{axle} suspension reverses direction only {rev:.1}x/s \
-                         (healthy baseline {baseline}) while at full extension \
-                         {:.1}% of the stint",
+                         ({spatial:.1} per 100m; healthy tarmac reads 11-16 per \
+                         100m at any speed) while at full extension {:.1}% of \
+                         the stint",
                         topped * 100.0,
                     ),
                     "signature measured on the bump-only-max A/B: reversals \
@@ -1987,7 +1997,42 @@ mod tests {
             bottomed_frac: 0.0,
             topped_frac: topped,
             reversals_per_sec: reversals,
+            // 50 m/s equivalent: the library's typical tarmac pace.
+            reversals_per_100m: reversals * 2.0,
         }
+    }
+
+    /// The spatial gate catches bump overdamping at speeds where the raw /s
+    /// gate is blind: 6.1/s clears OVERDAMPED_BUMP_REV, but 9.4 per 100m is
+    /// under the healthy tarmac floor (11-16 at any speed).
+    #[test]
+    fn spatial_reversal_gate_is_speed_robust() {
+        let fast_overdamped = crate::analysis::metrics::SuspensionStats {
+            avg: 0.3,
+            bottomed_frac: 0.0,
+            topped_frac: 0.15,
+            reversals_per_sec: 6.1,
+            reversals_per_100m: 9.4,
+        };
+        let mut overall = base_metrics();
+        overall.suspension = Corners {
+            fl: fast_overdamped,
+            fr: fast_overdamped,
+            rl: susp(7.5, 0.03),
+            rr: susp(7.4, 0.03),
+        };
+        let recs = recommend(&overall, &[], &Default::default());
+        let damp = recs.iter().find(|r| r.area == "damping").unwrap();
+        assert!(
+            damp.advice.contains("front bump damping"),
+            "{}",
+            damp.advice
+        );
+        assert!(
+            damp.evidence.iter().any(|e| e.contains("per 100m")),
+            "{:?}",
+            damp.evidence
+        );
     }
 
     #[test]

@@ -70,6 +70,14 @@ pub struct SuspensionStats {
     /// signal. Road texture drives ~5.5/s baseline (observed, tarmac, healthy
     /// damping); underdamped ringing adds 2 reversals per cycle on top.
     pub reversals_per_sec: f32,
+    /// The same reversals normalized by DISTANCE (per 100m): bumps are
+    /// spatial, so the temporal rate scales with speed within a setup
+    /// (measured: same-setup Ferrari stints read 8.0/s at 68 m/s and 3.6/s
+    /// at 29 m/s — both ~12 per 100m). Healthy tarmac collapses to 11-16
+    /// per 100m across the whole library; the bump-max overdamped exemplar
+    /// reads 9.4 while the (correctly invisible) rebound-only-max stint
+    /// reads 11.5.
+    pub reversals_per_100m: f32,
 }
 
 /// Balance measured over a conditioned subset of cornering samples (a speed
@@ -619,11 +627,14 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),
         suspension: {
             let duration = stint_seconds(frames).max(0.1);
+            let mean_speed = frames.iter().map(|f| f.frame.speed).sum::<f32>() / n as f32;
+            let dist_100m = (mean_speed * duration / 100.0).max(0.01);
             let stats = |i: usize| SuspensionStats {
                 avg: susp_sum[i] / n as f32,
                 bottomed_frac: susp_bottomed[i] as f32 / n as f32,
                 topped_frac: susp_topped[i] as f32 / n as f32,
                 reversals_per_sec: osc_reversals[i] as f32 / duration,
+                reversals_per_100m: osc_reversals[i] as f32 / dist_100m,
             };
             Corners {
                 fl: stats(0),
