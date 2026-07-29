@@ -86,6 +86,9 @@ you're driving.
 only shared if you explicitly ask, and `tuners export` lets you inspect
 exactly what a bundle contains before anything is uploaded.
 
+The full plain-language policy - including retention and how to have your
+data deleted - is in [docs/privacy.md](docs/privacy.md).
+
 ## Docs
 
 - [docs/design.md](docs/design.md) - objectives, constraints, architecture, design principles
