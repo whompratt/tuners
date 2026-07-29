@@ -212,7 +212,7 @@
       </span>
     </div>
     <div style="color:var(--muted);font-size:12px;margin-top:6px;max-width:640px">
-      Every measured tune change across your projects (and any shared data you ingest) is pooled into a
+      Every measured tune change across your projects is pooled into a
       map of what each adjustment does. Advice uses it to suggest untried adjustments, clearly marked as
       coming from the map rather than from this project's own runs. Kept fresh automatically in the
       background.

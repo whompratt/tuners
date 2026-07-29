@@ -79,8 +79,6 @@ tuners advise     history-aware advice from a tuning journal
 tuners replay     integrity-check a recorded stint
 tuners simulate   synthetic telemetry (stand-in for the game, for development)
 tuners export     bundle a stint for manual sharing or upload
-tuners ingest     validate received telemetry bundles and file them per sender
-tuners receive    local telemetry-collection endpoint
 ```
 
 See [docs/guide.md](docs/guide.md) for capture practice (rewinds, lap counts,
