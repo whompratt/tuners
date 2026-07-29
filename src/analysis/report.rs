@@ -205,6 +205,18 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     if let Some(w) = m.wheelspin_frac {
         writeln!(out, "    wheelspin on throttle: {}", pct(w)).unwrap();
     }
+    let ts = &m.traction_spin;
+    if ts.samples > 0 {
+        writeln!(
+            out,
+            "    rear spin symmetry (on-throttle cornering): inside-only {} | \
+             both rears {} (open diffs spin the unloaded inside wheel alone; \
+             locked diffs drag both into breakaway)",
+            pct(ts.inside_only_frac),
+            pct(ts.both_frac),
+        )
+        .unwrap();
+    }
     if let Some(l) = m.lockup_frac {
         // With ABS on, sustained slip at the limit is normal threshold braking.
         writeln!(out, "    braking at/over slip limit: {}", pct(l)).unwrap();

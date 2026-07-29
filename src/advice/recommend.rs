@@ -73,6 +73,15 @@ const TEMP_CLEAR_MARGIN_F: f32 = 20.0;
 /// Wheelspin as a fraction of on-throttle time.
 const WHEELSPIN_MED: f32 = 0.08;
 const WHEELSPIN_HIGH: f32 = 0.15;
+/// Rear spin-symmetry gates (tarmac, rear-driven; plan-008 R12 sweep). The
+/// inside-only share reads the OPEN failure mode: 11.0% at 0% lock vs
+/// 2.0-2.8% at 100/50 on the sweep car, healthy tarmac library tops out ~6%
+/// (one 8.4% candidate, likely also too open). The both-rears share reads
+/// the LOCKED mode: 3.2% at 100% vs 1.5% at 50% and 0.2% open; healthy
+/// tarmac <= 1.5%. Dirt reads both-rears 17-35% everywhere (technique) and
+/// never sees these gates.
+const INSIDE_ONLY_SPIN: f32 = 0.08;
+const BOTH_REAR_SPIN: f32 = 0.025;
 /// Time on the rev limiter worth reacting to.
 const LIMITER_FRAC: f32 = 0.02;
 /// Minimum cornering samples in a conditioned band (speed / throttle) before
@@ -876,6 +885,102 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         1 => "rear",
         _ => "drive",
     };
+    let spin_evidence = format!(
+        "wheelspin during {:.0}% of on-throttle time ({} drivetrain)",
+        spin * 100.0,
+        crate::telemetry::packet::drivetrain_name(overall.drivetrain_type),
+    );
+    let confidence = if spin >= WHEELSPIN_HIGH {
+        Confidence::High
+    } else {
+        Confidence::Medium
+    };
+
+    // Direction comes from the spin PATTERN, not the amount: wheelspin falls
+    // monotonically with lock (open diffs spin the unloaded inside wheel),
+    // while oversteer events rise with it — the R12 sweep measured the two
+    // failure modes on opposite channels. Tarmac rear-driven cars with
+    // enough on-throttle cornering get the discriminator; dirt (both-rears
+    // 17-35% everywhere = technique) and FWD (front symmetry unmeasured)
+    // keep the legacy reduce-lock direction.
+    let ts = &overall.traction_spin;
+    let os = &overall.transient_oversteer;
+    let oversteer_events = os.on_power_frac >= OS_ON_POWER_FRAC
+        || os.rear_first_frac >= OS_REAR_FIRST_FRAC
+        || os.countersteer_frac >= OS_COUNTERSTEER_FRAC;
+    if overall.drivetrain_type != 0 && !overall.surface_loose && ts.samples >= BAND_MIN_SAMPLES {
+        let symmetry = format!(
+            "rear spin symmetry: inside-only {:.1}% / both rears {:.1}% of \
+             on-throttle cornering (healthy tarmac reads <=6% / <=1.5%; an \
+             open diff measured 11.0% / 0.2%, a locked one 2.0% / 3.2%)",
+            ts.inside_only_frac * 100.0,
+            ts.both_frac * 100.0,
+        );
+        if ts.both_frac >= BOTH_REAR_SPIN || oversteer_events {
+            let mut evidence = vec![symmetry, spin_evidence];
+            if oversteer_events {
+                evidence.push(format!(
+                    "oversteer events corroborate: {:.1}% on power, rear-first \
+                     {:.1}%, counter-steer {:.1}% of cornering",
+                    os.on_power_frac * 100.0,
+                    os.rear_first_frac * 100.0,
+                    os.countersteer_frac * 100.0,
+                ));
+            }
+            recs.push(Recommendation {
+                apply: Vec::new(),
+                area: "traction",
+                advice: format!(
+                    "improve {drive_axle}-axle traction: reduce differential \
+                     acceleration lock — both rears break away together, the \
+                     locked-diff signature"
+                ),
+                evidence,
+                confidence,
+                suggestion: None,
+                implied: Some(Change {
+                    family: Family::DiffAccel,
+                    softer: true,
+                    magnitude: None,
+                }),
+            });
+        } else if ts.inside_only_frac >= INSIDE_ONLY_SPIN {
+            recs.push(Recommendation {
+                apply: Vec::new(),
+                area: "traction",
+                advice: "add rear diff accel lock: the unloaded inside rear spins \
+                         alone while the outside grips — an open diff dumps the \
+                         torque there; more lock drives both wheels together"
+                    .into(),
+                evidence: vec![symmetry, spin_evidence],
+                confidence: confidence.min(Confidence::Medium),
+                suggestion: None,
+                implied: Some(Change {
+                    family: Family::DiffAccel,
+                    softer: false,
+                    magnitude: None,
+                }),
+            });
+        } else {
+            // Neither signature: the wheelspin is real but does not implicate
+            // the diff in either direction.
+            recs.push(Recommendation {
+                apply: Vec::new(),
+                area: "traction",
+                advice: format!(
+                    "improve {drive_axle}-axle traction: softer {drive_axle} \
+                     springs/dampers help put power down; the rear spin pattern \
+                     doesn't implicate the diff in either direction"
+                ),
+                evidence: vec![symmetry, spin_evidence],
+                confidence: Confidence::Low,
+                suggestion: None,
+                implied: None,
+            });
+        }
+        return;
+    }
+
     recs.push(Recommendation {
         apply: Vec::new(),
         area: "traction",
@@ -884,17 +989,9 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         ),
         evidence: vec![
             format!("alternative: softer {drive_axle} springs/dampers also help put power down"),
-            format!(
-                "wheelspin during {:.0}% of on-throttle time ({} drivetrain)",
-                spin * 100.0,
-                crate::telemetry::packet::drivetrain_name(overall.drivetrain_type),
-            ),
+            spin_evidence,
         ],
-        confidence: if spin >= WHEELSPIN_HIGH {
-            Confidence::High
-        } else {
-            Confidence::Medium
-        },
+        confidence,
         suggestion: None,
         implied: Some(Change {
             family: Family::DiffAccel,
@@ -1223,7 +1320,7 @@ fn axle_temps(m: &StintMetrics) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::metrics::{StintMetrics, TempStats};
+    use crate::analysis::metrics::{StintMetrics, TempStats, TractionSpin};
     use crate::telemetry::packet::Corners;
 
     fn base_metrics() -> StintMetrics {
@@ -1272,6 +1369,7 @@ mod tests {
             balance_on_brake: Default::default(),
             corners: None,
             wheelspin_frac: Some(0.02),
+            traction_spin: Default::default(),
             lockup_frac: Some(0.5),
             suspension: Corners::default(),
             gears: Default::default(),
@@ -1915,6 +2013,84 @@ mod tests {
         let traction = recs.iter().find(|r| r.area == "traction").unwrap();
         assert_eq!(traction.confidence, Confidence::High);
         assert!(traction.advice.contains("rear-axle"), "{}", traction.advice);
+    }
+
+    /// Open-diff signature (the R12 0%-lock stint: inside-only 11.0%, both
+    /// 0.2%): the direction flips to ADD lock instead of the old blanket
+    /// "reduce", which was impossible at 0% and measured the wrong way.
+    #[test]
+    fn inside_only_spin_flips_traction_to_add_lock() {
+        let mut overall = base_metrics();
+        overall.wheelspin_frac = Some(0.09);
+        overall.traction_spin = TractionSpin {
+            samples: 2000,
+            inside_only_frac: 0.11,
+            both_frac: 0.002,
+        };
+        let recs = recommend(&overall, &[], &Default::default());
+        let traction = recs.iter().find(|r| r.area == "traction").unwrap();
+        assert!(
+            traction.advice.contains("add rear diff accel"),
+            "{}",
+            traction.advice
+        );
+        let implied = traction.implied.unwrap();
+        assert_eq!(implied.family, Family::DiffAccel);
+        assert!(!implied.softer, "add lock = value up");
+        assert_eq!(traction.confidence, Confidence::Medium);
+    }
+
+    /// Locked-diff signature (both rears in breakaway together) keeps the
+    /// reduce direction; oversteer events are quoted when present.
+    #[test]
+    fn both_rear_spin_keeps_reduce_direction() {
+        let mut overall = base_metrics();
+        overall.wheelspin_frac = Some(0.12);
+        overall.traction_spin = TractionSpin {
+            samples: 2000,
+            inside_only_frac: 0.02,
+            both_frac: 0.032,
+        };
+        let recs = recommend(&overall, &[], &Default::default());
+        let traction = recs.iter().find(|r| r.area == "traction").unwrap();
+        assert!(traction.advice.contains("reduce"), "{}", traction.advice);
+        assert!(traction.implied.unwrap().softer);
+    }
+
+    /// Wheelspin without either symmetry signature no longer implies a diff
+    /// direction: the rec survives (softer springs help regardless) but
+    /// carries no journal-reconcilable direction claim.
+    #[test]
+    fn ambiguous_spin_pattern_is_non_directional() {
+        let mut overall = base_metrics();
+        overall.wheelspin_frac = Some(0.09);
+        overall.traction_spin = TractionSpin {
+            samples: 2000,
+            inside_only_frac: 0.03,
+            both_frac: 0.005,
+        };
+        let recs = recommend(&overall, &[], &Default::default());
+        let traction = recs.iter().find(|r| r.area == "traction").unwrap();
+        assert!(traction.implied.is_none());
+        assert_eq!(traction.confidence, Confidence::Low);
+    }
+
+    /// Dirt never sees the symmetry gates (both-rears reads 17-35% on every
+    /// dirt stint regardless of setup): legacy direction stands.
+    #[test]
+    fn dirt_keeps_legacy_traction_direction() {
+        let mut overall = base_metrics();
+        overall.surface_loose = true;
+        overall.wheelspin_frac = Some(0.35);
+        overall.traction_spin = TractionSpin {
+            samples: 2000,
+            inside_only_frac: 0.02,
+            both_frac: 0.25,
+        };
+        let recs = recommend(&overall, &[], &Default::default());
+        let traction = recs.iter().find(|r| r.area == "traction").unwrap();
+        assert!(traction.advice.contains("reduce"), "{}", traction.advice);
+        assert!(traction.implied.unwrap().softer);
     }
 
     #[test]

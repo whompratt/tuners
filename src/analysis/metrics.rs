@@ -15,6 +15,9 @@ const OS_CLEAR_DELTA: f32 = -0.15;
 /// Slip-angle fraction of the grip limit treated as "at the limit" for the
 /// rear-first stat.
 const REAR_AT_LIMIT: f32 = 0.9;
+/// Slip ratio below which a wheel counts as gripping for the spin-symmetry
+/// split; between this and SLIP_LIMIT neither "only" bucket claims the frame.
+const TRACTION_GRIP: f32 = 0.7;
 /// |steer| (i8 units, full lock = 127) below this is straight-ahead jitter,
 /// not a counter-steer input.
 const STEER_DEADBAND: f32 = 15.0;
@@ -192,6 +195,26 @@ pub struct TransientOversteer {
     pub countersteer_episodes: usize,
 }
 
+/// Rear wheelspin symmetry during on-throttle cornering: WHICH wheels spin
+/// is the diff-accel direction discriminator (R12 three-point sweep,
+/// 2026-07-29). An open diff dumps torque into the unloaded INSIDE rear
+/// (inside-only spin 11.0% of on-throttle cornering at 0% lock vs 2.0-2.8%
+/// at 100/50; healthy tarmac library tops out ~6%); a locked diff drags
+/// BOTH rears into breakaway together (3.2% at 100% vs 0.2% open; healthy
+/// tarmac <= 1.5%). Mean slip asymmetry is NOT the signal: every car
+/// carries a +0.15-0.2 inside bias from wheel-path geometry. Dirt is a
+/// separate regime (both-rears 17-35% on every dirt stint). The inside
+/// rear is labeled by suspension travel (less compressed = unloaded).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TractionSpin {
+    /// On-throttle cornering samples (the denominator).
+    pub samples: usize,
+    /// Inside rear spinning alone while the outside rear grips.
+    pub inside_only_frac: f32,
+    /// Both rears past the slip limit together.
+    pub both_frac: f32,
+}
+
 #[derive(Debug, Clone)]
 pub struct StintMetrics {
     pub samples: usize,
@@ -244,6 +267,8 @@ pub struct StintMetrics {
     pub corners: Option<super::corners::CornerSummary>,
     /// Drive-wheel spin as a fraction of on-throttle samples. None if never on throttle.
     pub wheelspin_frac: Option<f32>,
+    /// Rear spin symmetry while cornering on throttle (diff-accel direction).
+    pub traction_spin: TractionSpin,
     /// Any-wheel lockup as a fraction of on-brake samples. None if never on brake.
     pub lockup_frac: Option<f32>,
     pub suspension: Corners<SuspensionStats>,
@@ -351,6 +376,9 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut bands = [(0usize, 0.0f32, 0.0f32); 5];
     let mut throttle_samples = 0usize;
     let mut wheelspin = 0usize;
+    let mut ts_samples = 0usize;
+    let mut ts_inside_only = 0usize;
+    let mut ts_both = 0usize;
     let mut brake_samples = 0usize;
     let mut lockup = 0usize;
     // Grounded real-gear frames (gear, rpm), kept whole so gearing stats can
@@ -533,6 +561,23 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 }
             } else {
                 cs_run = 0;
+            }
+            // Rear spin symmetry on throttle: the inside (unloaded, less
+            // compressed) rear labeled by suspension travel.
+            if f.accel >= PEDAL_ON {
+                ts_samples += 1;
+                let travel = f.norm_suspension_travel;
+                let ratio = f.tire_slip_ratio;
+                let (inside, outside) = if travel.rl < travel.rr {
+                    (ratio.rl.abs(), ratio.rr.abs())
+                } else {
+                    (ratio.rr.abs(), ratio.rl.abs())
+                };
+                if inside > SLIP_LIMIT && outside > SLIP_LIMIT {
+                    ts_both += 1;
+                } else if inside > SLIP_LIMIT && outside < TRACTION_GRIP {
+                    ts_inside_only += 1;
+                }
             }
         } else {
             os_in_run = false;
@@ -749,6 +794,11 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         corners: super::corners::summarize(frames),
         driveline: super::driveline::fit(frames),
         wheelspin_frac: (throttle_samples > 0).then(|| wheelspin as f32 / throttle_samples as f32),
+        traction_spin: TractionSpin {
+            samples: ts_samples,
+            inside_only_frac: ts_inside_only as f32 / ts_samples.max(1) as f32,
+            both_frac: ts_both as f32 / ts_samples.max(1) as f32,
+        },
         lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),
         suspension: {
             let duration = stint_seconds(frames).max(0.1);
