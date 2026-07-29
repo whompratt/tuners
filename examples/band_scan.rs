@@ -15,7 +15,7 @@ fn band(b: &metrics::BandBalance) -> String {
 fn main() {
     println!(
         "file\tcar\tsurface\tdrive\tbal\tlow\thigh\ton\toff\tbrake\tentry\texit\t\
-         flash%\tonpow%\trearfirst%\tcsteer%"
+         flash%\tonpow%\trearfirst%\tcsteer%\tmargin"
     );
     for path in std::env::args().skip(1) {
         let stint = match analysis::Stint::load(Path::new(&path)) {
@@ -38,7 +38,7 @@ fn main() {
             .map(|c| (band(&c.entry), band(&c.exit)))
             .unwrap_or_else(|| ("-".into(), "-".into()));
         println!(
-            "{name}\t{car}\t{}\t{:?}\t{}\t{}\t{}\t{}\t{}\t{}\t{entry}\t{exit}\t{:.1}\t{:.1}\t{:.1}\t{:.1}",
+            "{name}\t{car}\t{}\t{:?}\t{}\t{}\t{}\t{}\t{}\t{}\t{entry}\t{exit}\t{:.1}\t{:.1}\t{:.1}\t{:.1}\t{}",
             if m.surface_loose { "dirt" } else { "tarmac" },
             m.drivetrain_type,
             m.understeer_index
@@ -53,6 +53,9 @@ fn main() {
             m.transient_oversteer.on_power_frac * 100.0,
             m.transient_oversteer.rear_first_frac * 100.0,
             m.transient_oversteer.countersteer_frac * 100.0,
+            m.margin_ratio()
+                .map(|r| format!("{r:.2}"))
+                .unwrap_or_default(),
         );
     }
 }

@@ -37,6 +37,13 @@ const OS_REAR_FIRST_FRAC: f32 = 0.03;
 /// tunes 0.8-1.4%; the rear-limited RWD cars 4.7-5.3%; dirt 13%+ (technique,
 /// excluded by the loose-surface gate like the rest).
 const OS_COUNTERSTEER_FRAC: f32 = 0.03;
+/// Grip-margin ratio (cornering front/rear share of limit) at or below this
+/// = the rear works as hard as the front. Library: drivers settle at
+/// 1.36-1.84 on tarmac (one quiet 1.26 stint with zero oversteer events);
+/// both deliberate oversteer exemplars collapsed to 0.99/1.03. Corroborator
+/// only — a low ratio without oversteer events is just a stiff-rear platform
+/// choice (the rear-margin-surplus finding).
+const MARGIN_COLLAPSE: f32 = 1.2;
 /// Working tire temperature band (°F) per compound; outside it pressures
 /// likely need adjusting. The slick band is the in-game-validated anchor
 /// (160-210°F reads right on real FH6 sessions); the rest are offset from it
@@ -188,6 +195,7 @@ pub fn recommend(
     aero_rule(overall, ctx, &mut recs);
     power_balance_rule(overall, &mut recs);
     brake_rule(overall, &mut recs);
+    stability_rule(overall, ctx, &mut recs);
     tire_pressure_rule(overall, balance_sign, ctx.compound, &mut recs);
     traction_rule(overall, &mut recs);
     gearing_rule(overall, &mut recs);
@@ -440,55 +448,6 @@ fn balance_rule(
         }),
     });
 
-    // The transients get their own rear-grip lever: aero when they live at
-    // speed, drive-line when they ride the throttle. Low: the stat is new
-    // and single-library calibrated.
-    if snappy {
-        let at_speed = os.high_speed_frac >= os.on_power_frac;
-        let aero = at_speed && ctx.aero_tunable != Some(false);
-        recs.push(Recommendation {
-            apply: Vec::new(),
-            area: "stability",
-            advice: if aero {
-                "add rear aero: the oversteer flashes concentrate at high speed, \
-                 where the rear runs out of downforce before the front runs out \
-                 of grip"
-                    .into()
-            } else if at_speed {
-                "soften the rear a step (arb or springs) or lower rear ride \
-                 height: the oversteer flashes concentrate at high speed and \
-                 no aero is fitted, so mechanical rear grip is the lever"
-                    .into()
-            } else {
-                "reduce rear diff accel lock (or soften the rear a step): the \
-                 oversteer flashes ride the throttle; the rear breaks away \
-                 under power"
-                    .into()
-            },
-            evidence: vec![format!(
-                "momentary oversteer on a net-understeer car: {:.1}% of \
-                 cornering ({:.1}% on power, {:.1}% at >=85 mph) vs <=3.9% \
-                 on-power across healthy AWD tarmac stints",
-                os.clear_frac * 100.0,
-                os.on_power_frac * 100.0,
-                os.high_speed_frac * 100.0,
-            )],
-            confidence: Confidence::Low,
-            suggestion: None,
-            implied: Some(Change {
-                family: if aero {
-                    Family::RearAero
-                } else if at_speed {
-                    Family::RearRoll
-                } else {
-                    Family::DiffAccel
-                },
-                softer: !aero,
-                magnitude: None,
-            }),
-        });
-    }
-
     // Entry-understeer corroborated by the braking band (tarmac only; dirt
     // trail-brake rotation is technique): brake balance is its own lever on
     // the entry card, worth a separate journalable recommendation. Low
@@ -525,6 +484,109 @@ fn balance_rule(
         });
     }
     Some(idx.signum())
+}
+
+/// Episodic oversteer detected through EVENT channels (flashes, rear-first
+/// moments, the driver's own counter-steer corrections), independent of the
+/// averaged balance index: oversteer is episodic-and-corrected, so a car can
+/// slide every lap while its cornering mean reads neutral (both deliberate
+/// oversteer exemplars read -0.01/+0.02 net). Net-OVERSTEER means are the
+/// balance card's job; this card covers what the average hides. Tarmac only
+/// (dirt rotation is technique, 12-23% everywhere).
+fn stability_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendation>) {
+    if overall.surface_loose {
+        return;
+    }
+    let os = &overall.transient_oversteer;
+    if os.on_power_frac < OS_ON_POWER_FRAC
+        && os.rear_first_frac < OS_REAR_FIRST_FRAC
+        && os.countersteer_frac < OS_COUNTERSTEER_FRAC
+    {
+        return;
+    }
+    // A net-oversteer average already gets the balance card's rear levers.
+    if overall.understeer_index.is_some_and(|i| i <= -BALANCE_MILD) {
+        return;
+    }
+    // A collapsed braking band names the mechanical cause (bias too far
+    // rear, brake_rule's card); a generic rear-grip lever would be noise.
+    if overall
+        .balance_on_brake
+        .index
+        .filter(|_| overall.balance_on_brake.samples >= BAND_MIN_SAMPLES)
+        .is_some_and(|b| b <= BRAKE_REAR_ROTATE)
+    {
+        return;
+    }
+    // Corroboration: the grip-margin ratio collapsing to ~1 means the rear
+    // works as hard as the front — both deliberate oversteer exemplars read
+    // <= 1.03 while healthy stints with any oversteer events sit >= 1.36.
+    let margin = overall.margin_ratio();
+    let collapsed = margin.is_some_and(|r| r <= MARGIN_COLLAPSE);
+
+    let at_speed = os.high_speed_frac >= os.on_power_frac;
+    let aero = at_speed && ctx.aero_tunable != Some(false);
+    let mut evidence = vec![format!(
+        "momentary oversteer with the average reading {}: {:.1}% of \
+         cornering flashes clear oversteer ({:.1}% on power, {:.1}% at \
+         >=85 mph), counter-steer {:.1}%; healthy tarmac reads <=3.9% \
+         on-power, deliberate oversteer exemplars 15-23% flashes",
+        overall
+            .understeer_index
+            .map(|i| format!("{i:+.2}"))
+            .unwrap_or_else(|| "neutral".into()),
+        os.clear_frac * 100.0,
+        os.on_power_frac * 100.0,
+        os.high_speed_frac * 100.0,
+        os.countersteer_frac * 100.0,
+    )];
+    if let Some(r) = margin
+        && collapsed
+    {
+        evidence.push(format!(
+            "grip-margin ratio {r:.2}: the rear works as hard as the front \
+             (drivers settle near 1.5-1.7x; both deliberate oversteer \
+             exemplars read <=1.03)"
+        ));
+    }
+    recs.push(Recommendation {
+        apply: Vec::new(),
+        area: "stability",
+        advice: if aero {
+            "add rear aero: the oversteer flashes concentrate at high speed, \
+             where the rear runs out of downforce before the front runs out \
+             of grip"
+                .into()
+        } else if at_speed {
+            "soften the rear a step (arb or springs) or lower rear ride \
+             height: the oversteer flashes concentrate at high speed and \
+             no aero is fitted, so mechanical rear grip is the lever"
+                .into()
+        } else {
+            "reduce rear diff accel lock (or soften the rear a step): the \
+             oversteer flashes ride the throttle; the rear breaks away \
+             under power"
+                .into()
+        },
+        evidence,
+        confidence: if collapsed {
+            Confidence::Medium
+        } else {
+            Confidence::Low
+        },
+        suggestion: None,
+        implied: Some(Change {
+            family: if aero {
+                Family::RearAero
+            } else if at_speed {
+                Family::RearRoll
+            } else {
+                Family::DiffAccel
+            },
+            softer: !aero,
+            magnitude: None,
+        }),
+    });
 }
 
 /// Bias too far rear reads directly in the braking-conditioned band: the car
@@ -1386,6 +1448,67 @@ mod tests {
         overall.balance_on_brake = band(200, -0.21);
         let recs = recommend(&overall, &[], &Default::default());
         assert!(recs.iter().all(|r| r.area != "brakes"));
+    }
+
+    /// Episodic oversteer fires the stability card on a NEUTRAL average (the
+    /// provocation-stint shape: mean -0.01, events everywhere), and the
+    /// collapsed grip-margin ratio upgrades it to Medium.
+    #[test]
+    fn neutral_car_with_oversteer_events_gets_stability_card() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.0);
+        overall.transient_oversteer.clear_frac = 0.23;
+        overall.transient_oversteer.on_power_frac = 0.15;
+        overall.transient_oversteer.countersteer_frac = 0.10;
+        overall.transient_oversteer.rear_first_frac = 0.10;
+        overall.cornering_front_slip = Some(0.5);
+        overall.cornering_rear_slip = Some(0.5);
+        let recs = recommend(&overall, &[], &Default::default());
+        let stab = recs.iter().find(|r| r.area == "stability").unwrap();
+        assert_eq!(
+            stab.confidence,
+            Confidence::Medium,
+            "margin 1.0 corroborates"
+        );
+        assert!(
+            stab.evidence
+                .iter()
+                .any(|e| e.contains("grip-margin ratio")),
+            "{:?}",
+            stab.evidence
+        );
+
+        // Healthy margin (the rear-limited-RWD shape): events alone stay Low.
+        overall.cornering_front_slip = Some(0.55);
+        overall.cornering_rear_slip = Some(0.38);
+        let recs = recommend(&overall, &[], &Default::default());
+        let stab = recs.iter().find(|r| r.area == "stability").unwrap();
+        assert_eq!(stab.confidence, Confidence::Low);
+    }
+
+    /// The stability card defers when another card owns the cause: a net-
+    /// oversteer mean belongs to the balance card, a collapsed braking band
+    /// to the brakes card.
+    #[test]
+    fn stability_card_defers_to_balance_and_brakes() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(-0.21);
+        overall.transient_oversteer.countersteer_frac = 0.07;
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(recs.iter().any(|r| r.area == "balance"));
+        assert!(recs.iter().all(|r| r.area != "stability"));
+
+        // GT-R 0% shape: neutral mean, events, braking band collapsed.
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.02);
+        overall.transient_oversteer.countersteer_frac = 0.06;
+        overall.balance_on_brake = band(2000, -0.06);
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(recs.iter().any(|r| r.area == "brakes"));
+        assert!(
+            recs.iter().all(|r| r.area != "stability"),
+            "brakes card owns the rotation"
+        );
     }
 
     /// Exit-concentrated understeer under power is NOT a front-bar problem:
