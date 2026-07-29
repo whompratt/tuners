@@ -9,16 +9,14 @@
 //! is never coupled to the network. The drainer runs in `tuners serve`,
 //! uploads oldest-first, and deletes only on confirmed 2xx.
 //!
-//! Uploads shell out to `curl` (ships with Windows 10+, macOS, and
-//! effectively all Linux): TLS without growing the dependency tree, and the
-//! exact invocation was validated against the live endpoint. Hard gate: the
-//! caller passes a liveness probe and the drainer refuses to touch the
-//! network while telemetry is fresh. Driving must never compete with
-//! uploads.
+//! Uploads run in-process (ureq over rustls, webpki roots compiled in): no
+//! console child on Windows, no reliance on a system curl or trust store.
+//! Hard gate: the caller passes a liveness probe and the drainer refuses to
+//! touch the network while telemetry is fresh. Driving must never compete
+//! with uploads.
 
 use crate::advice::tuning::TuningSession;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub const CONFIG_PATH: &str = "tune-collect.txt";
 pub const OUTBOX_DIR: &str = "outbox";
@@ -371,7 +369,10 @@ pub fn history_enqueue(plan: HistoryPlan, outbox: &Path) -> usize {
     queued
 }
 
-/// PUT one bundle via curl; returns the HTTP status code.
+/// PUT one bundle in-process (ureq); returns the HTTP status code, Err only
+/// on no-response (network/TLS trouble — the drainer's retry-next-pass
+/// case). TLS roots are webpki-roots (compiled-in Mozilla bundle): no
+/// dependence on a system store, so flatpak and bare distros behave alike.
 fn upload(endpoint: &str, token: &str, path: &Path) -> Result<u16, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let sha = crate::util::sha256_hex(&bytes);
@@ -381,48 +382,21 @@ fn upload(endpoint: &str, token: &str, path: &Path) -> Result<u16, String> {
         .to_string_lossy()
         .into_owned();
     let url = format!("{}/v1/bundle/{name}", endpoint.trim_end_matches('/'));
-    let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
-    let mut cmd = Command::new("curl");
-    // The app is a windows-subsystem GUI process: a spawned console child
-    // pops a visible CMD window for every upload unless suppressed.
-    #[cfg(windows)]
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(300))
+        .build();
+    match agent
+        .put(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("X-Bundle-SHA256", &sha)
+        .send_bytes(&bytes)
     {
-        use std::os::windows::process::CommandExt as _;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        Ok(resp) => Ok(resp.status()),
+        // Non-2xx is a delivered response, not an error: the drainer
+        // branches on the code (permanent 4xx reject / else retry).
+        Err(ureq::Error::Status(code, _)) => Ok(code),
+        Err(ureq::Error::Transport(t)) => Err(format!("no response ({t})")),
     }
-    let out = cmd
-        .args([
-            "-s",
-            "-o",
-            null,
-            "-w",
-            "%{http_code}",
-            "-m",
-            "300",
-            "-X",
-            "PUT",
-            "--data-binary",
-            &format!("@{}", path.display()),
-            "-H",
-            &format!("Authorization: Bearer {token}"),
-            "-H",
-            &format!("X-Bundle-SHA256: {sha}"),
-            &url,
-        ])
-        .output()
-        .map_err(|e| format!("curl not runnable: {e}"))?;
-    let code = String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse::<u16>()
-        .unwrap_or(0);
-    if code == 0 {
-        return Err(format!(
-            "no response ({})",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(code)
 }
 
 #[cfg(test)]
