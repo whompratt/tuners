@@ -6,7 +6,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use tuners::receive::{ReceiveConfig, run_listener};
+use tuners::sharing::receive::{ReceiveConfig, run_listener};
 use tuners::util::sha256_hex;
 
 struct Server {

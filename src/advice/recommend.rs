@@ -3,7 +3,7 @@
 //! phrased to survive unknown limits.
 
 use super::journal::{Change, Family};
-use super::metrics::StintMetrics;
+use crate::analysis::metrics::StintMetrics;
 
 /// Balance index magnitudes: mild tendency vs clear problem.
 const BALANCE_MILD: f32 = 0.05;
@@ -749,7 +749,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             format!(
                 "wheelspin during {:.0}% of on-throttle time ({} drivetrain)",
                 spin * 100.0,
-                crate::packet::drivetrain_name(overall.drivetrain_type),
+                crate::telemetry::packet::drivetrain_name(overall.drivetrain_type),
             ),
         ],
         confidence: if spin >= WHEELSPIN_HIGH {
@@ -1084,7 +1084,7 @@ fn axle_temps(m: &StintMetrics) -> (f32, f32) {
 mod tests {
     use super::*;
     use crate::analysis::metrics::{StintMetrics, TempStats};
-    use crate::packet::Corners;
+    use crate::telemetry::packet::Corners;
 
     fn base_metrics() -> StintMetrics {
         StintMetrics {

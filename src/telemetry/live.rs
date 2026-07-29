@@ -7,8 +7,8 @@
 //! sees new packets within one poll interval.
 
 use crate::analysis::TimedFrame;
-use crate::packet;
-use crate::stint::MAGIC;
+use crate::telemetry::packet;
+use crate::telemetry::stint::MAGIC;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -244,7 +244,7 @@ pub fn run_tailer(dir: String, state: SharedLive) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::TelemetryFrame;
+    use crate::telemetry::packet::TelemetryFrame;
     use std::io::Write;
 
     fn temp_path(tag: &str) -> PathBuf {

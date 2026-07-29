@@ -59,7 +59,7 @@ pub fn ingest_dir(
             continue;
         }
 
-        match crate::bundle::open(&bytes).and_then(|b| validate(&b)) {
+        match crate::sharing::bundle::open(&bytes).and_then(|b| validate(&b)) {
             Ok(()) => {
                 std::fs::create_dir_all(dest.parent().unwrap())?;
                 std::fs::write(&dest, &bytes)?;
@@ -119,7 +119,7 @@ fn park(
 }
 
 /// Strict-mode checks beyond `bundle::open`'s structural verification.
-fn validate(b: &crate::bundle::Bundle) -> Result<(), String> {
+fn validate(b: &crate::sharing::bundle::Bundle) -> Result<(), String> {
     let car: i32 = b
         .manifest
         .get("car")
@@ -133,12 +133,14 @@ fn validate(b: &crate::bundle::Bundle) -> Result<(), String> {
 
     // Every record and every payload must decode with the real parsers.
     let mut packets = 0u64;
-    let mut reader = crate::stint::StintReader::open_bytes(&b.stint).map_err(|e| e.to_string())?;
+    let mut reader =
+        crate::telemetry::stint::StintReader::open_bytes(&b.stint).map_err(|e| e.to_string())?;
     while let Some((_us, payload)) = reader
         .next_packet()
         .map_err(|e| format!("stint record {packets}: {e}"))?
     {
-        crate::packet::decode(&payload).map_err(|e| format!("stint packet {packets}: {e:?}"))?;
+        crate::telemetry::packet::decode(&payload)
+            .map_err(|e| format!("stint packet {packets}: {e:?}"))?;
         packets += 1;
     }
     if packets != claimed_packets {
@@ -147,7 +149,7 @@ fn validate(b: &crate::bundle::Bundle) -> Result<(), String> {
         ));
     }
 
-    let session = crate::tuning::TuningSession::parse(&b.session_txt);
+    let session = crate::advice::tuning::TuningSession::parse(&b.session_txt);
     if session.car != Some(car) {
         return Err(format!(
             "session car {:?} != manifest car {car}",
@@ -156,11 +158,11 @@ fn validate(b: &crate::bundle::Bundle) -> Result<(), String> {
     }
     // The free-text strip must hold: the export filters are idempotent, so a
     // compliant member is a fixed point. Anything else smuggled text.
-    let refiltered = crate::bundle::export_session(&session).render();
+    let refiltered = crate::sharing::bundle::export_session(&session).render();
     if refiltered != b.session_txt {
         return Err("session.txt is not free-text-clean (filter is not a fixed point)".into());
     }
-    if crate::bundle::export_journal(&b.journal_txt, car) != b.journal_txt {
+    if crate::sharing::bundle::export_journal(&b.journal_txt, car) != b.journal_txt {
         return Err("journal.txt is not free-text-clean (filter is not a fixed point)".into());
     }
     Ok(())

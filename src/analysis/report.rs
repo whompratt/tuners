@@ -2,7 +2,7 @@
 
 use super::metrics::{StintMetrics, stint_metrics};
 use super::{GapKind, LapSlice, Stint, classify_gaps, driving_segments, split_laps};
-use crate::packet::{class_name, drivetrain_name};
+use crate::telemetry::packet::{class_name, drivetrain_name};
 use crate::util::{format_lap_time, speed_unit, speed_val, temp_unit, temp_val};
 use std::fmt::Write;
 use std::path::Path;
@@ -59,7 +59,7 @@ pub fn full_session_report(path: &Path) -> Result<String, String> {
     Ok(out)
 }
 
-pub fn render_recommendations(recs: &[super::recommend::Recommendation]) -> String {
+pub fn render_recommendations(recs: &[crate::advice::recommend::Recommendation]) -> String {
     let mut out = String::new();
     if recs.is_empty() {
         writeln!(out, "no recommendations: nothing in this session stood out").unwrap();

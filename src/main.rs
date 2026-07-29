@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
-use tuners::{analysis, capture, replay, simulate};
+use tuners::{
+    advice, analysis,
+    telemetry::{capture, replay, simulate},
+};
 
 const USAGE: &str = "\
 tuners: FH6 tuning assistant (telemetry capture spike)
@@ -145,8 +148,9 @@ fn apply_units(args: &[String]) -> Result<Vec<String>, String> {
         },
         Some(other) => return Err(format!("--units {other}: use imperial, metric, or uk")),
         None => {
-            let s =
-                tuners::tuning::TuningSession::load(&tuners::util::data_path("tune-session.txt"));
+            let s = tuners::advice::tuning::TuningSession::load(&tuners::util::data_path(
+                "tune-session.txt",
+            ));
             tuners::util::DisplayUnits {
                 temp_c: s.facts.get("unit_temp").map(String::as_str) == Some("c"),
                 speed_kmh: s.facts.get("unit_speed").map(String::as_str) == Some("kmh"),
@@ -193,7 +197,7 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
     );
     print!(
         "{}",
-        analysis::report::render_recommendations(&analysis::recommend::recommend(
+        analysis::report::render_recommendations(&advice::recommend::recommend(
             &overall,
             &per_lap,
             &Default::default(),
@@ -207,9 +211,10 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         [] => {
             // The journal belongs to the session: with an active session car,
             // the default resolves to that car's journal file.
-            let session =
-                tuners::tuning::TuningSession::load(&tuners::util::data_path("tune-session.txt"));
-            let path = tuners::tuning::journal_path_for(
+            let session = tuners::advice::tuning::TuningSession::load(&tuners::util::data_path(
+                "tune-session.txt",
+            ));
+            let path = tuners::advice::tuning::journal_path_for(
                 session.car,
                 &tuners::util::data_path("tune-journal.txt").to_string_lossy(),
             );
@@ -222,7 +227,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         [p] => p.clone(),
         _ => return Err("usage: tuners advise [journal-file]".into()),
     };
-    let view = tuners::advise::advise(
+    let view = tuners::advice::advise::advise(
         &journal_path,
         &tuners::util::data_path("tune-session.txt"),
         &tuners::util::data_path("sessions").to_string_lossy(),
@@ -449,7 +454,7 @@ fn cmd_map(args: &[String]) -> Result<(), String> {
     }
     let root = tuners::util::data_root().to_path_buf();
     let scratch = std::env::temp_dir().join(format!("tuners-map-{}", std::process::id()));
-    let result = tuners::effectmap::refresh(
+    let result = tuners::advice::effectmap::refresh(
         &root,
         &tuners::util::data_path("sessions").to_string_lossy(),
         &out,
@@ -472,7 +477,7 @@ fn cmd_map(args: &[String]) -> Result<(), String> {
     );
     print!(
         "{}",
-        tuners::effectmap::summary(&tuners::effectmap::aggregate(&map))
+        tuners::advice::effectmap::summary(&tuners::advice::effectmap::aggregate(&map))
     );
     Ok(())
 }
@@ -511,15 +516,16 @@ fn cmd_export(args: &[String]) -> Result<(), String> {
         }
     }
     let stint = stint.ok_or("usage: tuners export <stint-file> [--out dir]")?;
-    let session = tuners::tuning::TuningSession::load(&tuners::util::data_path("tune-session.txt"));
-    let journal_path = tuners::tuning::journal_path_for(
+    let session =
+        tuners::advice::tuning::TuningSession::load(&tuners::util::data_path("tune-session.txt"));
+    let journal_path = tuners::advice::tuning::journal_path_for(
         session.car,
         &tuners::util::data_path("tune-journal.txt").to_string_lossy(),
     );
     let journal = std::fs::read_to_string(&journal_path).unwrap_or_default();
     let raw_len = std::fs::metadata(&stint).map(|m| m.len()).unwrap_or(0);
 
-    let (name, bytes) = tuners::bundle::build(stint.as_ref(), &session, &journal)?;
+    let (name, bytes) = tuners::sharing::bundle::build(stint.as_ref(), &session, &journal)?;
     let path = std::path::Path::new(&out_dir).join(&name);
     std::fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     println!(
@@ -546,8 +552,9 @@ fn cmd_ingest(args: &[String]) -> Result<(), String> {
         }
     }
     let inbox = inbox.ok_or("usage: tuners ingest <dir> [--library dir] [--quarantine dir]")?;
-    let report = tuners::ingest::ingest_dir(inbox.as_ref(), library.as_ref(), quarantine.as_ref())
-        .map_err(|e| e.to_string())?;
+    let report =
+        tuners::sharing::ingest::ingest_dir(inbox.as_ref(), library.as_ref(), quarantine.as_ref())
+            .map_err(|e| e.to_string())?;
     for name in &report.ingested {
         println!("ingested  {name}");
     }
@@ -589,12 +596,12 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
         }
     }
     if let Some(sender) = issue {
-        let token = tuners::receive::issue_token(tokens.as_ref(), &sender)?;
+        let token = tuners::sharing::receive::issue_token(tokens.as_ref(), &sender)?;
         println!("token for {sender}: {token}");
         println!("(appended to {tokens}; hand the token to the sender, keep the file private)");
         return Ok(());
     }
-    let cfg = tuners::receive::ReceiveConfig {
+    let cfg = tuners::sharing::receive::ReceiveConfig {
         root: PathBuf::from(root),
         tokens_path: PathBuf::from(tokens),
         blocklist_path: PathBuf::from(blocklist),
@@ -602,7 +609,7 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
         daily_cap_bytes: daily_mb * 1024 * 1024,
         global_cap_bytes: global_mb * 1024 * 1024,
     };
-    tuners::receive::run(&bind, port, cfg).map_err(|e| e.to_string())
+    tuners::sharing::receive::run(&bind, port, cfg).map_err(|e| e.to_string())
 }
 
 fn value<'a>(flag: &str, v: Option<&'a String>) -> Result<&'a String, String> {

@@ -4,9 +4,9 @@
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use tuners::collect::{self, CollectConfig};
-use tuners::receive::{ReceiveConfig, run_listener};
-use tuners::tuning::{Revision, TuningSession};
+use tuners::advice::tuning::{Revision, TuningSession};
+use tuners::sharing::collect::{self, CollectConfig};
+use tuners::sharing::receive::{ReceiveConfig, run_listener};
 
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("tuners-collect-e2e-{}-{tag}", std::process::id()));
@@ -96,7 +96,7 @@ fn enqueue_then_drain_uploads_and_clears() {
     let sender_dir = root.join(collect::sender_id(&token));
     let stored: Vec<_> = std::fs::read_dir(&sender_dir).unwrap().flatten().collect();
     assert_eq!(stored.len(), 1);
-    let bundle = tuners::bundle::open(&std::fs::read(stored[0].path()).unwrap()).unwrap();
+    let bundle = tuners::sharing::bundle::open(&std::fs::read(stored[0].path()).unwrap()).unwrap();
     assert_eq!(bundle.manifest.get("car").map(String::as_str), Some("4165"));
 
     // Draining an empty outbox is a no-op; re-uploading the same content
@@ -172,7 +172,7 @@ fn history_plan_is_per_campaign_and_idempotent() {
     assert_eq!(queued.len(), 1);
     let name = queued[0].file_name().unwrap().to_str().unwrap().to_string();
     assert_eq!(name, "bundle-9999-20260102-000002.tar.zst");
-    let b = tuners::bundle::open(&std::fs::read(&queued[0]).unwrap()).unwrap();
+    let b = tuners::sharing::bundle::open(&std::fs::read(&queued[0]).unwrap()).unwrap();
     assert_eq!(b.manifest.get("car").map(String::as_str), Some("9999"));
     assert!(b.journal_txt.contains("rear arb +1"), "{}", b.journal_txt);
 

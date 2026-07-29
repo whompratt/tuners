@@ -5,8 +5,8 @@
 //! recommendations on the latest stint of the session car; the journal
 //! starts with the first tune change.
 
-use crate::analysis::{self, effects, journal};
-use crate::tuning::TuningSession;
+use crate::advice::{journal, recommend, tuning::TuningSession};
+use crate::analysis::{self, effects};
 use std::path::Path;
 
 /// A changed family on a step, with the road its fingerprint is judged on
@@ -158,7 +158,7 @@ pub struct AdviseView {
     pub effect_floor: effects::Effects,
     /// Stint the recommendations are for.
     pub advice_for: String,
-    pub recommendations: Vec<analysis::recommend::Recommendation>,
+    pub recommendations: Vec<recommend::Recommendation>,
     /// Latest tune revision as (phrase, value, canonical unit), for display.
     pub current_tune: Vec<(String, String, Option<&'static str>)>,
 }
@@ -186,13 +186,13 @@ pub(crate) fn car_of(stint: &analysis::Stint) -> Option<i32> {
 /// recent): the honest comparison partner for a step. Searches the given
 /// prefix of the per-step setups.
 fn min_diff_ancestor(
-    setups: &[Option<&crate::tuning::Revision>],
-    target: &crate::tuning::Revision,
+    setups: &[Option<&crate::advice::tuning::Revision>],
+    target: &crate::advice::tuning::Revision,
 ) -> Option<(usize, Vec<String>)> {
     let mut best: Option<(usize, Vec<String>)> = None;
     for (i, s) in setups.iter().enumerate() {
         let Some(s) = s else { continue };
-        let keys = crate::tuning::diff_keys(s, target);
+        let keys = crate::advice::tuning::diff_keys(s, target);
         if best.as_ref().is_none_or(|(_, bk)| keys.len() <= bk.len()) {
             best = Some((i, keys));
         }
@@ -202,7 +202,10 @@ fn min_diff_ancestor(
 
 /// Distinct tuning areas the changed keys span, sorted for stable display.
 fn area_list(keys: &[String]) -> Vec<&'static str> {
-    let mut areas: Vec<&'static str> = keys.iter().map(|k| crate::tuning::field_area(k)).collect();
+    let mut areas: Vec<&'static str> = keys
+        .iter()
+        .map(|k| crate::advice::tuning::field_area(k))
+        .collect();
     areas.sort();
     areas.dedup();
     areas
@@ -228,8 +231,8 @@ fn stint_overall_metrics(stint: &analysis::Stint) -> Option<analysis::metrics::S
 /// Rule context from the session: tire compound fact + whether the build has
 /// aero fitted (absent aero fields in the latest revision = the upgrade isn't
 /// there; no revisions = unknown).
-fn rule_context(session: &TuningSession) -> analysis::recommend::Context<'_> {
-    analysis::recommend::Context {
+fn rule_context(session: &TuningSession) -> recommend::Context<'_> {
+    recommend::Context {
         compound: session.facts.get("tire_compound").map(String::as_str),
         aero_tunable: session
             .latest()
@@ -240,8 +243,8 @@ fn rule_context(session: &TuningSession) -> analysis::recommend::Context<'_> {
 fn blind_recommendations(
     stint: &analysis::Stint,
     path: &str,
-    ctx: &analysis::recommend::Context,
-) -> Result<Vec<analysis::recommend::Recommendation>, String> {
+    ctx: &recommend::Context,
+) -> Result<Vec<recommend::Recommendation>, String> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments
         .iter()
@@ -253,7 +256,7 @@ fn blind_recommendations(
         .filter(|l| l.time_s.is_some() && !l.standing_start)
         .map(|l| analysis::metrics::stint_metrics(l.frames))
         .collect();
-    Ok(analysis::recommend::recommend(&overall, &per_lap, ctx))
+    Ok(recommend::recommend(&overall, &per_lap, ctx))
 }
 
 fn family_keys(family: journal::Family) -> &'static [&'static str] {
@@ -325,7 +328,7 @@ fn exhausted_flip(
 /// latest revision. Advice whose direction is exhausted flips to the partner
 /// end of the car, or is downgraded when no partner exists.
 fn enrich_with_tune(
-    recs: &mut [analysis::recommend::Recommendation],
+    recs: &mut [recommend::Recommendation],
     session: &TuningSession,
 ) -> Vec<(String, String, Option<&'static str>)> {
     let Some(rev) = session.latest() else {
@@ -344,19 +347,20 @@ fn enrich_with_tune(
             };
             let mut line = format!(
                 "{} = {}",
-                crate::tuning::field_phrase(k),
-                crate::tuning::display_value(k, v, &session.facts),
+                crate::advice::tuning::field_phrase(k),
+                crate::advice::tuning::display_value(k, v, &session.facts),
             );
-            if let (Ok(val), Some(lim)) =
-                (v.parse::<f32>(), crate::tuning::limit_of(&session.facts, k))
-            {
+            if let (Ok(val), Some(lim)) = (
+                v.parse::<f32>(),
+                crate::advice::tuning::limit_of(&session.facts, k),
+            ) {
                 with_limit += 1;
                 line.push_str(&format!(
                     " (range {}..{})",
-                    crate::tuning::display_value(k, &lim.0.to_string(), &session.facts),
-                    crate::tuning::display_value(k, &lim.1.to_string(), &session.facts),
+                    crate::advice::tuning::display_value(k, &lim.0.to_string(), &session.facts),
+                    crate::advice::tuning::display_value(k, &lim.1.to_string(), &session.facts),
                 ));
-                if crate::tuning::pinned(val, lim, implied.softer, k) {
+                if crate::advice::tuning::pinned(val, lim, implied.softer, k) {
                     pinned += 1;
                     primary_pinned |= idx == 0;
                     line.push_str(if implied.softer {
@@ -394,15 +398,15 @@ fn enrich_with_tune(
                      direction exhausted"
                         .into(),
                 );
-                r.confidence = analysis::recommend::Confidence::Low;
+                r.confidence = recommend::Confidence::Low;
             }
         } else if primary_pinned && keys.len() > 1 {
             r.evidence.push(format!(
                 "{} is at its bound; work with {}",
-                crate::tuning::field_phrase(keys[0]),
+                crate::advice::tuning::field_phrase(keys[0]),
                 keys[1..]
                     .iter()
-                    .map(|k| crate::tuning::field_phrase(k))
+                    .map(|k| crate::advice::tuning::field_phrase(k))
                     .collect::<Vec<_>>()
                     .join(" / "),
             ));
@@ -412,8 +416,8 @@ fn enrich_with_tune(
         .iter()
         .map(|(k, v)| {
             (
-                crate::tuning::field_phrase(k).to_string(),
-                crate::tuning::display_value(k, v, &session.facts),
+                crate::advice::tuning::field_phrase(k).to_string(),
+                crate::advice::tuning::display_value(k, v, &session.facts),
                 None,
             )
         })
@@ -500,7 +504,7 @@ fn probe_value(nodes: &[(f32, f32, usize)], lim: Option<(f32, f32)>) -> Option<f
 /// "front tire pressure" is not mistaken for a shorter overlapping phrase.
 fn key_from_phrase(text: &str) -> Option<String> {
     let t = text.to_lowercase();
-    crate::tuning::FIELDS
+    crate::advice::tuning::FIELDS
         .iter()
         .filter(|(_, phrase)| t.contains(phrase))
         .max_by_key(|(_, phrase)| phrase.len())
@@ -690,7 +694,7 @@ pub(crate) struct Campaign<'s> {
     pub stints: Vec<CampaignStint>,
     /// Setup state per stint: the latest tune revision saved before it began
     /// (None for foreign cars and blind campaigns).
-    pub setups: Vec<Option<&'s crate::tuning::Revision>>,
+    pub setups: Vec<Option<&'s crate::advice::tuning::Revision>>,
     /// Slider positions relative to baseline, from the note trail.
     pub positions: Vec<(Option<f32>, Option<f32>)>,
     /// Journaled stint with no completed laps yet (still recording).
@@ -881,7 +885,7 @@ pub(crate) fn load_campaign<'s>(
     // Setup state per stint: the latest tune revision saved before the stint
     // began. Only bound when the stint really is the session car's, since an
     // explicitly passed foreign journal must not inherit this car's tunes.
-    let setups: Vec<Option<&'s crate::tuning::Revision>> = stints
+    let setups: Vec<Option<&'s crate::advice::tuning::Revision>> = stints
         .iter()
         .map(|cs| {
             let car = car_of(&cs.stint);
@@ -907,7 +911,7 @@ pub(crate) fn load_campaign<'s>(
             let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
                 continue;
             };
-            if !crate::tuning::diff_keys(si, sj).is_empty() {
+            if !crate::advice::tuning::diff_keys(si, sj).is_empty() {
                 continue;
             }
             if pair_thin(&stints, i, j) {
@@ -938,7 +942,7 @@ pub(crate) fn load_campaign<'s>(
             let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
                 continue;
             };
-            let keys = crate::tuning::diff_keys(si, sj);
+            let keys = crate::advice::tuning::diff_keys(si, sj);
             if keys.is_empty() {
                 continue;
             }
@@ -970,7 +974,7 @@ pub(crate) fn load_campaign<'s>(
                 outcome: journal::judge(cmp.ideal_delta_s),
                 desc: format!(
                     "{} (steps {}→{})",
-                    crate::tuning::diff_note(si, sj),
+                    crate::advice::tuning::diff_note(si, sj),
                     i + 1,
                     j + 1
                 ),
@@ -1095,14 +1099,14 @@ pub(crate) fn load_campaign<'s>(
 /// car (n=1, no direct A/B) never carries a suggestion. None = the map is
 /// silent.
 fn map_prior(
-    emap: &crate::effectmap::EffectMap,
-    trends: &[crate::effectmap::PaceTrend],
-    ctx: &crate::effectmap::MapContext,
+    emap: &crate::advice::effectmap::EffectMap,
+    trends: &[crate::advice::effectmap::PaceTrend],
+    ctx: &crate::advice::effectmap::MapContext,
     measurements: &[Measurement],
-    recs: &[analysis::recommend::Recommendation],
-) -> Option<analysis::recommend::Recommendation> {
-    let cells = crate::effectmap::aggregate(emap);
-    let ranked = crate::effectmap::rank(&cells, trends, ctx);
+    recs: &[recommend::Recommendation],
+) -> Option<recommend::Recommendation> {
+    let cells = crate::advice::effectmap::aggregate(emap);
+    let ranked = crate::advice::effectmap::rank(&cells, trends, ctx);
     if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
         for (score, cell) in &ranked {
             eprintln!(
@@ -1122,7 +1126,7 @@ fn map_prior(
             .any(|r| r.implied.is_some_and(|i| i.family == family));
         (grounded && !tried && !advised && score >= 1.0).then_some((cell, family))
     })?;
-    let dir = crate::effectmap::direction_word(&cell.family, cell.softer);
+    let dir = crate::advice::effectmap::direction_word(&cell.family, cell.softer);
     let movers: effects::Effects = cell
         .fields
         .iter()
@@ -1161,7 +1165,7 @@ fn map_prior(
                 m.outcome.word(),
             )
         });
-    Some(analysis::recommend::Recommendation {
+    Some(recommend::Recommendation {
         apply: Vec::new(),
         area: journal::family_area(family),
         suggestion: None,
@@ -1178,7 +1182,7 @@ fn map_prior(
                     "effect map ({} {}{}): {} {} over n={} ({} direct{}) read {}; \
                      measured {:+.2}s ±{:.2} there",
                     if cell.surface_loose { "dirt" } else { "tarmac" },
-                    crate::packet::drivetrain_name(cell.drivetrain),
+                    crate::telemetry::packet::drivetrain_name(cell.drivetrain),
                     match cell.aero {
                         Some(true) => " aero",
                         Some(false) => " no-aero",
@@ -1205,7 +1209,7 @@ fn map_prior(
             ev.extend(weak_local);
             ev
         },
-        confidence: analysis::recommend::Confidence::Low,
+        confidence: recommend::Confidence::Low,
         implied: Some(journal::Change {
             family,
             softer: cell.softer,
@@ -1237,17 +1241,17 @@ pub fn advise(
         // from the effect map — the first informed suggestion of a fresh
         // campaign (plan 007).
         if let Ok(text) = std::fs::read_to_string(crate::util::data_path("effect-map.tsv"))
-            && let Ok(emap) = crate::effectmap::parse(&text)
+            && let Ok(emap) = crate::advice::effectmap::parse(&text)
             && let Some(met) = stint_overall_metrics(&stint)
         {
-            let trends = crate::effectmap::driver_trends(&emap, "local", car_of(&stint));
+            let trends = crate::advice::effectmap::driver_trends(&emap, "local", car_of(&stint));
             if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
                 eprintln!("map-prior trace (blind): trends:");
                 for t in &trends {
                     eprintln!("  {} r={:+.2} n={} (history)", t.key, t.r, t.n);
                 }
             }
-            let ctx = crate::effectmap::MapContext {
+            let ctx = crate::advice::effectmap::MapContext {
                 drivetrain: met.drivetrain_type,
                 surface_loose: met.surface_loose,
                 aero: rule_context(&session).aero_tunable,
@@ -1289,7 +1293,10 @@ pub fn advise(
             let sibling = journal_path.replace("tune-journal", "tune-session");
             let candidates = [
                 sibling,
-                crate::tuning::journal_path_for(journal_car, &session_path.to_string_lossy()),
+                crate::advice::tuning::journal_path_for(
+                    journal_car,
+                    &session_path.to_string_lossy(),
+                ),
             ];
             if let Some(archived) = candidates
                 .iter()
@@ -1398,7 +1405,7 @@ pub fn advise(
     {
         let attr = analysis::attribution::split_delta(&c.stints[i].profile, &cmp.bin_delta_s);
         let areas = area_list(&keys);
-        let changes = crate::tuning::diff_note(c.setups[i].unwrap(), last_setup);
+        let changes = crate::advice::tuning::diff_note(c.setups[i].unwrap(), last_setup);
         let weak = c.weak_pair(i, n - 1);
         let outcome = journal::judge(cmp.ideal_delta_s);
         let single_family = (areas.len() == 1)
@@ -1494,13 +1501,14 @@ pub fn advise(
             && let (Some(Some(anchor_setup)), Some(Some(last_setup))) =
                 (c.setups.get(a.vs_step - 1), c.setups.last())
         {
-            let restore: Vec<(String, String)> = crate::tuning::diff_keys(anchor_setup, last_setup)
-                .into_iter()
-                .filter_map(|k| {
-                    let v = anchor_setup.values.get(&k)?.clone();
-                    Some((k, v))
-                })
-                .collect();
+            let restore: Vec<(String, String)> =
+                crate::advice::tuning::diff_keys(anchor_setup, last_setup)
+                    .into_iter()
+                    .filter_map(|k| {
+                        let v = anchor_setup.values.get(&k)?.clone();
+                        Some((k, v))
+                    })
+                    .collect();
             if !restore.is_empty() {
                 rec.suggestion = Some(
                     restore
@@ -1508,8 +1516,8 @@ pub fn advise(
                         .map(|(k, v)| {
                             format!(
                                 "{}: {}",
-                                crate::tuning::field_phrase(k),
-                                crate::tuning::display_value(k, v, &session.facts),
+                                crate::advice::tuning::field_phrase(k),
+                                crate::advice::tuning::display_value(k, v, &session.facts),
                             )
                         })
                         .collect::<Vec<_>>()
@@ -1644,12 +1652,12 @@ pub fn advise(
             let mut vertex = -b / (2.0 * a);
             let (vmin, vmax) = (nodes.first().unwrap().0, nodes.last().unwrap().0);
             if vertex >= vmin && vertex <= vmax {
-                if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
+                if let Some(lim) = crate::advice::tuning::limit_of(&session.facts, key) {
                     vertex = vertex.clamp(lim.0, lim.1);
                 }
                 let vertex = (vertex * 10.0).round() / 10.0;
                 vertex_out = Some(vertex);
-                let phrase = crate::tuning::field_phrase(key);
+                let phrase = crate::advice::tuning::field_phrase(key);
                 // Already there? Then the ask is NOTHING; repeats tighten
                 // the estimate, but no change is being requested.
                 let at_optimum = c
@@ -1660,7 +1668,8 @@ pub fn advise(
                     .and_then(|b| b.values.get(key)?.parse::<f32>().ok())
                     .is_some_and(|cur| (cur - vertex).abs() < 0.05);
                 let landscape = nodes_summary(&nodes);
-                let disp = crate::tuning::display_value(key, &vertex.to_string(), &session.facts);
+                let disp =
+                    crate::advice::tuning::display_value(key, &vertex.to_string(), &session.facts);
                 // A fitted optimum away from the current setting deserves a
                 // recommendation even when no behavioural rule speaks for the
                 // family (the pressure rule is blind on cars whose temps
@@ -1670,13 +1679,13 @@ pub fn advise(
                         .iter()
                         .any(|r| r.implied.is_some_and(|i| i.family == family))
                 {
-                    recs.push(analysis::recommend::Recommendation {
+                    recs.push(recommend::Recommendation {
                         apply: Vec::new(),
                         area: journal::family_area(family),
                         suggestion: None,
                         advice: String::new(),
                         evidence: Vec::new(),
-                        confidence: analysis::recommend::Confidence::Medium,
+                        confidence: recommend::Confidence::Medium,
                         implied: Some(journal::Change {
                             family,
                             softer: false,
@@ -1737,7 +1746,7 @@ pub fn advise(
                             magnitude: None,
                         });
                     }
-                    r.confidence = analysis::recommend::Confidence::Medium;
+                    r.confidence = recommend::Confidence::Medium;
                     r.evidence.push(format!(
                         "measured landscape ({phrase}): {landscape} (cumulative \
                          ideal delta vs first tried value; lower = faster)"
@@ -1761,7 +1770,7 @@ pub fn advise(
             && (best.0 - cur).abs() > 1e-3
             && cur_node.1 - best.1 >= c.drift_floor.map_or(0.10, |(_, f)| f.max(0.10))
         {
-            let phrase = crate::tuning::field_phrase(key);
+            let phrase = crate::advice::tuning::field_phrase(key);
             let gap = cur_node.1 - best.1;
             for r in recs
                 .iter_mut()
@@ -1769,7 +1778,7 @@ pub fn advise(
             {
                 r.suggestion = Some(format!(
                     "{phrase}: {}",
-                    crate::tuning::display_value(key, &best.0.to_string(), &session.facts),
+                    crate::advice::tuning::display_value(key, &best.0.to_string(), &session.facts),
                 ));
                 r.apply = vec![(key.to_string(), best.0.to_string())];
                 r.advice = format!(
@@ -1779,7 +1788,7 @@ pub fn advise(
                      alternative",
                     best.0,
                 );
-                r.confidence = analysis::recommend::Confidence::Medium;
+                r.confidence = recommend::Confidence::Medium;
                 r.implied = Some(journal::Change {
                     family,
                     softer: best.0 < cur,
@@ -1798,20 +1807,21 @@ pub fn advise(
         // matters. Not an optimization claim; explicitly a probe.
         if vertex_out.is_none()
             && let Some(key) = key.as_deref()
-            && let Some(v) = probe_value(&nodes, crate::tuning::limit_of(&session.facts, key))
+            && let Some(v) =
+                probe_value(&nodes, crate::advice::tuning::limit_of(&session.facts, key))
         {
-            let phrase = crate::tuning::field_phrase(key);
+            let phrase = crate::advice::tuning::field_phrase(key);
             let best = nodes
                 .iter()
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|n| n.0)
                 .unwrap_or(v);
-            recs.push(analysis::recommend::Recommendation {
+            recs.push(recommend::Recommendation {
                 apply: vec![(key.to_string(), v.to_string())],
                 area: "probe",
                 suggestion: Some(format!(
                     "{phrase}: {}",
-                    crate::tuning::display_value(key, &v.to_string(), &session.facts),
+                    crate::advice::tuning::display_value(key, &v.to_string(), &session.facts),
                 )),
                 advice: format!(
                     "probe: one stint here extends the map where it still \
@@ -1823,7 +1833,7 @@ pub fn advise(
                     "mapped so far: {} (cumulative ideal delta; lower = faster)",
                     nodes_summary(&nodes),
                 )],
-                confidence: analysis::recommend::Confidence::Low,
+                confidence: recommend::Confidence::Low,
                 implied: Some(journal::Change {
                     family,
                     softer: v < best,
@@ -1835,7 +1845,7 @@ pub fn advise(
             area: journal::family_area(family),
             phrase: key
                 .as_deref()
-                .map(|k| crate::tuning::field_phrase(k).to_string())
+                .map(|k| crate::advice::tuning::field_phrase(k).to_string())
                 .unwrap_or_else(|| journal::family_area(family).to_string()),
             key,
             nodes,
@@ -1852,7 +1862,7 @@ pub fn advise(
     // here (per-field pace correlation) and surface the best-aligned map
     // cell as one Low-confidence experiment suggestion.
     if let Ok(text) = std::fs::read_to_string(crate::util::data_path("effect-map.tsv"))
-        && let Ok(emap) = crate::effectmap::parse(&text)
+        && let Ok(emap) = crate::advice::effectmap::parse(&text)
         && let Some(met) = c.stints.last().and_then(|s| s.met.as_ref())
     {
         let pairs: Vec<(effects::Effects, f32)> = c
@@ -1861,14 +1871,14 @@ pub fn advise(
             .filter(|m| !m.weak)
             .filter_map(|m| Some((m.effects.clone(), m.outcome.delta_s()?)))
             .collect();
-        let mut trends = crate::effectmap::pace_trends(&pairs, Some(&c.effect_floor));
+        let mut trends = crate::advice::effectmap::pace_trends(&pairs, Some(&c.effect_floor));
         // Cold start / thin campaigns: the driver's pooled trends from OTHER
         // cars' campaigns fill fields this campaign can't speak on yet. The
         // campaign's own trend always wins per field; the current car is
         // excluded from history wholesale (its campaigns would double-count,
         // and other builds of it are invalidated by upgrades anyway).
         let car = c.stints.last().and_then(|s| car_of(&s.stint));
-        for t in crate::effectmap::driver_trends(&emap, "local", car) {
+        for t in crate::advice::effectmap::driver_trends(&emap, "local", car) {
             if !trends.iter().any(|c| c.key == t.key) {
                 trends.push(t);
             }
@@ -1885,7 +1895,7 @@ pub fn advise(
                 );
             }
         }
-        let ctx = crate::effectmap::MapContext {
+        let ctx = crate::advice::effectmap::MapContext {
             drivetrain: met.drivetrain_type,
             surface_loose: met.surface_loose,
             aero: rule_context(&session).aero_tunable,
@@ -1915,8 +1925,8 @@ pub fn advise(
                      pair{}); corroborate before trusting it",
                     if pairs == 1 { "" } else { "s" },
                 ));
-                if r.confidence == analysis::recommend::Confidence::High {
-                    r.confidence = analysis::recommend::Confidence::Medium;
+                if r.confidence == recommend::Confidence::High {
+                    r.confidence = recommend::Confidence::Medium;
                 }
             }
         }
@@ -1955,7 +1965,7 @@ pub fn advise(
         else {
             continue;
         };
-        let phrase = crate::tuning::field_phrase(key);
+        let phrase = crate::advice::tuning::field_phrase(key);
         // The headline now carries the value; the relative phrasing from
         // blind-mode reconciliation becomes redundant.
         r.advice = r
@@ -1964,19 +1974,27 @@ pub fn advise(
         r.suggestion = match base.and_then(|b| b.values.get(key)?.parse::<f32>().ok()) {
             Some(cur) => {
                 let mut target = cur + delta;
-                if let Some(lim) = crate::tuning::limit_of(&session.facts, key) {
+                if let Some(lim) = crate::advice::tuning::limit_of(&session.facts, key) {
                     target = target.clamp(lim.0, lim.1);
                 }
                 r.apply = vec![(key.to_string(), round(target).to_string())];
                 Some(format!(
                     "{phrase}: {}",
-                    crate::tuning::display_value(key, &round(target).to_string(), &session.facts),
+                    crate::advice::tuning::display_value(
+                        key,
+                        &round(target).to_string(),
+                        &session.facts
+                    ),
                 ))
             }
             None => Some(format!(
                 "{phrase}: {}{}",
                 if delta > 0.0 { "+" } else { "" },
-                crate::tuning::display_value(key, &round(delta).to_string(), &session.facts),
+                crate::advice::tuning::display_value(
+                    key,
+                    &round(delta).to_string(),
+                    &session.facts
+                ),
             )),
         };
     }
@@ -2001,8 +2019,8 @@ pub fn advise(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::recommend::{Confidence, Recommendation};
-    use crate::tuning::Revision;
+    use crate::advice::recommend::{Confidence, Recommendation};
+    use crate::advice::tuning::Revision;
 
     fn balance_rec() -> Recommendation {
         Recommendation {
@@ -2232,11 +2250,11 @@ mod tests {
     /// Minimal profileable stint: 3 laps at 30 m/s so lap 1 is a completed
     /// flying lap (time from lap 2's LastLap, captured from its start).
     fn write_stint_with_laps(path: &Path) {
-        let mut w = crate::stint::StintWriter::create(path).unwrap();
+        let mut w = crate::telemetry::stint::StintWriter::create(path).unwrap();
         for l in 0..3u16 {
             for i in 0..60 {
                 let t = (l as f32 * 60.0 + i as f32) * 0.1;
-                let f = crate::packet::TelemetryFrame {
+                let f = crate::telemetry::packet::TelemetryFrame {
                     is_race_on: true,
                     lap_number: l,
                     current_lap: i as f32 * 0.1,
@@ -2247,7 +2265,7 @@ mod tests {
                     car_ordinal: 42,
                     ..Default::default()
                 };
-                w.write_packet((t * 1e6) as u64 + 1, &crate::packet::encode(&f))
+                w.write_packet((t * 1e6) as u64 + 1, &crate::telemetry::packet::encode(&f))
                     .unwrap();
             }
         }

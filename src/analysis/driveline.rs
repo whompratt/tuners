@@ -214,7 +214,7 @@ pub fn fit(frames: &[TimedFrame]) -> Option<DrivelineFit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::TelemetryFrame;
+    use crate::telemetry::packet::TelemetryFrame;
 
     /// Synthetic full-throttle pull with known alpha/beta on a flat road:
     /// the fit must recover them and the vmax prediction.
@@ -238,7 +238,7 @@ mod tests {
             f.current_engine_rpm = 80.0 * v;
             f.engine_max_rpm = 8000.0;
             f.current_race_time = i as f32 * dt;
-            f.norm_suspension_travel = crate::packet::Corners {
+            f.norm_suspension_travel = crate::telemetry::packet::Corners {
                 fl: 0.4,
                 fr: 0.4,
                 rl: 0.4,

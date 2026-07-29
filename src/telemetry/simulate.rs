@@ -1,7 +1,7 @@
 //! Synthetic telemetry sender: a stand-in for the game so the capture pipeline and,
 //! later, the dashboard can be exercised without FH6 running.
 
-use crate::packet::{self, Corners, TelemetryFrame};
+use crate::telemetry::packet::{self, Corners, TelemetryFrame};
 use std::io;
 use std::net::UdpSocket;
 use std::time::Duration;

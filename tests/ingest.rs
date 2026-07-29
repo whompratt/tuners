@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use tuners::bundle;
-use tuners::ingest::ingest_dir;
-use tuners::tuning::{Revision, TuningSession};
+use tuners::advice::tuning::{Revision, TuningSession};
+use tuners::sharing::bundle;
+use tuners::sharing::ingest::ingest_dir;
 use tuners::util::sha256_hex;
 
 fn dirs(tag: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {

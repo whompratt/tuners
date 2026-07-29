@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let frame = crate::simulate::synth_frame(2.5);
+        let frame = crate::telemetry::simulate::synth_frame(2.5);
         let decoded = decode(&encode(&frame)).unwrap();
         assert_eq!(frame, decoded);
     }

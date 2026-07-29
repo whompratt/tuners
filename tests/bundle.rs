@@ -4,8 +4,8 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use tuners::bundle;
-use tuners::tuning::{Revision, TuningSession};
+use tuners::advice::tuning::{Revision, TuningSession};
+use tuners::sharing::bundle;
 
 fn fixture_session() -> TuningSession {
     let mut s = TuningSession {
@@ -74,7 +74,7 @@ fn bundle_round_trip_from_real_fixture() {
     }
 
     // Journal member: parses, structured delta kept, prose absent.
-    let entries = tuners::analysis::journal::parse_journal(&b.journal_txt);
+    let entries = tuners::advice::journal::parse_journal(&b.journal_txt);
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[1].note.as_deref(), Some("front arb -2"));
     for leak in ["felt loose", "hands hurt", "prose header"] {
@@ -85,7 +85,7 @@ fn bundle_round_trip_from_real_fixture() {
         );
     }
     let change =
-        tuners::analysis::journal::parse_change(entries[1].note.as_deref().unwrap()).unwrap();
+        tuners::advice::journal::parse_change(entries[1].note.as_deref().unwrap()).unwrap();
     assert_eq!(change.magnitude, Some(-2.0));
 }
 

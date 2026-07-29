@@ -457,7 +457,7 @@ mod tests {
         let note = diff_note(&a, &b);
         assert_eq!(note, "front arb -2");
         // The note round-trips through the journal change parser with magnitude.
-        let c = crate::analysis::journal::parse_change(&note).unwrap();
+        let c = crate::advice::journal::parse_change(&note).unwrap();
         assert_eq!(c.magnitude, Some(-2.0));
         assert!(c.softer);
     }
@@ -478,11 +478,7 @@ mod tests {
         assert!(note.contains("rear aero +20 lb"), "{note}");
         assert!(note.contains("front tire pressure = 28.5"), "{note}");
         // Compound steps are deliberately unattributable to one family.
-        assert_eq!(
-            crate::analysis::journal::parse_change(&note),
-            None,
-            "{note}"
-        );
+        assert_eq!(crate::advice::journal::parse_change(&note), None, "{note}");
     }
 
     #[test]

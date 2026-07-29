@@ -117,7 +117,7 @@ fn push_event(frames: &[TimedFrame], start: usize, end: usize, events: &mut Vec<
 
 fn phase_balance(
     frames: &[TimedFrame],
-    keep: impl Fn(&crate::packet::TelemetryFrame) -> bool,
+    keep: impl Fn(&crate::telemetry::packet::TelemetryFrame) -> bool,
 ) -> BandBalance {
     let mut front = 0.0f32;
     let mut rear = 0.0f32;
@@ -175,7 +175,7 @@ pub fn summarize(frames: &[TimedFrame]) -> Option<CornerSummary> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::{Corners, TelemetryFrame};
+    use crate::telemetry::packet::{Corners, TelemetryFrame};
 
     /// 10 samples/s timeline with the given (lat, speed, front slip, rear slip)
     /// per frame.

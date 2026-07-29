@@ -122,8 +122,8 @@ pub struct LiveStateView {
 }
 
 pub fn live_state_view(
-    s: &crate::live::LiveState,
-    r: &crate::record::RecorderStatus,
+    s: &crate::telemetry::live::LiveState,
+    r: &crate::telemetry::record::RecorderStatus,
 ) -> LiveStateView {
     let frame = s.latest.as_ref().map(|tf| {
         let f = &tf.frame;
@@ -154,11 +154,11 @@ pub fn live_state_view(
     }
 }
 
-pub fn recorder_view(r: &crate::record::RecorderStatus) -> RecorderView {
+pub fn recorder_view(r: &crate::telemetry::record::RecorderStatus) -> RecorderView {
     let mode = match &r.mode {
-        crate::record::RecorderMode::External(_) => "external",
-        crate::record::RecorderMode::Waiting => "waiting",
-        crate::record::RecorderMode::Recording => "recording",
+        crate::telemetry::record::RecorderMode::External(_) => "external",
+        crate::telemetry::record::RecorderMode::Waiting => "waiting",
+        crate::telemetry::record::RecorderMode::Recording => "recording",
     };
     RecorderView {
         mode: mode.to_string(),
@@ -193,7 +193,7 @@ pub struct QualityView {
     pub band: String,
 }
 
-pub fn quality_view(q: Option<&crate::live::Quality>) -> Option<QualityView> {
+pub fn quality_view(q: Option<&crate::telemetry::live::Quality>) -> Option<QualityView> {
     q.map(|q| QualityView {
         laps: q.laps as u32,
         standing_only: q.standing_only,
@@ -266,7 +266,7 @@ pub struct EffectMapStatus {
 pub fn effect_map_status() -> Option<EffectMapStatus> {
     let path = crate::util::data_path("effect-map.tsv");
     let text = std::fs::read_to_string(&path).ok()?;
-    let map = crate::effectmap::parse(&text).ok()?;
+    let map = crate::advice::effectmap::parse(&text).ok()?;
     let updated_ms = std::fs::metadata(&path)
         .and_then(|m| m.modified())
         .ok()?
@@ -293,15 +293,15 @@ pub struct SharingView {
 }
 
 pub fn sharing_view(config: &Path, outbox: &Path) -> SharingView {
-    let cfg = crate::collect::CollectConfig::load(config);
+    let cfg = crate::sharing::collect::CollectConfig::load(config);
     let rejected = std::fs::read_dir(outbox.join("rejected"))
         .map(|rd| rd.flatten().count())
         .unwrap_or(0);
     SharingView {
         enabled: cfg.enabled,
         endpoint: cfg.endpoint.clone(),
-        sender: (!cfg.token.is_empty()).then(|| crate::collect::sender_id(&cfg.token)),
-        queued: crate::collect::queued(outbox).len() as u32,
+        sender: (!cfg.token.is_empty()).then(|| crate::sharing::collect::sender_id(&cfg.token)),
+        queued: crate::sharing::collect::queued(outbox).len() as u32,
         rejected: rejected as u32,
     }
 }
@@ -315,22 +315,22 @@ pub fn set_sharing(
     endpoint: Option<String>,
     discard: bool,
 ) -> Result<SharingView, ApiError> {
-    let mut cfg = crate::collect::CollectConfig::load(config);
+    let mut cfg = crate::sharing::collect::CollectConfig::load(config);
     if enabled {
         cfg.enabled = true;
         if cfg.token.len() != 64 {
-            cfg.token = crate::collect::generate_token();
+            cfg.token = crate::sharing::collect::generate_token();
         }
         if let Some(e) = endpoint.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
             cfg.endpoint = e.to_string();
         }
         if cfg.endpoint.is_empty() {
-            cfg.endpoint = crate::collect::DEFAULT_ENDPOINT.to_string();
+            cfg.endpoint = crate::sharing::collect::DEFAULT_ENDPOINT.to_string();
         }
     } else {
         cfg.enabled = false;
         if discard {
-            for p in crate::collect::queued(outbox) {
+            for p in crate::sharing::collect::queued(outbox) {
                 let _ = std::fs::remove_file(p);
             }
         }
@@ -352,7 +352,7 @@ pub struct HistoryPlanView {
 }
 
 pub fn history_plan_view(root: &Path, sessions_dir: &str, outbox: &Path) -> HistoryPlanView {
-    let p = crate::collect::history_plan(root, sessions_dir, outbox);
+    let p = crate::sharing::collect::history_plan(root, sessions_dir, outbox);
     HistoryPlanView {
         campaigns: p.campaigns as u32,
         stints: p.items.len() as u32,
@@ -371,18 +371,18 @@ pub fn share_history(
     outbox: &Path,
     config: &Path,
 ) -> Result<u32, ApiError> {
-    let cfg = crate::collect::CollectConfig::load(config);
+    let cfg = crate::sharing::collect::CollectConfig::load(config);
     if !cfg.ready() {
         return Err(ApiError {
             kind: ErrorKind::Forbidden,
             message: "turn on telemetry sharing first".into(),
         });
     }
-    let plan = crate::collect::history_plan(root, sessions_dir, outbox);
+    let plan = crate::sharing::collect::history_plan(root, sessions_dir, outbox);
     let n = plan.items.len() as u32;
     let outbox = outbox.to_path_buf();
     std::thread::spawn(move || {
-        crate::collect::history_enqueue(plan, &outbox);
+        crate::sharing::collect::history_enqueue(plan, &outbox);
     });
     Ok(n)
 }
@@ -404,7 +404,7 @@ pub struct SessionView {
     pub campaign_start: Option<String>,
 }
 
-pub fn session_view(s: &crate::tuning::TuningSession, journal_base: &str) -> SessionView {
+pub fn session_view(s: &crate::advice::tuning::TuningSession, journal_base: &str) -> SessionView {
     SessionView {
         car: s.car,
         car_name: s.car.and_then(crate::cars::car_name).map(str::to_string),
@@ -423,12 +423,12 @@ pub fn session_view(s: &crate::tuning::TuningSession, journal_base: &str) -> Ses
 /// When the active campaign began: the earlier of the first tune revision and
 /// the first journaled stint (the seeded baseline stint starts before the
 /// first save). Scopes the frontend stint list to the campaign.
-fn campaign_start(s: &crate::tuning::TuningSession, journal_base: &str) -> Option<String> {
+fn campaign_start(s: &crate::advice::tuning::TuningSession, journal_base: &str) -> Option<String> {
     let mut start = s.revisions.first().map(|r| r.stamp.clone());
-    let jpath = crate::tuning::journal_path_for(s.car, journal_base);
+    let jpath = crate::advice::tuning::journal_path_for(s.car, journal_base);
     if let Ok(text) = std::fs::read_to_string(&jpath)
-        && let Some(first) = crate::analysis::journal::parse_journal(&text).first()
-        && let Some(stamp) = crate::advise::stint_stamp(&first.path)
+        && let Some(first) = crate::advice::journal::parse_journal(&text).first()
+        && let Some(stamp) = crate::advice::advise::stint_stamp(&first.path)
     {
         start = Some(match start {
             Some(cur) if cur.as_str() <= stamp => cur,
@@ -456,24 +456,24 @@ pub fn update_session(
     journal_base: &str,
 ) -> Result<SessionView, ApiError> {
     let posted_car: Option<i32> = req.car.as_deref().and_then(|v| v.parse().ok());
-    let current = crate::tuning::TuningSession::load(path);
+    let current = crate::advice::tuning::TuningSession::load(path);
     let mut s = if req.reset {
-        crate::tuning::TuningSession::default()
+        crate::advice::tuning::TuningSession::default()
     } else if posted_car.is_some() && current.car.is_some() && posted_car != current.car {
         // Switching cars = switching SESSIONS: archive the active session to
         // its per-car file (tune-session-<ordinal>.txt, same scheme as
         // journals) and resume the new car's archived session if one exists.
         // Nothing is lost; switching back restores the whole campaign.
         let base = path.to_string_lossy();
-        let archive = crate::tuning::journal_path_for(current.car, &base);
+        let archive = crate::advice::tuning::journal_path_for(current.car, &base);
         let _ = current.save(archive.as_ref());
-        let resumed = crate::tuning::TuningSession::load(
-            crate::tuning::journal_path_for(posted_car, &base).as_ref(),
+        let resumed = crate::advice::tuning::TuningSession::load(
+            crate::advice::tuning::journal_path_for(posted_car, &base).as_ref(),
         );
         if resumed.car == posted_car {
             resumed
         } else {
-            crate::tuning::TuningSession::default()
+            crate::advice::tuning::TuningSession::default()
         }
     } else {
         current
@@ -494,7 +494,7 @@ pub fn update_session(
 
 /// A session switch is a hard recording boundary: cut the stint and drop any
 /// pending tune-note chain (the chain belonged to the outgoing session).
-pub fn split_and_drop_pending(recorder: &crate::record::SharedRecorder) {
+pub fn split_and_drop_pending(recorder: &crate::telemetry::record::SharedRecorder) {
     let mut r = recorder.lock().unwrap();
     r.split_requested = true;
     r.pending_note = None;
@@ -503,7 +503,7 @@ pub fn split_and_drop_pending(recorder: &crate::record::SharedRecorder) {
 
 /// Manual stint cut (the dashboard's "new session" button), with an optional
 /// note to journal against the next stint.
-pub fn request_split(recorder: &crate::record::SharedRecorder, note: Option<String>) {
+pub fn request_split(recorder: &crate::telemetry::record::SharedRecorder, note: Option<String>) {
     let mut r = recorder.lock().unwrap();
     r.split_requested = true;
     r.pending_note = note.filter(|n| !n.trim().is_empty());
@@ -511,7 +511,7 @@ pub fn request_split(recorder: &crate::record::SharedRecorder, note: Option<Stri
 
 /// Archiving a blank session would save nothing worth resuming: no car, no
 /// revisions, and no facts beyond display prefs.
-fn session_is_blank(s: &crate::tuning::TuningSession) -> bool {
+fn session_is_blank(s: &crate::advice::tuning::TuningSession) -> bool {
     s.car.is_none() && s.revisions.is_empty() && s.facts.keys().all(|k| k.starts_with("unit_"))
 }
 
@@ -527,7 +527,7 @@ fn now_secs() -> u64 {
 /// "<ordinal>-<stamp>"; the legacy car-switch scheme's plain "<ordinal>" ids
 /// coexist and resume the same way.
 fn archive_active(
-    s: &crate::tuning::TuningSession,
+    s: &crate::advice::tuning::TuningSession,
     session_file: &str,
     journal_base: &str,
 ) -> std::io::Result<String> {
@@ -540,16 +540,16 @@ fn archive_active(
     // not overwrite the first archive: bump a counter until the id is free.
     let mut id = base_id.clone();
     let mut n = 2;
-    while Path::new(&crate::tuning::suffixed_path(session_file, &id)).exists()
-        || Path::new(&crate::tuning::suffixed_path(journal_base, &id)).exists()
+    while Path::new(&crate::advice::tuning::suffixed_path(session_file, &id)).exists()
+        || Path::new(&crate::advice::tuning::suffixed_path(journal_base, &id)).exists()
     {
         id = format!("{base_id}-{n}");
         n += 1;
     }
-    s.save(crate::tuning::suffixed_path(session_file, &id).as_ref())?;
-    let live = crate::tuning::journal_path_for(s.car, journal_base);
+    s.save(crate::advice::tuning::suffixed_path(session_file, &id).as_ref())?;
+    let live = crate::advice::tuning::journal_path_for(s.car, journal_base);
     if Path::new(&live).exists() {
-        let parked = crate::tuning::suffixed_path(journal_base, &id);
+        let parked = crate::advice::tuning::suffixed_path(journal_base, &id);
         std::fs::rename(&live, &parked)?;
         // Boundary marker (a comment; the entry parser skips it): a parked
         // campaign accrues no implicit trajectory steps while other campaigns
@@ -579,11 +579,11 @@ pub fn new_session(
     session_file: &str,
     journal_base: &str,
 ) -> Result<SessionView, ApiError> {
-    let current = crate::tuning::TuningSession::load(session_file.as_ref());
+    let current = crate::advice::tuning::TuningSession::load(session_file.as_ref());
     if !session_is_blank(&current) {
         archive_active(&current, session_file, journal_base).map_err(ApiError::internal)?;
     }
-    let mut fresh = crate::tuning::TuningSession::default();
+    let mut fresh = crate::advice::tuning::TuningSession::default();
     for (k, v) in &current.facts {
         if k.starts_with("unit_") {
             fresh.facts.insert(k.clone(), v.clone());
@@ -616,18 +616,18 @@ pub fn resume_session(
     if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(ApiError::bad("bad id"));
     }
-    let archived_session = crate::tuning::suffixed_path(session_file, id);
+    let archived_session = crate::advice::tuning::suffixed_path(session_file, id);
     if !Path::new(&archived_session).exists() {
         return Err(ApiError::not_found("no such session"));
     }
-    let restored = crate::tuning::TuningSession::load(archived_session.as_ref());
-    let current = crate::tuning::TuningSession::load(session_file.as_ref());
+    let restored = crate::advice::tuning::TuningSession::load(archived_session.as_ref());
+    let current = crate::advice::tuning::TuningSession::load(session_file.as_ref());
     // The restored journal must not clobber a live one. The archive step below
     // frees the live journal only when the active session is the same car;
     // otherwise a journal already at the target belongs to a THIRD campaign
     // (parked by the legacy car-switch scheme) and moving over it would lose it.
-    let target = crate::tuning::journal_path_for(restored.car, journal_base);
-    let src = crate::tuning::suffixed_path(journal_base, id);
+    let target = crate::advice::tuning::journal_path_for(restored.car, journal_base);
+    let src = crate::advice::tuning::suffixed_path(journal_base, id);
     let frees_target = !session_is_blank(&current) && current.car == restored.car;
     if src != target && Path::new(&target).exists() && !frees_target {
         return Err(ApiError::conflict(format!(
@@ -691,15 +691,16 @@ pub struct SessionsView {
 }
 
 pub fn sessions_view(session_file: &str, journal_base: &str) -> SessionsView {
-    let row = |id: Option<&str>, s: &crate::tuning::TuningSession, stints: usize| SessionRow {
-        id: id.map(str::to_string),
-        car: s.car,
-        car_name: s.car.and_then(crate::cars::car_name).map(str::to_string),
-        name: s.facts.get("name").cloned(),
-        description: s.facts.get("description").cloned(),
-        revisions: s.revisions.len() as u32,
-        stints: stints as u32,
-    };
+    let row =
+        |id: Option<&str>, s: &crate::advice::tuning::TuningSession, stints: usize| SessionRow {
+            id: id.map(str::to_string),
+            car: s.car,
+            car_name: s.car.and_then(crate::cars::car_name).map(str::to_string),
+            name: s.facts.get("name").cloned(),
+            description: s.facts.get("description").cloned(),
+            revisions: s.revisions.len() as u32,
+            stints: stints as u32,
+        };
     let path = Path::new(session_file);
     let dir = match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
@@ -727,8 +728,8 @@ pub fn sessions_view(session_file: &str, journal_base: &str) -> SessionsView {
             else {
                 continue;
             };
-            let s = crate::tuning::TuningSession::load(&entry.path());
-            let stints = journal_stints(&crate::tuning::suffixed_path(journal_base, id));
+            let s = crate::advice::tuning::TuningSession::load(&entry.path());
+            let stints = journal_stints(&crate::advice::tuning::suffixed_path(journal_base, id));
             let modified = entry
                 .metadata()
                 .and_then(|m| m.modified())
@@ -737,8 +738,11 @@ pub fn sessions_view(session_file: &str, journal_base: &str) -> SessionsView {
         }
     }
     archived.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-    let active = crate::tuning::TuningSession::load(path);
-    let active_stints = journal_stints(&crate::tuning::journal_path_for(active.car, journal_base));
+    let active = crate::advice::tuning::TuningSession::load(path);
+    let active_stints = journal_stints(&crate::advice::tuning::journal_path_for(
+        active.car,
+        journal_base,
+    ));
     SessionsView {
         active: row(None, &active, active_stints),
         archived: archived.into_iter().map(|(_, r)| r).collect(),
@@ -768,16 +772,20 @@ pub fn save_tune(
     values: &[(String, String)],
     partial: bool,
     path: &Path,
-    recorder: &crate::record::SharedRecorder,
+    recorder: &crate::telemetry::record::SharedRecorder,
 ) -> Result<TuneSaveView, ApiError> {
-    let mut s = crate::tuning::TuningSession::load(path);
-    let mut rev = crate::tuning::Revision {
+    let mut s = crate::advice::tuning::TuningSession::load(path);
+    let mut rev = crate::advice::tuning::Revision {
         stamp: crate::util::utc_stamp(now_secs()),
         ..Default::default()
     };
     for (k, v) in values {
         let v = v.trim();
-        if !v.is_empty() && crate::tuning::FIELDS.iter().any(|(key, _)| key == k) {
+        if !v.is_empty()
+            && crate::advice::tuning::FIELDS
+                .iter()
+                .any(|(key, _)| key == k)
+        {
             rev.values.insert(k.clone(), v.to_string());
         }
     }
@@ -805,7 +813,7 @@ pub fn save_tune(
     };
     let note = base_idx
         .and_then(|i| s.revisions.get(i))
-        .map(|base| crate::tuning::diff_note(base, &rev))
+        .map(|base| crate::advice::tuning::diff_note(base, &rev))
         .unwrap_or_default();
     let first = s.revisions.is_empty();
     if !first && note.is_empty() {
@@ -863,17 +871,17 @@ pub struct PendingView {
 
 pub fn pending_view(
     session_path: &Path,
-    recorder: &crate::record::SharedRecorder,
+    recorder: &crate::telemetry::record::SharedRecorder,
 ) -> Option<PendingView> {
     let (note, base_idx) = {
         let r = recorder.lock().unwrap();
         (r.pending_note.clone()?, r.pending_base_rev)
     };
-    let s = crate::tuning::TuningSession::load(session_path);
+    let s = crate::advice::tuning::TuningSession::load(session_path);
     let latest = s.latest()?.values.clone();
     let base = base_idx.and_then(|i| s.revisions.get(i)).map(|r| &r.values);
     let phrase = |k: &str| {
-        crate::tuning::FIELDS
+        crate::advice::tuning::FIELDS
             .iter()
             .find(|(key, _)| *key == k)
             .map_or_else(|| k.to_string(), |(_, p)| p.to_string())
@@ -931,10 +939,10 @@ pub fn stint_rows(dir: &str) -> Vec<StintRow> {
 /// First car seen driving in the session (bounded scan; the file may open
 /// with menu frames, but driving starts within moments in every real capture).
 pub fn stint_car(path: &Path) -> Option<i32> {
-    let mut reader = crate::stint::StintReader::open(path).ok()?;
+    let mut reader = crate::telemetry::stint::StintReader::open(path).ok()?;
     for _ in 0..20_000 {
         let (_, payload) = reader.next_packet().ok()??;
-        if let Ok(frame) = crate::packet::decode(&payload)
+        if let Ok(frame) = crate::telemetry::packet::decode(&payload)
             && frame.is_race_on
             && frame.car_ordinal != 0
         {
@@ -1034,17 +1042,17 @@ fn archived_session_parts(
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(ApiError::bad("bad id"));
     }
-    let session_path = crate::tuning::suffixed_path(session_file, id);
+    let session_path = crate::advice::tuning::suffixed_path(session_file, id);
     if !Path::new(&session_path).exists() {
         return Err(ApiError::not_found("no such session"));
     }
-    let journal_path = crate::tuning::suffixed_path(journal_base, id);
+    let journal_path = crate::advice::tuning::suffixed_path(journal_base, id);
     let own_journal = Path::new(&journal_path)
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_default();
     let text = std::fs::read_to_string(&journal_path).unwrap_or_default();
-    let names: std::collections::BTreeSet<String> = crate::analysis::journal::parse_journal(&text)
+    let names: std::collections::BTreeSet<String> = crate::advice::journal::parse_journal(&text)
         .into_iter()
         .filter_map(|e| {
             Path::new(&e.path)
@@ -1134,10 +1142,10 @@ pub fn export_bundle(
             "file must be a bare .ftel name from the sessions directory",
         ));
     }
-    let session = crate::tuning::TuningSession::load(Path::new(session_file));
-    let journal_path = crate::tuning::journal_path_for(session.car, journal_base);
+    let session = crate::advice::tuning::TuningSession::load(Path::new(session_file));
+    let journal_path = crate::advice::tuning::journal_path_for(session.car, journal_base);
     let journal = std::fs::read_to_string(&journal_path).unwrap_or_default();
-    crate::bundle::build(&Path::new(sessions_dir).join(file), &session, &journal)
+    crate::sharing::bundle::build(&Path::new(sessions_dir).join(file), &session, &journal)
         .map_err(ApiError::bad)
 }
 
@@ -1422,7 +1430,7 @@ pub struct AdviseView {
     pub current_tune: Vec<TuneFieldView>,
 }
 
-fn measurement_view(m: &crate::advise::MeasurementView) -> MeasurementView {
+fn measurement_view(m: &crate::advice::advise::MeasurementView) -> MeasurementView {
     MeasurementView {
         from_step: m.from_step as u32,
         to_step: m.to_step as u32,
@@ -1435,7 +1443,7 @@ fn measurement_view(m: &crate::advise::MeasurementView) -> MeasurementView {
     }
 }
 
-pub fn advise_view(v: &crate::advise::AdviseView) -> AdviseView {
+pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
     AdviseView {
         journal: v.journal.clone(),
         advice_for: v.advice_for.clone(),
@@ -1546,9 +1554,9 @@ pub fn advise_active(
     journal_base: &str,
     sessions_dir: &str,
 ) -> Result<AdviseView, ApiError> {
-    let session = crate::tuning::TuningSession::load(Path::new(session_file));
-    let journal = crate::tuning::journal_path_for(session.car, journal_base);
-    crate::advise::advise(&journal, Path::new(session_file), sessions_dir)
+    let session = crate::advice::tuning::TuningSession::load(Path::new(session_file));
+    let journal = crate::advice::tuning::journal_path_for(session.car, journal_base);
+    crate::advice::advise::advise(&journal, Path::new(session_file), sessions_dir)
         .map(|v| advise_view(&v))
         .map_err(ApiError::internal)
 }
@@ -1568,12 +1576,12 @@ mod tests {
         let jb = dir.join("tune-journal.txt").to_string_lossy().into_owned();
 
         // McLaren session with a revision on file.
-        let mut s = crate::tuning::TuningSession {
+        let mut s = crate::advice::tuning::TuningSession {
             car: Some(1314),
             ..Default::default()
         };
         s.facts.insert("abs".into(), "on".into());
-        s.revisions.push(crate::tuning::Revision {
+        s.revisions.push(crate::advice::tuning::Revision {
             stamp: "20260721-000000".into(),
             values: [("arb_f".to_string(), "18.5".to_string())]
                 .into_iter()
@@ -1588,18 +1596,18 @@ mod tests {
         };
         // Switch to an RWD car: fresh session, McLaren archived.
         update_session(&switch("227"), &path, &jb).unwrap();
-        let now = crate::tuning::TuningSession::load(&path);
+        let now = crate::advice::tuning::TuningSession::load(&path);
         assert_eq!(now.car, Some(227));
         assert!(now.revisions.is_empty(), "fresh session for the new car");
-        let archived = crate::tuning::TuningSession::load(
-            crate::tuning::journal_path_for(Some(1314), &path.to_string_lossy()).as_ref(),
+        let archived = crate::advice::tuning::TuningSession::load(
+            crate::advice::tuning::journal_path_for(Some(1314), &path.to_string_lossy()).as_ref(),
         );
         assert_eq!(archived.car, Some(1314));
         assert_eq!(archived.revisions.len(), 1, "campaign archived intact");
 
         // Switch back: the McLaren campaign is restored, revisions included.
         update_session(&switch("1314"), &path, &jb).unwrap();
-        let restored = crate::tuning::TuningSession::load(&path);
+        let restored = crate::advice::tuning::TuningSession::load(&path);
         assert_eq!(restored.car, Some(1314));
         assert_eq!(restored.revisions.len(), 1);
         assert_eq!(restored.facts.get("abs").map(String::as_str), Some("on"));
@@ -1625,19 +1633,19 @@ mod tests {
     /// Replaces the old live_state_json shape test.
     #[test]
     fn live_state_serializes_with_wire_names() {
-        let empty = crate::live::LiveState::default();
-        let rec = crate::record::new_shared();
+        let empty = crate::telemetry::live::LiveState::default();
+        let rec = crate::telemetry::record::new_shared();
         let v = serde_json::to_value(live_state_view(&empty, &rec.lock().unwrap())).unwrap();
         assert_eq!(v["file"], serde_json::Value::Null);
         assert_eq!(v["ageMs"], serde_json::Value::Null);
         assert_eq!(v["frame"], serde_json::Value::Null);
         assert!(v["recorder"]["mode"].is_string());
 
-        let state = crate::live::LiveState {
+        let state = crate::telemetry::live::LiveState {
             file: Some("sessions/session-x.ftel".into()),
             latest: Some(crate::analysis::TimedFrame {
                 recv_us: 0,
-                frame: crate::simulate::synth_frame(2.5),
+                frame: crate::telemetry::simulate::synth_frame(2.5),
             }),
             last_data: Some(std::time::Instant::now()),
             ..Default::default()
@@ -1740,11 +1748,11 @@ mod tests {
 
         // Campaign start: journal baseline stint (100000) predates the first
         // revision save (100500), so the earlier stamp wins.
-        let mut s = crate::tuning::TuningSession {
+        let mut s = crate::advice::tuning::TuningSession {
             car: Some(99),
             ..Default::default()
         };
-        s.revisions.push(crate::tuning::Revision {
+        s.revisions.push(crate::advice::tuning::Revision {
             stamp: "20260725-100500".into(),
             ..Default::default()
         });
@@ -1769,18 +1777,18 @@ mod tests {
         );
 
         // Campaign A: car 2793 with a name, one revision, a journal with 2 stints.
-        let mut a = crate::tuning::TuningSession {
+        let mut a = crate::advice::tuning::TuningSession {
             car: Some(2793),
             ..Default::default()
         };
         a.facts.insert("name".into(), "awd aero".into());
         a.facts.insert("unit_pressure".into(), "psi".into());
-        a.revisions.push(crate::tuning::Revision {
+        a.revisions.push(crate::advice::tuning::Revision {
             stamp: "1".into(),
             ..Default::default()
         });
         a.save(&session_file).unwrap();
-        let journal_a = crate::tuning::journal_path_for(Some(2793), &jb);
+        let journal_a = crate::advice::tuning::journal_path_for(Some(2793), &jb);
         std::fs::write(
             &journal_a,
             "# car\nsessions/a.ftel | baseline\nsessions/b.ftel | x\n",
@@ -1825,7 +1833,7 @@ mod tests {
         let id = row.id.clone().expect("archived id in listing");
 
         // Make the fresh session campaign B on the SAME car, with its own journal.
-        let mut b = crate::tuning::TuningSession::load(&session_file);
+        let mut b = crate::advice::tuning::TuningSession::load(&session_file);
         b.car = Some(2793);
         b.save(&session_file).unwrap();
         std::fs::write(&journal_a, "# car\nsessions/c.ftel | baseline\n").unwrap();
@@ -1873,11 +1881,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tuners-partial-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tune-session.txt");
-        let mut s = crate::tuning::TuningSession {
+        let mut s = crate::advice::tuning::TuningSession {
             car: Some(2793),
             ..Default::default()
         };
-        s.revisions.push(crate::tuning::Revision {
+        s.revisions.push(crate::advice::tuning::Revision {
             stamp: "20260724-000000".into(),
             values: [
                 ("arb_f".to_string(), "18.3".to_string()),
@@ -1888,8 +1896,8 @@ mod tests {
             .collect(),
         });
         s.save(&path).unwrap();
-        let recorder = crate::record::new_shared();
-        let post = |pairs: &[(&str, &str)], recorder: &crate::record::SharedRecorder| {
+        let recorder = crate::telemetry::record::new_shared();
+        let post = |pairs: &[(&str, &str)], recorder: &crate::telemetry::record::SharedRecorder| {
             let values: Vec<(String, String)> = pairs
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -1904,7 +1912,7 @@ mod tests {
             "{out:?}"
         );
         let latest_vals = |p: &Path| {
-            crate::tuning::TuningSession::load(p)
+            crate::advice::tuning::TuningSession::load(p)
                 .latest()
                 .unwrap()
                 .values
@@ -1953,7 +1961,7 @@ mod tests {
 
     fn post_at(
         path: &Path,
-        recorder: &crate::record::SharedRecorder,
+        recorder: &crate::telemetry::record::SharedRecorder,
     ) -> Result<TuneSaveView, ApiError> {
         save_tune(
             &[("arb_f".to_string(), "16.8".to_string())],

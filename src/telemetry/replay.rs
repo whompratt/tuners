@@ -1,8 +1,8 @@
 //! Replay a recorded session through the decoder and summarize it: the headless
 //! check that a capture is intact and the decoder handles every packet in it.
 
-use crate::packet::{self, TelemetryFrame};
-use crate::stint::StintReader;
+use crate::telemetry::packet::{self, TelemetryFrame};
+use crate::telemetry::stint::StintReader;
 use crate::util;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

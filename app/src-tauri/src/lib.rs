@@ -18,7 +18,7 @@ pub struct AppState {
     journal_base: String,
     config: PathBuf,
     outbox: PathBuf,
-    recorder: tuners::record::SharedRecorder,
+    recorder: tuners::telemetry::record::SharedRecorder,
 }
 
 type S<'a> = tauri::State<'a, AppState>;
@@ -78,7 +78,7 @@ fn report(file: String) -> Result<String, api::ApiError> {
 #[tauri::command]
 #[specta::specta]
 fn session(state: S) -> api::SessionView {
-    let s = tuners::tuning::TuningSession::load(state.session_file.as_ref());
+    let s = tuners::advice::tuning::TuningSession::load(state.session_file.as_ref());
     api::session_view(&s, &state.journal_base)
 }
 
@@ -340,8 +340,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
 /// tailer's newest-file either way.
 fn run_emitter(
     app: tauri::AppHandle,
-    live: tuners::live::SharedLive,
-    recorder: tuners::record::SharedRecorder,
+    live: tuners::telemetry::live::SharedLive,
+    recorder: tuners::telemetry::record::SharedRecorder,
 ) {
     let mut sent_quality_seq = u64::MAX;
     let mut prev_recording: Option<String> = None;
@@ -384,7 +384,7 @@ fn run_emitter(
 /// telemetry is idle (decoding a campaign's stints while the recorder is
 /// busy would fight the drive for CPU). First pass runs shortly after boot
 /// so a stale map catches up before the first advise.
-fn run_map_refresher(live: tuners::live::SharedLive) {
+fn run_map_refresher(live: tuners::telemetry::live::SharedLive) {
     let mut delay = Duration::from_secs(5);
     loop {
         std::thread::sleep(delay);
@@ -398,7 +398,7 @@ fn run_map_refresher(live: tuners::live::SharedLive) {
             continue;
         }
         let scratch = std::env::temp_dir().join(format!("tuners-map-{}", std::process::id()));
-        match tuners::effectmap::refresh(
+        match tuners::advice::effectmap::refresh(
             Path::new("."),
             "sessions",
             &tuners::util::data_path("effect-map.tsv"),
@@ -419,10 +419,10 @@ fn run_map_refresher(live: tuners::live::SharedLive) {
 /// Uploads queued bundles only while telemetry is idle.
 /// Config is re-read every pass, so the sharing toggle takes effect without
 /// a restart.
-fn run_drainer(live: tuners::live::SharedLive, config: PathBuf, outbox: PathBuf) {
+fn run_drainer(live: tuners::telemetry::live::SharedLive, config: PathBuf, outbox: PathBuf) {
     loop {
         std::thread::sleep(Duration::from_secs(60));
-        let cfg = tuners::collect::CollectConfig::load(&config);
+        let cfg = tuners::sharing::collect::CollectConfig::load(&config);
         if !cfg.ready() {
             continue;
         }
@@ -430,12 +430,12 @@ fn run_drainer(live: tuners::live::SharedLive, config: PathBuf, outbox: PathBuf)
             live.lock()
                 .unwrap()
                 .last_data
-                .is_some_and(|t| t.elapsed() < tuners::collect::IDLE_BEFORE_DRAIN)
+                .is_some_and(|t| t.elapsed() < tuners::sharing::collect::IDLE_BEFORE_DRAIN)
         };
         if fresh() {
             continue;
         }
-        for line in tuners::collect::drain(&outbox, &cfg, &fresh) {
+        for line in tuners::sharing::collect::drain(&outbox, &cfg, &fresh) {
             println!("collect: {line}");
         }
     }
@@ -476,16 +476,16 @@ pub fn run() {
             let sessions_dir = "sessions".to_string();
             let session_file = "tune-session.txt".to_string();
             let journal_base = "tune-journal.txt".to_string();
-            let config = PathBuf::from(tuners::collect::CONFIG_PATH);
-            let outbox = PathBuf::from(tuners::collect::OUTBOX_DIR);
+            let config = PathBuf::from(tuners::sharing::collect::CONFIG_PATH);
+            let outbox = PathBuf::from(tuners::sharing::collect::OUTBOX_DIR);
             std::fs::create_dir_all(&sessions_dir).ok();
 
-            let live: tuners::live::SharedLive = Default::default();
-            let recorder = tuners::record::new_shared();
+            let live: tuners::telemetry::live::SharedLive = Default::default();
+            let recorder = tuners::telemetry::record::new_shared();
             {
                 let dir = sessions_dir.clone();
                 let live = live.clone();
-                std::thread::spawn(move || tuners::live::run_tailer(dir, live));
+                std::thread::spawn(move || tuners::telemetry::live::run_tailer(dir, live));
             }
             {
                 let out_dir = PathBuf::from(&sessions_dir);
@@ -493,7 +493,9 @@ pub fn run() {
                 let session = PathBuf::from(&session_file);
                 let recorder = recorder.clone();
                 std::thread::spawn(move || {
-                    tuners::record::run_recorder(20440, out_dir, journal, session, recorder)
+                    tuners::telemetry::record::run_recorder(
+                        20440, out_dir, journal, session, recorder,
+                    )
                 });
             }
             {

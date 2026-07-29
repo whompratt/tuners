@@ -6,14 +6,12 @@ pub mod compare;
 pub mod corners;
 pub mod driveline;
 pub mod effects;
-pub mod journal;
 pub mod metrics;
 pub mod profile;
-pub mod recommend;
 pub mod report;
 
-use crate::packet::{self, TelemetryFrame};
-use crate::stint::StintReader;
+use crate::telemetry::packet::{self, TelemetryFrame};
+use crate::telemetry::stint::StintReader;
 use std::io;
 use std::path::Path;
 

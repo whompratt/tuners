@@ -336,7 +336,7 @@ pub fn stint_profile(frames: &[TimedFrame]) -> Result<StintProfile, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::TelemetryFrame;
+    use crate::telemetry::packet::TelemetryFrame;
 
     /// Hand-built lap: one bin per entry of `speeds` (10 m at v m/s -> 10/v seconds).
     fn lap_from_speeds(lap_number: u16, speeds: &[f32]) -> LapProfile {

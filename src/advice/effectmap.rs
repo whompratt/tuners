@@ -10,8 +10,9 @@
 //! noise floors ride along as their own rows: a sender's floors come from
 //! their own same-setup pairs, never inherited from ours.
 
-use crate::analysis::{effects, journal};
-use crate::tuning::TuningSession;
+use crate::advice::journal;
+use crate::advice::tuning::TuningSession;
+use crate::analysis::effects;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -68,7 +69,7 @@ pub struct EffectMap {
 /// dropped (their behavioural delta measures the surface, not the setup), as
 /// are pairs without overall metrics on both sides (no context, no effects).
 pub(crate) fn harvest_campaign(
-    c: &crate::advise::Campaign,
+    c: &crate::advice::advise::Campaign,
     driver: &str,
     campaign: &str,
 ) -> (Vec<Sample>, CampaignFloor) {
@@ -84,7 +85,7 @@ pub(crate) fn harvest_campaign(
         let Some(delta_s) = m.outcome.delta_s() else {
             continue;
         };
-        let Some(car) = crate::advise::car_of(&sj.stint) else {
+        let Some(car) = crate::advice::advise::car_of(&sj.stint) else {
             continue;
         };
         samples.push(Sample {
@@ -188,7 +189,7 @@ type CampaignKey = (i32, String);
 fn campaign_key(car: Option<i32>, entries: &[journal::Entry]) -> Option<CampaignKey> {
     let stamp = entries
         .first()
-        .and_then(|e| crate::advise::stint_stamp(&e.path))?;
+        .and_then(|e| crate::advice::advise::stint_stamp(&e.path))?;
     Some((car?, stamp.to_string()))
 }
 
@@ -206,12 +207,12 @@ pub fn harvest_local(
         .as_deref()
         .map(TuningSession::load)
         .unwrap_or_default();
-    crate::advise::implicit_steps(&text, &mut entries, session.car, stints_dir);
+    crate::advice::advise::implicit_steps(&text, &mut entries, session.car, stints_dir);
     if entries.is_empty() {
         return Err(format!("{}: empty journal", source.label));
     }
     let key = campaign_key(session.car, &entries);
-    let c = crate::advise::load_campaign(entries, &session, &source.label)?;
+    let c = crate::advice::advise::load_campaign(entries, &session, &source.label)?;
     let (samples, floor) = harvest_campaign(&c, "local", &source.label);
     Ok((samples, floor, key))
 }
@@ -265,13 +266,13 @@ fn harvest_sender(
         .collect();
     names.sort();
     // (car, first journal entry path) -> bundles of that campaign.
-    let mut groups: BTreeMap<(String, String), Vec<(String, crate::bundle::Bundle)>> =
+    let mut groups: BTreeMap<(String, String), Vec<(String, crate::sharing::bundle::Bundle)>> =
         BTreeMap::new();
     for name in names {
         let path = dir.join(&name);
         let bundle = std::fs::read(&path)
             .map_err(|e| e.to_string())
-            .and_then(|bytes| crate::bundle::open(&bytes));
+            .and_then(|bytes| crate::sharing::bundle::open(&bytes));
         match bundle {
             Ok(b) => {
                 let car = b.manifest.get("car").cloned().unwrap_or_default();
@@ -303,7 +304,7 @@ fn harvest_sender(
                 .unwrap_or_else(|| entry.path.clone());
             let dest = group_dir.join(&file);
             // The bundle whose stint stamp names this entry, if delivered.
-            let stamp = crate::advise::stint_stamp(&entry.path);
+            let stamp = crate::advice::advise::stint_stamp(&entry.path);
             let backing = bundles
                 .iter()
                 .find(|(_, b)| b.manifest.get("stint_stamp").map(String::as_str) == stamp);
@@ -326,7 +327,7 @@ fn harvest_sender(
         }
         // The first entry's stamp keeps two campaigns of the same car
         // under one sender apart.
-        let first_stamp = crate::advise::stint_stamp(&first).unwrap_or("nostamp");
+        let first_stamp = crate::advice::advise::stint_stamp(&first).unwrap_or("nostamp");
         out.push(SenderCampaign {
             driver: sender.to_string(),
             label: format!("{sender}:{car}:{first_stamp}"),
@@ -817,7 +818,7 @@ pub fn summary(cells: &[Cell]) -> String {
         let ctx = format!(
             "{} {}{}",
             if c.surface_loose { "dirt" } else { "tarmac" },
-            crate::packet::drivetrain_name(c.drivetrain),
+            crate::telemetry::packet::drivetrain_name(c.drivetrain),
             match c.aero {
                 Some(true) => " aero",
                 Some(false) => " no-aero",
@@ -947,7 +948,7 @@ pub fn refresh(
         // Open campaigns accrue implicit steps from new recordings, so new
         // stint files make them stale even with the journal untouched.
         let open = std::fs::read_to_string(&source.journal)
-            .map(|t| !crate::advise::campaign_closed(&t))
+            .map(|t| !crate::advice::advise::campaign_closed(&t))
             .unwrap_or(true);
         let stale = force
             || newer(&source.journal)
@@ -1015,7 +1016,7 @@ pub fn refresh(
                 ));
                 continue;
             }
-            match crate::advise::load_campaign(sc.entries, &sc.session, &sc.label) {
+            match crate::advice::advise::load_campaign(sc.entries, &sc.session, &sc.label) {
                 Ok(c) => {
                     let (samples, floor) = harvest_campaign(&c, &sc.driver, &sc.label);
                     report.push(format!("{}: {} samples", sc.label, samples.len()));

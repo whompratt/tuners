@@ -2,7 +2,7 @@
 //! the committed fixture must always decode cleanly.
 
 use std::path::Path;
-use tuners::{packet, stint::StintReader};
+use tuners::telemetry::{packet, stint::StintReader};
 
 /// Real FH6 capture (2026-07-19, ordinal 4165, S1 800 AWD): the ground truth for
 /// the packet layout. If this breaks, the decoder is wrong, not the fixture.

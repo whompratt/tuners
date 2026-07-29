@@ -2,7 +2,7 @@
 //! later is a one-line change with tests to catch regressions.
 
 use super::{TimedFrame, stint_seconds};
-use crate::packet::Corners;
+use crate::telemetry::packet::Corners;
 
 /// |normalized slip| above this = the tire has lost grip (per the packet spec).
 pub const SLIP_LIMIT: f32 = 1.0;
@@ -657,7 +657,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::TelemetryFrame;
+    use crate::telemetry::packet::TelemetryFrame;
 
     fn timed(frames: Vec<TelemetryFrame>) -> Vec<TimedFrame> {
         frames

@@ -10,8 +10,8 @@
 //! flushed when racing resumes, preserving the race-off gaps that gap
 //! classification (pause/rewind/restart) depends on.
 
-use crate::packet;
-use crate::stint::StintWriter;
+use crate::telemetry::packet;
+use crate::telemetry::stint::StintWriter;
 use crate::util;
 use std::collections::VecDeque;
 use std::net::UdpSocket;
@@ -253,7 +253,7 @@ fn journal_note(
     car: Option<i32>,
 ) {
     let text = std::fs::read_to_string(journal).unwrap_or_default();
-    let mut lines = crate::analysis::journal::append_lines(
+    let mut lines = crate::advice::journal::append_lines(
         &text,
         prev.map(|p| p.to_string_lossy()).as_deref(),
         &new.to_string_lossy(),
@@ -330,7 +330,7 @@ pub fn run_recorder(
                     s.last_udp = Some(std::time::Instant::now());
                     // Menu packets zero everything but the timestamp, so a
                     // non-zero ordinal is a real car (free roam included).
-                    if let Ok(f) = crate::packet::decode(&buf[..len])
+                    if let Ok(f) = crate::telemetry::packet::decode(&buf[..len])
                         && f.car_ordinal != 0
                     {
                         s.udp_car = Some(f.car_ordinal);
@@ -376,7 +376,7 @@ pub fn run_recorder(
                             // The journal belongs to the session: notes only attach
                             // to stints of the session's car. A pending note for a
                             // different car stays pending until that car returns.
-                            let session = crate::tuning::TuningSession::load(&session_file);
+                            let session = crate::advice::tuning::TuningSession::load(&session_file);
                             let car_matches = session.car.is_none_or(|c| c == car);
                             let has_note = shared.lock().unwrap().pending_note.is_some();
                             if has_note && car_matches {
@@ -385,7 +385,7 @@ pub fn run_recorder(
                                     r.pending_base_rev = None;
                                     r.pending_note.take().unwrap()
                                 };
-                                let journal = crate::tuning::journal_path_for(
+                                let journal = crate::advice::tuning::journal_path_for(
                                     session.car,
                                     &journal_base.to_string_lossy(),
                                 );
@@ -395,7 +395,7 @@ pub fn run_recorder(
                                 // (matching) stint closed in this process, fall back
                                 // to the newest on-disk stint of the session car.
                                 let baseline = last_closed.filter(|_| baseline_ok).or_else(|| {
-                                    crate::advise::latest_stint_for_car(
+                                    crate::advice::advise::latest_stint_for_car(
                                         &out_dir.to_string_lossy(),
                                         session.car,
                                     )
@@ -435,7 +435,11 @@ pub fn run_recorder(
                     // Finalization is the collection moment: bundle
                     // into the outbox on a worker thread, never inline.
                     if let Some(path) = closed {
-                        crate::collect::maybe_enqueue(path, session_file.clone(), open_car);
+                        crate::sharing::collect::maybe_enqueue(
+                            path,
+                            session_file.clone(),
+                            open_car,
+                        );
                     }
                 }
             }
@@ -446,7 +450,7 @@ pub fn run_recorder(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::TelemetryFrame;
+    use crate::telemetry::packet::TelemetryFrame;
 
     const S: u64 = 1_000_000; // one second in micros
 

@@ -16,7 +16,7 @@
 //! network while telemetry is fresh. Driving must never compete with
 //! uploads.
 
-use crate::tuning::TuningSession;
+use crate::advice::tuning::TuningSession;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -125,7 +125,7 @@ pub fn maybe_enqueue(stint_path: PathBuf, session_file: PathBuf, car: i32) {
             );
             return;
         }
-        let journal_path = crate::tuning::journal_path_for(
+        let journal_path = crate::advice::tuning::journal_path_for(
             session.car,
             &crate::util::data_path("tune-journal.txt").to_string_lossy(),
         );
@@ -150,7 +150,7 @@ pub fn enqueue(
     session: &TuningSession,
     journal: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let (name, bytes) = crate::bundle::build(stint_path, session, journal)?;
+    let (name, bytes) = crate::sharing::bundle::build(stint_path, session, journal)?;
     std::fs::create_dir_all(outbox).map_err(|e| e.to_string())?;
     let path = outbox.join(&name);
     if path.exists() {
@@ -282,7 +282,7 @@ fn campaign_pairs(root: &Path) -> Vec<(PathBuf, PathBuf)> {
     let session = TuningSession::load(&active);
     if session.car.is_some() {
         let base = root.join("tune-journal.txt");
-        let journal = crate::tuning::journal_path_for(session.car, &base.to_string_lossy());
+        let journal = crate::advice::tuning::journal_path_for(session.car, &base.to_string_lossy());
         out.push((active, PathBuf::from(journal)));
     }
     let mut archived = Vec::new();
@@ -313,13 +313,13 @@ pub fn history_plan(root: &Path, sessions_dir: &str, outbox: &Path) -> HistoryPl
             continue;
         };
         let mut used = false;
-        for entry in crate::analysis::journal::parse_journal(&jtext) {
+        for entry in crate::advice::journal::parse_journal(&jtext) {
             let stint = root.join(&entry.path);
             if !seen.insert(stint.clone()) {
                 continue; // parked/resumed campaigns can list a stint twice
             }
             let Ok(md) = stint.metadata() else { continue }; // recording deleted
-            let Ok(name) = crate::bundle::bundle_name(car, &stint) else {
+            let Ok(name) = crate::sharing::bundle::bundle_name(car, &stint) else {
                 continue;
             };
             if sent.contains(&name) || outbox.join(&name).exists() {

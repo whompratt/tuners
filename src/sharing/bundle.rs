@@ -21,7 +21,7 @@
 //! produce a failed export, never a corrupt bundle. `open` is the shared
 //! reader used by tests today and `tuners ingest` later.
 
-use crate::tuning::{self, TuningSession};
+use crate::advice::tuning::{self, TuningSession};
 use crate::util::sha256_hex;
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -81,7 +81,8 @@ pub fn build(
 
     // The recording must decode end-to-end before it ships: a truncated or
     // corrupt stint is caught at the sender, where the original still exists.
-    let mut reader = crate::stint::StintReader::open(stint_path).map_err(|e| e.to_string())?;
+    let mut reader =
+        crate::telemetry::stint::StintReader::open(stint_path).map_err(|e| e.to_string())?;
     let mut packets = 0u64;
     while reader
         .next_packet()
@@ -177,7 +178,7 @@ pub fn open(bytes: &[u8]) -> Result<Bundle, String> {
             return Err(format!("{member}: hash mismatch vs manifest"));
         }
     }
-    if !members["stint.ftel"].starts_with(crate::stint::MAGIC) {
+    if !members["stint.ftel"].starts_with(crate::telemetry::stint::MAGIC) {
         return Err("stint.ftel: bad magic".into());
     }
 
@@ -525,7 +526,7 @@ sessions/stint-20260725-121955.ftel
 ";
         assert_eq!(out, expect);
         // Everything kept still parses on the ingest side.
-        let entries = crate::analysis::journal::parse_journal(&out);
+        let entries = crate::advice::journal::parse_journal(&out);
         assert_eq!(entries.len(), 4);
     }
 

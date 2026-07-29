@@ -1,7 +1,7 @@
 //! UDP capture: receive Data Out packets, record them raw, show a live status line.
 
-use crate::packet::{self, PACKET_LEN, TelemetryFrame};
-use crate::stint::StintWriter;
+use crate::telemetry::packet::{self, PACKET_LEN, TelemetryFrame};
+use crate::telemetry::stint::StintWriter;
 use crate::util;
 use std::collections::HashSet;
 use std::io::{self, Write};
