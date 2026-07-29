@@ -1,0 +1,446 @@
+use super::campaign::{CampaignBound, campaign_bound, drop_missing_entries};
+use super::*;
+use crate::advice::recommend::{Confidence, Recommendation};
+use crate::advice::tuning::Revision;
+
+fn balance_rec() -> Recommendation {
+    Recommendation {
+        apply: Vec::new(),
+        area: "balance",
+        advice: "reduce front roll stiffness".into(),
+        evidence: vec![],
+        confidence: Confidence::High,
+        suggestion: None,
+        implied: Some(journal::Change {
+            family: journal::Family::FrontRoll,
+            softer: true,
+            magnitude: None,
+        }),
+    }
+}
+
+fn session_with(values: &[(&str, &str)], facts: &[(&str, &str)]) -> TuningSession {
+    let mut s = TuningSession::default();
+    let mut rev = Revision {
+        stamp: "20260721-000000".into(),
+        ..Default::default()
+    };
+    for (k, v) in values {
+        rev.values.insert(k.to_string(), v.to_string());
+    }
+    s.revisions.push(rev);
+    for (k, v) in facts {
+        s.facts.insert(k.to_string(), v.to_string());
+    }
+    s
+}
+
+/// Front roll advised softer with both front sliders at minimum: the
+/// advice flips to stiffening the rear, implied direction included.
+#[test]
+fn exhausted_front_softening_flips_to_rear() {
+    let session = session_with(
+        &[("arb_f", "1"), ("springs_f", "100")],
+        &[("limit_arb_f", "1..65"), ("limit_springs_f", "100..800")],
+    );
+    let mut recs = vec![balance_rec()];
+    enrich_with_tune(&mut recs, &session);
+    assert!(
+        recs[0].advice.contains("stiffen the rear instead"),
+        "{}",
+        recs[0].advice
+    );
+    let implied = recs[0].implied.unwrap();
+    assert_eq!(implied.family, journal::Family::RearRoll);
+    assert!(!implied.softer);
+    assert!(
+        recs[0].evidence.iter().any(|e| e.contains("AT MINIMUM")),
+        "{:?}",
+        recs[0].evidence
+    );
+    assert!(
+        recs[0]
+            .evidence
+            .iter()
+            .any(|e| e.contains("advised direction exhausted"))
+    );
+}
+
+/// Only the primary slider pinned: advice stands, evidence points at the
+/// secondary slider instead of flipping ends.
+#[test]
+fn primary_pinned_points_at_secondary() {
+    let session = session_with(
+        &[("arb_f", "1"), ("springs_f", "300")],
+        &[("limit_arb_f", "1..65"), ("limit_springs_f", "100..800")],
+    );
+    let mut recs = vec![balance_rec()];
+    enrich_with_tune(&mut recs, &session);
+    assert!(
+        recs[0].advice.contains("reduce front roll stiffness"),
+        "{}",
+        recs[0].advice
+    );
+    assert_eq!(recs[0].implied.unwrap().family, journal::Family::FrontRoll);
+    assert!(
+        recs[0]
+            .evidence
+            .iter()
+            .any(|e| e.contains("work with front springs")),
+        "{:?}",
+        recs[0].evidence
+    );
+}
+
+/// Springs have no universal range: with no fact recorded, a pinned arb
+/// points at the springs but never claims the whole direction exhausted.
+#[test]
+fn unknown_limits_never_claim_exhaustion() {
+    let session = session_with(&[("arb_f", "1"), ("springs_f", "100")], &[]);
+    let mut recs = vec![balance_rec()];
+    enrich_with_tune(&mut recs, &session);
+    assert!(
+        recs[0].advice.contains("reduce front roll stiffness"),
+        "{}",
+        recs[0].advice
+    );
+    assert!(
+        recs[0]
+            .evidence
+            .iter()
+            .any(|e| e.contains("work with front springs")),
+        "{:?}",
+        recs[0].evidence
+    );
+    assert!(recs[0].evidence.iter().all(|e| !e.contains("exhausted")));
+}
+
+/// The user's worked example: front ARB 10..16 with lap times showing
+/// decaying improvement then a slowdown: the fitted optimum sits between
+/// 14 and 15, not at the best tried value or a bisection of the last step.
+#[test]
+fn quad_fit_finds_the_interior_optimum() {
+    // Cumulative deltas from lap times 60.0, 59.0, 58.3, 58.0, 58.5.
+    let pts = [
+        (10.0, 0.0),
+        (12.0, -1.0),
+        (14.0, -1.7),
+        (15.0, -2.0),
+        (16.0, -1.5),
+    ];
+    let (a, b, _) = quad_fit(&pts).unwrap();
+    assert!(a > 0.0, "upward curvature (a minimum exists)");
+    let vertex = (-b / (2.0 * a)) as f32;
+    assert!((14.0..=15.2).contains(&vertex), "vertex {vertex}");
+
+    // Monotonic data has no trustworthy interior minimum.
+    let mono = [(10.0, 0.0), (12.0, -1.0), (14.0, -2.0)];
+    if let Some((a, b, _)) = quad_fit(&mono) {
+        let v = (-b / (2.0 * a)) as f32;
+        assert!(
+            !(10.0..=14.0).contains(&v) || a <= 0.0,
+            "no interior vertex: a={a} v={v}"
+        );
+    }
+    assert!(
+        quad_fit(&[(10.0, 0.0), (12.0, -1.0)]).is_none(),
+        "2 points fit nothing"
+    );
+}
+
+/// Probes extend the landscape past the good edge; interior optima and
+/// flat landscapes ask for nothing.
+#[test]
+fn probe_extends_the_mapped_edge() {
+    // Better at the low end: probe below it by a quarter span.
+    let nodes = [(29.0, -0.21, 1), (100.0, 0.22, 1)];
+    let v = probe_value(&nodes, Some((0.0, 100.0))).unwrap();
+    assert!((v - 11.2).abs() < 0.11, "{v}");
+    // Clamped by the slider range but still a new point.
+    let nodes = [(12.0, 0.0, 1), (100.0, 0.63, 1)];
+    assert_eq!(probe_value(&nodes, Some((0.0, 100.0))), Some(0.0));
+    // Better at the high end: probe above.
+    let nodes = [(20.0, 0.31, 1), (52.0, 0.0, 1)];
+    let v = probe_value(&nodes, Some((0.0, 100.0))).unwrap();
+    assert!((v - 60.0).abs() < 0.11, "{v}");
+    // Interior best: the fit's vertex owns it.
+    let nodes = [(17.0, -0.16, 1), (18.0, -0.49, 1), (20.7, 0.0, 1)];
+    assert_eq!(probe_value(&nodes, None), None);
+    // One small improving step (the Ferrari final-drive case): a quarter
+    // span rounds onto the best value, so probe one display step out instead.
+    let nodes = [(3.95, 0.0, 1), (4.1, -0.27, 1)];
+    assert_eq!(probe_value(&nodes, None), Some(4.2));
+    // Flat landscape: nothing worth a stint.
+    let nodes = [(3.35, -0.04, 1), (3.63, 0.03, 1)];
+    assert_eq!(probe_value(&nodes, None), None);
+    // Best pinned at the slider bound: no new point exists.
+    let nodes = [(0.0, -0.3, 1), (50.0, 0.2, 1)];
+    assert_eq!(probe_value(&nodes, Some((0.0, 100.0))), None);
+}
+
+/// Deleted recordings are skipped but their tune changes carry forward:
+/// the next surviving entry's note becomes the honest compound, and a
+/// trailing missing entry just drops.
+#[test]
+fn missing_stints_merge_notes_forward() {
+    let e = |path: &str, note: Option<&str>| journal::Entry {
+        path: path.to_string(),
+        note: note.map(String::from),
+    };
+    let entries = vec![
+        e("a.ftel", Some("baseline")),
+        e("gone1.ftel", Some("front arb -0.4")),
+        e("gone2.ftel", Some("final drive +0.15")),
+        e("b.ftel", Some("rear arb -1")),
+        e("gone3.ftel", Some("front camber -1")),
+    ];
+    let (kept, missing) = drop_missing_entries(entries, |p| !p.starts_with("gone"));
+    assert_eq!(missing, vec!["gone1.ftel", "gone2.ftel", "gone3.ftel"]);
+    assert_eq!(kept.len(), 2);
+    assert_eq!(kept[0].note.as_deref(), Some("baseline"));
+    assert_eq!(
+        kept[1].note.as_deref(),
+        Some("front arb -0.4; final drive +0.15; rear arb -1"),
+        "both skipped steps' changes precede the surviving stint"
+    );
+}
+
+/// Boundary markers gate the implicit-step scan: parked journals accrue
+/// nothing, resumed ones only take stints newer than the resume.
+#[test]
+fn campaign_bound_reads_the_last_marker() {
+    assert!(matches!(
+        campaign_bound("# car\na.ftel | baseline\n"),
+        CampaignBound::Open
+    ));
+    assert!(matches!(
+        campaign_bound("a.ftel | baseline\n# parked 20260724-190000\n"),
+        CampaignBound::Closed
+    ));
+    match campaign_bound("a.ftel | x\n# parked 20260724-190000\n# resumed 20260724-210000\n") {
+        CampaignBound::Since(s) => assert_eq!(s, "20260724-210000"),
+        _ => panic!("expected Since"),
+    }
+    // Park after a resume closes it again.
+    assert!(matches!(
+        campaign_bound("# resumed 20260724-210000\n# parked 20260724-220000\n"),
+        CampaignBound::Closed
+    ));
+}
+
+/// Minimal profileable stint: 3 laps at 30 m/s so lap 1 is a completed
+/// flying lap (time from lap 2's LastLap, captured from its start).
+fn write_stint_with_laps(path: &Path) {
+    let mut w = crate::telemetry::stint::StintWriter::create(path).unwrap();
+    for l in 0..3u16 {
+        for i in 0..60 {
+            let t = (l as f32 * 60.0 + i as f32) * 0.1;
+            let f = crate::telemetry::packet::TelemetryFrame {
+                is_race_on: true,
+                lap_number: l,
+                current_lap: i as f32 * 0.1,
+                current_race_time: t,
+                last_lap: if l > 0 { 6.0 } else { 0.0 },
+                distance_traveled: t * 30.0 + 1.0,
+                speed: 30.0,
+                car_ordinal: 42,
+                ..Default::default()
+            };
+            w.write_packet((t * 1e6) as u64 + 1, &crate::telemetry::packet::encode(&f))
+                .unwrap();
+        }
+    }
+}
+
+/// Two single-family improvements with complementary phase splits, both
+/// re-applicable from the current setup, propose the untested
+/// combination; a tested combination, same-phase pair, or a setup that
+/// moved off a from-state all stay silent.
+#[test]
+fn composition_proposes_untested_phase_complements() {
+    use crate::advice::tuning::Revision;
+    let rev = |pairs: &[(&str, &str)]| {
+        let mut r = Revision::default();
+        for (k, v) in pairs {
+            r.values.insert(k.to_string(), v.to_string());
+        }
+        r
+    };
+    let base = rev(&[("arb_f", "20"), ("diff_accel_r", "60")]);
+    let arb = rev(&[("arb_f", "18"), ("diff_accel_r", "60")]);
+    let diff = rev(&[("arb_f", "20"), ("diff_accel_r", "45")]);
+    let m = |family, key: &str, i, j, d, split| Measurement {
+        change: journal::Change {
+            family,
+            softer: true,
+            magnitude: None,
+        },
+        outcome: journal::Outcome::Improved(d),
+        desc: format!("{key} step"),
+        attributed: None,
+        weak: false,
+        i,
+        j,
+        direct: true,
+        key: Some(key.to_string()),
+        split: Some(split),
+        clean: true,
+        effects: Vec::new(),
+    };
+    let m1 = m(
+        journal::Family::FrontRoll,
+        "arb_f",
+        0,
+        1,
+        -0.4,
+        (-0.30, 0.05, -0.05),
+    );
+    let m2 = m(
+        journal::Family::DiffAccel,
+        "diff_accel_r",
+        2,
+        3,
+        -0.3,
+        (0.02, -0.28, 0.0),
+    );
+    let setups: Vec<Option<&Revision>> = vec![
+        Some(&base),
+        Some(&arb),
+        Some(&base),
+        Some(&diff),
+        Some(&base),
+    ];
+    let rec = composition_proposal(&[&m1, &m2], &setups).expect("complementary pair");
+    assert_eq!(rec.area, "experiment");
+    assert!(rec.apply.contains(&("arb_f".into(), "18".into())));
+    assert!(rec.apply.contains(&("diff_accel_r".into(), "45".into())));
+    assert!(
+        rec.evidence.iter().any(|e| e.contains("-0.70s")),
+        "linear sum quoted: {:?}",
+        rec.evidence
+    );
+
+    // A setup that already held BOTH to-values makes it tested.
+    let combo = rev(&[("arb_f", "18"), ("diff_accel_r", "45")]);
+    let tested: Vec<Option<&Revision>> = vec![
+        Some(&base),
+        Some(&arb),
+        Some(&base),
+        Some(&diff),
+        Some(&combo),
+        Some(&base),
+    ];
+    assert!(composition_proposal(&[&m1, &m2], &tested).is_none());
+
+    // Same-phase gains do not compose.
+    let m3 = m(
+        journal::Family::DiffAccel,
+        "diff_accel_r",
+        2,
+        3,
+        -0.3,
+        (-0.28, 0.02, 0.0),
+    );
+    assert!(composition_proposal(&[&m1, &m3], &setups).is_none());
+
+    // Current setup off a measurement's from-state: not transferable.
+    let moved = rev(&[("arb_f", "19"), ("diff_accel_r", "60")]);
+    let off: Vec<Option<&Revision>> = vec![
+        Some(&base),
+        Some(&arb),
+        Some(&base),
+        Some(&diff),
+        Some(&moved),
+    ];
+    assert!(composition_proposal(&[&m1, &m2], &off).is_none());
+}
+
+/// The pause-menu auto-cut shape: race-on frames, ordinal present, but
+/// the car never moves — no driving segment survives the 5s/speed gates.
+fn write_stint_menu_only(path: &Path) {
+    let mut w = crate::telemetry::stint::StintWriter::create(path).unwrap();
+    for i in 0..100 {
+        let t = i as f32 * 0.1;
+        let f = crate::telemetry::packet::TelemetryFrame {
+            is_race_on: true,
+            current_race_time: t,
+            car_ordinal: 42,
+            ..Default::default()
+        };
+        w.write_packet((t * 1e6) as u64 + 1, &crate::telemetry::packet::encode(&f))
+            .unwrap();
+    }
+}
+
+/// Blind mode (no journal yet) must not die when the NEWEST recording is
+/// a menu artifact: it advises on the newest stint with real driving.
+#[test]
+fn blind_advice_skips_menu_only_newest_stint() {
+    let dir = std::env::temp_dir().join(format!("tuners-blindskip-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let driven = dir.join("stint-20260101-000000.ftel");
+    write_stint_with_laps(&driven);
+    write_stint_menu_only(&dir.join("stint-20260102-000000.ftel"));
+
+    let v = advise(
+        &dir.join("no-journal.txt").to_string_lossy(),
+        &dir.join("no-session.txt"),
+        &dir.to_string_lossy(),
+    )
+    .expect("menu-only newest stint tolerated in blind mode");
+    assert_eq!(v.advice_for, driven.to_string_lossy());
+    assert!(v.journal.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A mid-campaign stint with no completed laps (event entered, abandoned
+/// in the pause menu) is skipped with its note merged forward, not a hard
+/// error that kills advise.
+#[test]
+fn lapless_middle_stint_is_skipped_note_merged() {
+    let dir = std::env::temp_dir().join(format!("tuners-lapless-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let laps = dir.join("stint-20260101-000000.ftel");
+    write_stint_with_laps(&laps);
+    let laps = laps.to_string_lossy().into_owned();
+    // Real capture with no completed lap: the shape the pause-menu
+    // auto-cut produces.
+    let no_laps = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/real-01.ftel");
+    let entries = vec![
+        journal::Entry {
+            path: laps.clone(),
+            note: None,
+        },
+        journal::Entry {
+            path: no_laps.to_string(),
+            note: Some("front arb +1".to_string()),
+        },
+        journal::Entry {
+            path: laps.clone(),
+            note: Some("rear arb -1".to_string()),
+        },
+    ];
+    let session = TuningSession::default();
+    let c = load_campaign(entries, &session, "test").expect("lap-less middle stint tolerated");
+    assert_eq!(c.stints.len(), 2);
+    assert_eq!(c.no_laps, vec![no_laps.to_string()]);
+    assert_eq!(
+        c.stints[1].entry.note.as_deref(),
+        Some("front arb +1; rear arb -1")
+    );
+    assert!(c.in_progress.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn stint_stamps_parse_from_both_naming_schemes() {
+    assert_eq!(
+        stint_stamp("sessions/stint-20260720-233644.ftel"),
+        Some("20260720-233644")
+    );
+    assert_eq!(
+        stint_stamp("sessions/session-20260719-115355.ftel"),
+        Some("20260719-115355")
+    );
+    assert_eq!(stint_stamp("sessions/other.ftel"), None);
+}
