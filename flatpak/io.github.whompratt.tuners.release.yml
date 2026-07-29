@@ -1,13 +1,10 @@
-# Flatpak manifest (deb-based, self-distribution). Local iteration builds
-# from the deb produced by `pnpm tauri build --bundles deb`; a release
-# manifest swaps the path source for the GitHub asset url + sha256.
-# The flatpak id is independent of the app's internal identifier
-# (com.whompratt.tuners) — data lands in ~/.var/app/<this id>/.
-# Deb internals use the crate name: usr/bin/tuners-app, tuners-app.png
-# icons, desktop Exec/Icon/StartupWMClass=tuners-app.
+# Release-manifest variant: identical to io.github.whompratt.tuners.yml
+# except the deb comes from the published GitHub release asset (url +
+# sha256) instead of a local build — reproduces any shipped version
+# without a Rust/Node toolchain. Update BOTH the url and sha256 when
+# pointing at a new release:
+#   curl -sL <url> | sha256sum
 id: io.github.whompratt.tuners
-# flatpak ref branch (release channel), not a git branch; "stable" is the
-# ecosystem convention. build-bundle must name it explicitly.
 branch: stable
 runtime: org.gnome.Platform
 runtime-version: '49'
@@ -25,7 +22,8 @@ modules:
     buildsystem: simple
     sources:
       - type: file
-        path: ../target/release/bundle/deb/tuners_0.1.4_amd64.deb
+        url: https://github.com/whompratt/tuners/releases/download/v0.1.4/tuners_0.1.4_amd64.deb
+        sha256: d98e3dbf1c6bd29a8d1d97f4529f734a43fccd30f54bc7100e70849dcdad5d1a
         dest-filename: tuners.deb
     build-commands:
       - ar -x tuners.deb

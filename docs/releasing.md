@@ -2,57 +2,64 @@
 
 The release pipeline is `.github/workflows/release.yml`.
 Pushing a `v*` tag builds installers on GitHub's runners and attaches them
-to a **draft** GitHub release; nothing goes public until the draft is
-published by hand.
+to a **draft** GitHub release; the draft publishes automatically once every
+platform job (including the flatpak repackage) succeeds, so the updater
+feed never sees a half-uploaded release. `.github/workflows/ci.yml` runs
+the same release-profile build on every push to main, so tag-time build
+breakage (dependency downgrades, contract drift) is caught early.
 
 ## What a tag build produces
 
 | Runner | Artifacts |
 |---|---|
-| `windows-latest` | NSIS installer (`.exe`) + MSI |
-| `ubuntu-22.04` | AppImage, `.deb`, `.rpm` |
+| `windows-latest` | NSIS installer (`.exe`) + MSI, `.sig` updater files |
+| `ubuntu-22.04` | AppImage, `.deb`, `.rpm`, `.sig` updater files |
+| flatpak job | `.flatpak` bundle repackaged from the deb |
 
-Both jobs: pnpm install in `app/`, `vite build`, then `tauri-action` runs
-the bundler and uploads to the draft release. Rust and pnpm caches are
-keyed per runner, so the first build is slow (full workspace compile) and
-later ones much faster.
+Plus `latest.json` — the signed updater feed the installed apps poll.
 
 ## Cutting a release
 
-1. Bump the version. The authoritative one is `app/src-tauri/tauri.conf.json`
-   (`"version"`); it names the bundles and feeds the in-app display
-   (`getVersion()` in the nav rail). Keep `app/package.json` and the two
-   `Cargo.toml`s in step when convenient; nothing breaks if they lag, it's
-   just tidier.
-2. Commit, then tag and push:
+1. Bump the version: the ONLY authoritative field is `[workspace.package]`
+   `version` in the root `Cargo.toml` (both crates inherit it and
+   `tauri.conf.json` has no version key, so bundles and the in-app display
+   follow). The workflow refuses a tag that doesn't match it.
+   `app/package.json`'s version is inert.
+2. Update the flatpak manifest's deb filename pin
+   (`flatpak/io.github.whompratt.tuners.yml`) if building locally — CI
+   sed-patches it automatically.
+3. Commit, then tag and push:
 
    ```
    git tag v0.2.0
    git push origin v0.2.0
    ```
 
-3. Watch the `release` workflow under the repo's Actions tab (two jobs, one
-   per OS).
-4. When both finish, a draft release named `tuners v0.2.0` appears under
-   Releases with the installers attached. Smoke-test the Windows installer
-   on a real machine (install, launch, hook up Data Out), then edit the
-   notes and **publish** the draft.
+4. Watch the `release` workflow under the repo's Actions tab. When all
+   jobs finish the release publishes itself with a downloads table.
+   Smoke-test the Windows installer on a real machine when the change
+   warrants it.
 
-A bad build costs nothing: delete the draft and the tag
-(`git push origin :refs/tags/v0.2.0`), fix, re-tag.
+A bad build costs nothing while still drafted: delete the draft and the
+tag (`git push origin :refs/tags/v0.2.0`), fix, re-tag. After publication
+prefer shipping a fix version — installed apps may already have seen the
+feed.
 
 ## Status / caveats
 
-- **The workflow is untested until the first tag is pushed** (written
-  2026-07-27, never run). Expect first-tag debugging: runner deps and
-  tauri-action config are the usual suspects.
-- **The updater is deliberately not wired.** Installed apps won't
-  self-update; users install new versions manually. Wiring it needs:
-  `pnpm tauri signer generate` (keep the private key OUT of the repo; add
-  it as the `TAURI_SIGNING_PRIVATE_KEY` Actions secret), the public key +
-  endpoint in `tauri.conf.json`, the updater plugin in the shell, and
-  `tauri-action` then emits `latest.json` alongside the installers. Do
-  this once there are testers who'd benefit from auto-updates.
+- **Proven**: the full pipeline (both platforms + flatpak + auto-publish +
+  signed updater artifacts) ran green on v0.1.4 (2026-07-28).
+- **The updater is live**: `createUpdaterArtifacts` + pubkey are in
+  `tauri.conf.json`, `latest.json` is public (repo went public), and
+  installs self-update except under flatpak (gated: `/app` is immutable —
+  flatpak users update via the bundle/repo). The
+  `TAURI_SIGNING_PRIVATE_KEY` secret signs the artifacts; losing the
+  keypair (`~/.tauri/tuners.key` on the dev machine) orphans shipped
+  installs.
+- `flatpak/io.github.whompratt.tuners.release.yml` rebuilds any shipped
+  version from the published deb asset (url + sha256) without a
+  toolchain — update url + hash together when pointing it at a new
+  release.
 - **Installed-app data**: a packaged install anchors its data root at the
   OS app-data dir (`TUNERS_DATA` still overrides). A dev machine's live
   data needs a one-time copy there if you switch to the installed build.
