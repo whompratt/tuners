@@ -67,19 +67,111 @@ pub(super) fn exhausted_flip(
     Some((partner, !softer, text))
 }
 
+/// The flip target's own action phrase, for advice rewritten because the
+/// original family is not adjustable on this build (vs exhausted_flip's
+/// at-the-bound wording).
+fn flip_action(partner: journal::Family, softer: bool) -> &'static str {
+    use journal::Family as F;
+    match (partner, softer) {
+        (F::FrontRoll, true) => "soften the front (anti-roll bar or springs) instead",
+        (F::FrontRoll, false) => "stiffen the front (anti-roll bar or springs) instead",
+        (F::RearRoll, true) => "soften the rear (anti-roll bar or springs) instead",
+        (F::RearRoll, false) => "stiffen the rear (anti-roll bar or springs) instead",
+        (F::FrontAero, true) => "reduce front aero instead",
+        (F::FrontAero, false) => "add front aero instead",
+        (F::RearAero, true) => "reduce rear aero instead",
+        (F::RearAero, false) => "add rear aero instead",
+        _ => "work the other end of the car instead",
+    }
+}
+
 /// Attach current-tune absolutes (with slider headroom when limits are on
 /// file) to family-matched recommendations and build the display list of the
 /// latest revision. Advice whose direction is exhausted flips to the partner
-/// end of the car, or is downgraded when no partner exists.
+/// end of the car, or is dropped when no tunable partner exists; advice for
+/// a family the baseline tune omits entirely (the upgrade isn't fitted, so
+/// the game has no such sliders) is redirected or dropped the same way —
+/// never emitted as-is.
 pub(super) fn enrich_with_tune(
-    recs: &mut [recommend::Recommendation],
+    recs: &mut Vec<recommend::Recommendation>,
     session: &TuningSession,
 ) -> Vec<(String, String, Option<&'static str>)> {
     let Some(rev) = session.latest() else {
         return Vec::new();
     };
-    for r in recs.iter_mut() {
-        let Some(implied) = r.implied else { continue };
+    let tunable = |f: journal::Family| family_keys(f).iter().any(|k| rev.values.contains_key(*k));
+    // Non-tunable gate: tune entry is mandatory and the baseline grid is
+    // complete, so a whole family group absent from the baseline means the
+    // car cannot adjust it. The gate reads the implied family, or the rec's
+    // area for advice without a direction claim (damping advice on a car
+    // with no damper adjustment is equally impossible).
+    recs.retain_mut(|r| {
+        let Some(family) = r
+            .implied
+            .map(|i| i.family)
+            .or_else(|| journal::family_for_area(r.area))
+        else {
+            return true;
+        };
+        if tunable(family) {
+            return true;
+        }
+        let Some(implied) = r.implied else {
+            return false;
+        };
+        let Some((pf, ps, _)) = exhausted_flip(family, implied.softer) else {
+            return false;
+        };
+        if !tunable(pf) {
+            return false;
+        }
+        r.evidence.push(format!(
+            "the {} group is not in the baseline tune (not adjustable on this \
+             build); advice redirected (was: {})",
+            journal::family_key(family),
+            r.advice,
+        ));
+        r.advice = format!(
+            "no {} adjustment on this build; {}",
+            journal::family_key(family),
+            flip_action(pf, ps),
+        );
+        r.implied = Some(journal::Change {
+            family: pf,
+            softer: ps,
+            magnitude: None,
+        });
+        r.suggestion = None;
+        r.apply.clear();
+        true
+    });
+    // Slider-limit gate: a family whose every present slider sits at the
+    // advised bound cannot move that way. Flip to the partner end when one
+    // exists, is tunable, and has headroom of its own; otherwise the rec is
+    // dropped — "reduce X" with X at minimum must never be emitted.
+    let all_pinned = |family: journal::Family, softer: bool| {
+        let (mut present, mut with_limit, mut pinned_n) = (0usize, 0usize, 0usize);
+        for k in family_keys(family) {
+            let Some(v) = rev.values.get(*k) else {
+                continue;
+            };
+            present += 1;
+            if let (Ok(val), Some(lim)) = (
+                v.parse::<f32>(),
+                crate::advice::tuning::limit_of(&session.facts, k),
+            ) {
+                with_limit += 1;
+                if crate::advice::tuning::pinned(val, lim, softer, k) {
+                    pinned_n += 1;
+                }
+            }
+        }
+        with_limit > 0 && with_limit == present && pinned_n == with_limit
+    };
+    recs.retain_mut(|r| {
+        let Some(implied) = r.implied else {
+            return true;
+        };
         let keys = family_keys(implied.family);
         let mut known = Vec::new();
         let mut with_limit = 0usize;
@@ -123,27 +215,25 @@ pub(super) fn enrich_with_tune(
         // Exhausted = every slider of the family has a known limit and sits
         // at the advised bound. Unknown limits never claim exhaustion.
         if with_limit > 0 && with_limit == known.len() && pinned == with_limit {
-            if let Some((pf, ps, text)) = exhausted_flip(implied.family, implied.softer) {
-                r.evidence
-                    .push(format!("advised direction exhausted (was: {})", r.advice));
-                r.advice = text.to_string();
-                r.implied = Some(journal::Change {
-                    family: pf,
-                    softer: ps,
-                    magnitude: None,
-                });
-                // Any concrete value suggested for the exhausted end no
-                // longer applies to the rewritten advice.
-                r.suggestion = None;
-                r.apply.clear();
-            } else {
-                r.evidence.push(
-                    "every slider on this channel is already at the advised bound: \
-                     direction exhausted"
-                        .into(),
-                );
-                r.confidence = recommend::Confidence::Low;
-            }
+            let flip = exhausted_flip(implied.family, implied.softer)
+                .filter(|(pf, ps, _)| tunable(*pf) && !all_pinned(*pf, *ps));
+            let Some((pf, ps, text)) = flip else {
+                // No partner (or the partner is itself untunable/pinned):
+                // the advice is impossible to follow, so it is not advice.
+                return false;
+            };
+            r.evidence
+                .push(format!("advised direction exhausted (was: {})", r.advice));
+            r.advice = text.to_string();
+            r.implied = Some(journal::Change {
+                family: pf,
+                softer: ps,
+                magnitude: None,
+            });
+            // Any concrete value suggested for the exhausted end no
+            // longer applies to the rewritten advice.
+            r.suggestion = None;
+            r.apply.clear();
         } else if primary_pinned && keys.len() > 1 {
             r.evidence.push(format!(
                 "{} is at its bound; work with {}",
@@ -155,7 +245,8 @@ pub(super) fn enrich_with_tune(
                     .join(" / "),
             ));
         }
-    }
+        true
+    });
     rev.values
         .iter()
         .map(|(k, v)| {
@@ -183,6 +274,7 @@ pub(super) fn map_prior(
     ctx: &crate::advice::effectmap::MapContext,
     measurements: &[Measurement],
     recs: &[recommend::Recommendation],
+    baseline: Option<&crate::advice::tuning::Revision>,
 ) -> Option<recommend::Recommendation> {
     let cells = crate::advice::effectmap::aggregate(emap);
     let ranked = crate::advice::effectmap::rank(&cells, trends, ctx);
@@ -203,7 +295,14 @@ pub(super) fn map_prior(
         let advised = recs
             .iter()
             .any(|r| r.implied.is_some_and(|i| i.family == family));
-        (grounded && !tried && !advised && score >= 1.0).then_some((cell, family))
+        // A map cell for a family this build cannot adjust (whole group
+        // absent from the baseline) is not a suggestible experiment here.
+        let tunable = baseline.is_none_or(|rev| {
+            family_keys(family)
+                .iter()
+                .any(|k| rev.values.contains_key(*k))
+        });
+        (grounded && tunable && !tried && !advised && score >= 1.0).then_some((cell, family))
     })?;
     let dir = crate::advice::effectmap::direction_word(&cell.family, cell.softer);
     let movers: effects::Effects = cell

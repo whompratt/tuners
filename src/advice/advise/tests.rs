@@ -40,7 +40,12 @@ fn session_with(values: &[(&str, &str)], facts: &[(&str, &str)]) -> TuningSessio
 #[test]
 fn exhausted_front_softening_flips_to_rear() {
     let session = session_with(
-        &[("arb_f", "1"), ("springs_f", "100")],
+        &[
+            ("arb_f", "1"),
+            ("springs_f", "100"),
+            ("arb_r", "30"),
+            ("springs_r", "400"),
+        ],
         &[("limit_arb_f", "1..65"), ("limit_springs_f", "100..800")],
     );
     let mut recs = vec![balance_rec()];
@@ -64,6 +69,101 @@ fn exhausted_front_softening_flips_to_rear() {
             .iter()
             .any(|e| e.contains("advised direction exhausted"))
     );
+}
+
+/// A family whose whole group is absent from the baseline is not adjustable
+/// on this build: with a tunable partner the advice redirects, without one
+/// it is dropped (plan-014 field report: ARB advice on a car with locked
+/// ARBs).
+#[test]
+fn untunable_family_redirects_or_drops() {
+    // Rear roll present: front-roll advice redirects to stiffening the rear.
+    let session = session_with(&[("arb_r", "30"), ("springs_r", "400")], &[]);
+    let mut recs = vec![balance_rec()];
+    enrich_with_tune(&mut recs, &session);
+    assert_eq!(recs.len(), 1);
+    assert!(
+        recs[0]
+            .advice
+            .contains("no front roll adjustment on this build"),
+        "{}",
+        recs[0].advice
+    );
+    let implied = recs[0].implied.unwrap();
+    assert_eq!(implied.family, journal::Family::RearRoll);
+    assert!(!implied.softer);
+
+    // Neither end tunable: the rec disappears.
+    let session = session_with(&[("tire_pressure_f", "28")], &[]);
+    let mut recs = vec![balance_rec()];
+    enrich_with_tune(&mut recs, &session);
+    assert!(
+        recs.is_empty(),
+        "advice for unfitted parts must not survive"
+    );
+}
+
+/// Advice with no implied direction still names a system (area): damping
+/// advice on a build with no damper adjustment is equally impossible and
+/// is dropped by the same gate.
+#[test]
+fn untunable_area_without_direction_is_dropped() {
+    let session = session_with(&[("arb_f", "20"), ("arb_r", "30")], &[]);
+    let mut recs = vec![Recommendation {
+        apply: Vec::new(),
+        area: "damping",
+        advice: "reduce front damping".into(),
+        evidence: vec![],
+        confidence: Confidence::High,
+        suggestion: None,
+        implied: None,
+    }];
+    enrich_with_tune(&mut recs, &session);
+    assert!(recs.is_empty());
+}
+
+/// A directional rec whose family sits at the advised bound with no
+/// flip partner is dropped outright: "reduce X" with X at minimum is
+/// impossible advice, not low-confidence advice (plan-014 field report:
+/// "reduce rear diff accel" at 0%).
+#[test]
+fn exhausted_direction_without_partner_is_dropped() {
+    let session = session_with(&[("diff_accel_r", "0")], &[]);
+    let mut recs = vec![Recommendation {
+        apply: Vec::new(),
+        area: "traction",
+        advice: "reduce differential acceleration lock".into(),
+        evidence: vec![],
+        confidence: Confidence::High,
+        suggestion: None,
+        implied: Some(journal::Change {
+            family: journal::Family::DiffAccel,
+            softer: true,
+            magnitude: None,
+        }),
+    }];
+    enrich_with_tune(&mut recs, &session);
+    assert!(recs.is_empty(), "at-minimum reduce advice must not survive");
+
+    // The opposite direction has the whole range: it stands untouched.
+    let mut recs = vec![Recommendation {
+        implied: Some(journal::Change {
+            family: journal::Family::DiffAccel,
+            softer: false,
+            magnitude: None,
+        }),
+        ..Recommendation {
+            apply: Vec::new(),
+            area: "traction",
+            advice: "add rear diff accel lock".into(),
+            evidence: vec![],
+            confidence: Confidence::Medium,
+            suggestion: None,
+            implied: None,
+        }
+    }];
+    enrich_with_tune(&mut recs, &session);
+    assert_eq!(recs.len(), 1);
 }
 
 /// Only the primary slider pinned: advice stands, evidence points at the

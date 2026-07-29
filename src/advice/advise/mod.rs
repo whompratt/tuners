@@ -182,7 +182,7 @@ pub fn advise(
                 surface_loose: met.surface_loose,
                 aero: rule_context(&session).aero_tunable,
             };
-            if let Some(rec) = map_prior(&emap, &trends, &ctx, &[], &recs) {
+            if let Some(rec) = map_prior(&emap, &trends, &ctx, &[], &recs, session.latest()) {
                 recs.push(rec);
             }
         }
@@ -826,7 +826,14 @@ pub fn advise(
             surface_loose: met.surface_loose,
             aero: rule_context(&session).aero_tunable,
         };
-        if let Some(rec) = map_prior(&emap, &trends, &ctx, &c.measurements, &recs) {
+        if let Some(rec) = map_prior(
+            &emap,
+            &trends,
+            &ctx,
+            &c.measurements,
+            &recs,
+            session.latest(),
+        ) {
             recs.push(rec);
         }
     }
@@ -906,6 +913,12 @@ pub fn advise(
                 let mut target = cur + delta;
                 if let Some(lim) = crate::advice::tuning::limit_of(&session.facts, key) {
                     target = target.clamp(lim.0, lim.1);
+                }
+                // Clamping can land the target back on the current value
+                // (slider already at the bound): asking for no change is
+                // not a suggestion, and the apply would be a no-op save.
+                if (target - cur).abs() < 1e-3 {
+                    continue;
                 }
                 r.apply = vec![(key.to_string(), round(target).to_string())];
                 Some(format!(
