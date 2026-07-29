@@ -10,16 +10,16 @@ what you've already tried.
 
 ## Features
 
-- Automatic recording while you drive - stints are cut per drive, per car, and
+- Automatic recording while you drive: stints are cut per drive, per car, and
   per tune change, with no start/stop buttons.
 - Live view with lap charts and a confidence gauge showing how trustworthy the
   data collected so far is.
 - Tune A/B comparison built on spliced ideal laps, so a mistake or rewind
-  doesn't poison the verdict - with gains and losses broken down into corner
+  doesn't poison the verdict, with gains and losses broken down into corner
   entry, corner exit, and straights.
 - Directional tuning advice with the evidence cited: balance, damping, gearing,
   brake, differential, aero, and tire rules calibrated against real telemetry.
-- A tuning journal that remembers every change and its measured outcome -
+- A tuning journal that remembers every change and its measured outcome:
   advice builds on what you've already tried, flags changes that made the car
   slower, and homes in on the best value once a slider has been probed a few
   times.
@@ -41,7 +41,7 @@ _tuners_ is in active development. Planned:
 Pre-built Windows and Linux packages can be downloaded from the
 [latest release](https://github.com/whompratt/tuners/releases).
 
-Alternatively, build from source. You'll need Rust (stable), Node, and pnpm -
+Alternatively, build from source. You'll need Rust (stable), Node, and pnpm,
 plus the [Tauri prerequisites](https://tauri.app/start/prerequisites/) on Linux
 (WebKitGTK etc.):
 
@@ -56,16 +56,16 @@ pnpm tauri build    # or `pnpm tauri dev` to run unpackaged
 
 However you installed it, the app needs Forza Horizon 6 to send it telemetry:
 Settings → HUD and Gameplay → Data Out: On, IP: as shown in the app's
-first-time setup, port: anything outside 5200-5300 (default 20440) - then fully
+first-time setup, port: anything outside 5200-5300 (default 20440), then fully
 restart the game.
 
-If running _tuners_ under WSL NAT, use the WSL address from `hostname -I` -
+If running _tuners_ under WSL NAT, use the WSL address from `hostname -I`;
 localhost is not forwarded for UDP.
 
 ## Usage
 
 The desktop app is the main way in: it records automatically while you drive
-(race mode only - menus and free roam are skipped), shows live charts and a
+(race mode only; menus and free roam are skipped), shows live charts and a
 confidence gauge, and journals every tune change for A/B comparison and advice.
 
 The same engine is also available as command line tools:
@@ -93,36 +93,36 @@ everyone. It is **off by default** and nothing leaves your machine until you
 turn it on (Settings → telemetry sharing).
 
 **Why share?** The advice engine learns from real setup changes and their
-measured outcomes. The more telemetry it has seen - across more cars,
-surfaces, and drivers - the better its suggestions get, especially early in a
+measured outcomes. The more telemetry it has seen across more cars, surfaces,
+and drivers, the better its suggestions get, especially early in a
 tuning session before you've tried much yourself. More data means better
 advice for everyone, including you.
 
-**What is sent** - recorded telemetry (car physics data only - the game's
+**What is sent**: recorded telemetry (car physics data only; the game's
 Data Out packet contains no personal information) plus the car and tune
 settings needed to interpret it. Anything you typed as free text is stripped
 before export.
 
-**What is never sent** - names, notes, comments, or file paths. There are no
+**What is never sent**: names, notes, comments, or file paths. There are no
 accounts either: bundles carry only a random, pseudonymous sender id, so
 nothing links them to you as a person.
 
-**When it's sent** - uploads happen quietly in the background and never while
+**When it's sent**: uploads happen quietly in the background and never while
 you're driving.
 
-**Staying in control** - turn sharing off at any time. Older recordings are
+**Staying in control**: turn sharing off at any time. Older recordings are
 only shared if you explicitly ask, and `tuners export` lets you inspect
 exactly what a bundle contains before anything is uploaded.
 
-The full plain-language policy - including retention and how to have your
-data deleted - is in [docs/privacy.md](docs/privacy.md).
+The full plain-language policy, including retention and how to have your
+data deleted, is in [docs/privacy.md](docs/privacy.md).
 
 ## Docs
 
-- [docs/design.md](docs/design.md) - objectives, constraints, architecture, design principles
-- [docs/telemetry.md](docs/telemetry.md) - the packet, verified quirks, what's (not) available
-- [docs/guide.md](docs/guide.md) - user-facing capture & interpretation guidance
+- [docs/design.md](docs/design.md): objectives, constraints, architecture, design principles
+- [docs/telemetry.md](docs/telemetry.md): the packet, verified quirks, what's (not) available
+- [docs/guide.md](docs/guide.md): user-facing capture & interpretation guidance
 
 ## License
 
-GPL-3.0-or-later - see [LICENSE](LICENSE).
+GPL-3.0-or-later; see [LICENSE](LICENSE).
