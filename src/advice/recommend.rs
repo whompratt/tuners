@@ -191,7 +191,7 @@ pub fn recommend(
 ) -> Vec<Recommendation> {
     let mut recs = Vec::new();
 
-    let balance_sign = balance_rule(overall, per_lap, ctx, &mut recs);
+    let balance_sign = balance_rule(overall, per_lap, &mut recs);
     aero_rule(overall, ctx, &mut recs);
     power_balance_rule(overall, &mut recs);
     brake_rule(overall, &mut recs);
@@ -211,7 +211,6 @@ pub fn recommend(
 fn balance_rule(
     overall: &StintMetrics,
     per_lap: &[StintMetrics],
-    ctx: &Context,
     recs: &mut Vec<Recommendation>,
 ) -> Option<f32> {
     let idx = overall.understeer_index?;
