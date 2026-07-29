@@ -18,6 +18,14 @@ const PHASE_GAP: f32 = 0.10;
 /// reads <= +0.25; tarmac-only, since dirt trail-brake rotation is technique and
 /// reads +0.22..+0.67 even on reference tunes.
 const BRAKE_PUSH: f32 = 0.30;
+/// Braking-band index at or below this = the car rotates while braking:
+/// bias too far rear. Healthy tarmac stints read +0.07..+0.30 (8 cars, 40+
+/// stints; weight transfer leaves push under trail braking even on converged
+/// tunes); every deliberate rear-bias state measured at or below +0.03
+/// across three cars (GT-R 0% -0.06, McLaren 20% +0.01, doubted 570S +0.03,
+/// FWD Integra -0.21 under the sample gate). Set below the deliberate-slide
+/// provocation stint (+0.026), which must stay out.
+const BRAKE_REAR_ROTATE: f32 = 0.02;
 /// Transient-oversteer counter-signal gates (tarmac only; dirt reads 12-23%
 /// on-power everywhere because rotation is technique). Corpus: healthy AWD
 /// tarmac tunes read on-power <= 3.9% and rear-first <= 2.2%; the RWD cars
@@ -179,6 +187,7 @@ pub fn recommend(
     let balance_sign = balance_rule(overall, per_lap, ctx, &mut recs);
     aero_rule(overall, ctx, &mut recs);
     power_balance_rule(overall, &mut recs);
+    brake_rule(overall, &mut recs);
     tire_pressure_rule(overall, balance_sign, ctx.compound, &mut recs);
     traction_rule(overall, &mut recs);
     gearing_rule(overall, &mut recs);
@@ -482,8 +491,10 @@ fn balance_rule(
 
     // Entry-understeer corroborated by the braking band (tarmac only; dirt
     // trail-brake rotation is technique): brake balance is its own lever on
-    // the entry card, worth a separate journalable recommendation. Single-car
-    // calibration so far (one brake A/B), hence Low.
+    // the entry card, worth a separate journalable recommendation. Low
+    // because the front direction never separates cleanly: even the GT-R's
+    // 100%-front exemplar read only +0.23 (the adapting driver caps it), so
+    // clearing +0.30 means something genuinely extreme.
     if understeer
         && matches!(lean, PhaseLean::Entry)
         && !overall.surface_loose
@@ -501,7 +512,8 @@ fn balance_rule(
                 .into(),
             evidence: vec![format!(
                 "braking-band balance {brake:+.2} vs {BRAKE_PUSH:+.2} threshold \
-                 (healthy tarmac reads under +0.25)"
+                 (healthy tarmac reads +0.07..+0.30; even a 100%-front exemplar \
+                 read only +0.23)"
             )],
             confidence: Confidence::Low,
             suggestion: None,
@@ -513,6 +525,63 @@ fn balance_rule(
         });
     }
     Some(idx.signum())
+}
+
+/// Bias too far rear reads directly in the braking-conditioned band: the car
+/// rotates while braking-and-cornering, regardless of what the positional
+/// phase means say (the McLaren's bias-20 stint kept +0.20 entry push while
+/// its braking band collapsed to +0.01 — the band is the detector). Tarmac
+/// only: dirt trail-brake rotation is technique and reads +0.25..+0.67 on
+/// reference tunes.
+fn brake_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
+    let Some(brake) = overall
+        .balance_on_brake
+        .index
+        .filter(|_| overall.balance_on_brake.samples >= BAND_MIN_SAMPLES)
+    else {
+        return;
+    };
+    if overall.surface_loose || brake > BRAKE_REAR_ROTATE {
+        return;
+    }
+    let mut evidence = vec![format!(
+        "braking-band balance {brake:+.2}: healthy tarmac stints read +0.07..+0.30 \
+         across the library; deliberate rear-bias states read -0.21..+0.03 on three cars"
+    )];
+    if let Some(c) = &overall.corners
+        && let (Some(entry), _) = supported_pair(&c.entry, &c.exit)
+    {
+        evidence.push(format!(
+            "corner-entry balance {entry:+.2}{}",
+            if entry <= 0.0 {
+                " — the rotation reaches the whole entry phase"
+            } else {
+                " — the rotation lives in the braking zones alone"
+            }
+        ));
+    }
+    let os = &overall.transient_oversteer;
+    if os.countersteer_frac >= OS_COUNTERSTEER_FRAC {
+        evidence.push(format!(
+            "counter-steer {:.1}% of cornering: the rotation is costing corrections",
+            os.countersteer_frac * 100.0
+        ));
+    }
+    recs.push(Recommendation {
+        apply: Vec::new(),
+        area: "brakes",
+        advice: "shift brake balance forward: the car rotates while braking — \
+                 the rears are doing the stopping and letting go first"
+            .into(),
+        evidence,
+        confidence: Confidence::Medium,
+        suggestion: None,
+        implied: Some(Change {
+            family: Family::Brakes,
+            softer: false,
+            magnitude: None,
+        }),
+    });
 }
 
 /// Which corner phase an imbalance concentrates in, per the sign of the
@@ -1274,6 +1343,49 @@ mod tests {
             recs.iter().all(|r| r.area != "brakes"),
             "dirt trail-braking is technique"
         );
+    }
+
+    /// A braking band at or below BRAKE_REAR_ROTATE = bias too far rear,
+    /// regardless of the positional entry mean (the McLaren bias-20 shape:
+    /// entry still pushes, the braking zones rotate).
+    #[test]
+    fn rear_bias_rotation_fires_brakes_forward() {
+        let mut overall = base_metrics();
+        overall.balance_on_brake = band(2000, -0.06);
+        overall.corners = corners(-0.11, 0.10);
+        let recs = recommend(&overall, &[], &Default::default());
+        let brakes = recs.iter().find(|r| r.area == "brakes").unwrap();
+        assert_eq!(brakes.confidence, Confidence::Medium);
+        assert!(brakes.advice.contains("forward"), "{}", brakes.advice);
+        let implied = brakes.implied.unwrap();
+        assert_eq!(implied.family, Family::Brakes);
+        assert!(!implied.softer, "forward = higher %");
+    }
+
+    /// The rear-rotation gate stays silent on healthy bands, just above the
+    /// threshold (the deliberate-slide provocation stint reads +0.026), and
+    /// on dirt where brake rotation is technique.
+    #[test]
+    fn rear_bias_gate_edges_stay_silent() {
+        let mut overall = base_metrics();
+        overall.balance_on_brake = band(2000, 0.10);
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(recs.iter().all(|r| r.area != "brakes"));
+
+        overall.balance_on_brake = band(2000, 0.026);
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(recs.iter().all(|r| r.area != "brakes"));
+
+        overall.balance_on_brake = band(2000, -0.06);
+        overall.surface_loose = true;
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(recs.iter().all(|r| r.area != "brakes"));
+
+        // Under the sample gate the band is unsupported evidence.
+        overall.surface_loose = false;
+        overall.balance_on_brake = band(200, -0.21);
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(recs.iter().all(|r| r.area != "brakes"));
     }
 
     /// Exit-concentrated understeer under power is NOT a front-bar problem:
