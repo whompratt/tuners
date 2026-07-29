@@ -8,6 +8,34 @@ advice. Setup changes are A/B-compared via spliced ideal laps that are robust to
 driving mistakes, and a history-aware tuning journal means advice learns from
 what you've already tried.
 
+## Features
+
+- Automatic recording while you drive - stints are cut per drive, per car, and
+  per tune change, with no start/stop buttons.
+- Live view with lap charts and a confidence gauge showing how trustworthy the
+  data collected so far is.
+- Tune A/B comparison built on spliced ideal laps, so a mistake or rewind
+  doesn't poison the verdict - with gains and losses broken down into corner
+  entry, corner exit, and straights.
+- Directional tuning advice with the evidence cited: balance, damping, gearing,
+  brake, differential, aero, and tire rules calibrated against real telemetry.
+- A tuning journal that remembers every change and its measured outcome -
+  advice builds on what you've already tried, flags changes that made the car
+  slower, and homes in on the best value once a slider has been probed a few
+  times.
+- One-click apply: accept a suggestion and it becomes the next tune revision.
+- Imperial, metric, and UK display units.
+- The full analysis engine is also available as command line tools.
+
+_tuners_ is in active development. Planned:
+
+- Advice informed by the whole community's shared telemetry, so a car you've
+  never tuned gets useful suggestions from the very first stint.
+- Full starting-setup suggestions for a car, rather than one adjustment at a
+  time.
+- Detection of more handling problems (snap oversteer, brake dive, sluggish
+  direction changes) as calibration data lands.
+
 ## Installation
 
 Pre-built Windows and Linux packages can be downloaded from the
