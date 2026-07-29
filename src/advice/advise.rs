@@ -585,23 +585,34 @@ fn drop_missing_entries(
     (kept, missing)
 }
 
-/// Newest stint recording in `dir` whose first driving frame matches `car`
-/// (any car when None).
-pub fn latest_stint_for_car(dir: &str, car: Option<i32>) -> Option<String> {
+/// Stint recordings in `dir` whose first driving frame matches `car` (any
+/// car when None), newest first. Lazy: the car check opens each file only
+/// as the iterator is advanced.
+pub fn stints_for_car_newest_first(
+    dir: &str,
+    car: Option<i32>,
+) -> impl Iterator<Item = String> + use<> {
     let mut paths: Vec<_> = std::fs::read_dir(dir)
-        .ok()?
+        .into_iter()
+        .flatten()
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "ftel"))
         .collect();
     paths.sort();
-    paths.iter().rev().find_map(|p| {
+    paths.into_iter().rev().filter_map(move |p| {
         let matches = match car {
             None => true,
-            Some(car) => crate::api::stint_car(p) == Some(car),
+            Some(car) => crate::api::stint_car(&p) == Some(car),
         };
         matches.then(|| p.to_string_lossy().into_owned())
     })
+}
+
+/// Newest stint recording in `dir` whose first driving frame matches `car`
+/// (any car when None).
+pub fn latest_stint_for_car(dir: &str, car: Option<i32>) -> Option<String> {
+    stints_for_car_newest_first(dir, car).next()
 }
 
 /// One measured effect for a family, harvested from the campaign: a stint
@@ -1231,11 +1242,32 @@ pub fn advise(
     implicit_steps(&text, &mut entries, session.car, stints_dir);
 
     if entries.is_empty() {
-        // No journal yet: blind advice on the session car's latest stint.
-        let path = latest_stint_for_car(stints_dir, session.car)
-            .ok_or("no stints recorded yet; drive first")?;
-        let stint = analysis::Stint::load(path.as_ref()).map_err(|e| format!("{path}: {e}"))?;
-        let mut recs = blind_recommendations(&stint, &path, &rule_context(&session))?;
+        // No journal yet: blind advice on the session car's newest stint
+        // that contains real driving. The newest recording is surprisingly
+        // often a menu artifact (event entered, quit from the pause menu
+        // auto-cuts a tiny stint) — skip back to the last real drive
+        // instead of erroring on it.
+        let mut first_err: Option<String> = None;
+        let mut picked = None;
+        for path in stints_for_car_newest_first(stints_dir, session.car) {
+            match analysis::Stint::load(path.as_ref()) {
+                Ok(stint) => match blind_recommendations(&stint, &path, &rule_context(&session)) {
+                    Ok(recs) => {
+                        picked = Some((path, stint, recs));
+                        break;
+                    }
+                    Err(e) => {
+                        first_err.get_or_insert(e);
+                    }
+                },
+                Err(e) => {
+                    first_err.get_or_insert(format!("{path}: {e}"));
+                }
+            }
+        }
+        let Some((path, stint, mut recs)) = picked else {
+            return Err(first_err.unwrap_or_else(|| "no stints recorded yet; drive first".into()));
+        };
         // Cold start: no journal means no local trends, but the driver's
         // pooled history from other cars can still rank one untried lever
         // from the effect map — the first informed suggestion of a fresh
@@ -2269,6 +2301,44 @@ mod tests {
                     .unwrap();
             }
         }
+    }
+
+    /// The pause-menu auto-cut shape: race-on frames, ordinal present, but
+    /// the car never moves — no driving segment survives the 5s/speed gates.
+    fn write_stint_menu_only(path: &Path) {
+        let mut w = crate::telemetry::stint::StintWriter::create(path).unwrap();
+        for i in 0..100 {
+            let t = i as f32 * 0.1;
+            let f = crate::telemetry::packet::TelemetryFrame {
+                is_race_on: true,
+                current_race_time: t,
+                car_ordinal: 42,
+                ..Default::default()
+            };
+            w.write_packet((t * 1e6) as u64 + 1, &crate::telemetry::packet::encode(&f))
+                .unwrap();
+        }
+    }
+
+    /// Blind mode (no journal yet) must not die when the NEWEST recording is
+    /// a menu artifact: it advises on the newest stint with real driving.
+    #[test]
+    fn blind_advice_skips_menu_only_newest_stint() {
+        let dir = std::env::temp_dir().join(format!("tuners-blindskip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let driven = dir.join("stint-20260101-000000.ftel");
+        write_stint_with_laps(&driven);
+        write_stint_menu_only(&dir.join("stint-20260102-000000.ftel"));
+
+        let v = advise(
+            &dir.join("no-journal.txt").to_string_lossy(),
+            &dir.join("no-session.txt"),
+            &dir.to_string_lossy(),
+        )
+        .expect("menu-only newest stint tolerated in blind mode");
+        assert_eq!(v.advice_for, driven.to_string_lossy());
+        assert!(v.journal.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A mid-campaign stint with no completed laps (event entered, abandoned

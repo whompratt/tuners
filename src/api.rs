@@ -563,8 +563,22 @@ fn archive_active(
 }
 
 fn append_line(path: &str, line: &str) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let mut f = std::fs::OpenOptions::new().append(true).open(path)?;
+    use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .append(true)
+        .open(path)?;
+    // A file whose last write lacked a trailing newline (e.g. a hand-edited
+    // journal) must not have the line glued onto its final one — a parked
+    // boundary marker swallowed into a note is silently lost to the parser.
+    if f.seek(SeekFrom::End(0))? > 0 {
+        f.seek(SeekFrom::End(-1))?;
+        let mut last = [0u8; 1];
+        f.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            writeln!(f)?;
+        }
+    }
     writeln!(f, "{line}")
 }
 
@@ -1794,6 +1808,16 @@ mod tests {
             "# car\nsessions/a.ftel | baseline\nsessions/b.ftel | x\n",
         )
         .unwrap();
+
+        // A boundary marker appended to a journal whose last line has no
+        // trailing newline (hand-edited) must not glue onto the note.
+        let ragged = dir.join("ragged.txt");
+        std::fs::write(&ragged, "sessions/a.ftel | front arb stiffer").unwrap();
+        append_line(&ragged.to_string_lossy(), "# parked 20260101-000000").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&ragged).unwrap(),
+            "sessions/a.ftel | front arb stiffer\n# parked 20260101-000000\n"
+        );
 
         // New session: A is archived (session + journal move together), the
         // fresh session keeps unit prefs and takes the posted name.
