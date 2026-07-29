@@ -50,7 +50,9 @@ fn bundle_round_trip_from_real_fixture() {
     assert_eq!(b.manifest.get("packets").map(String::as_str), Some("1200"));
     assert_eq!(
         b.manifest.get("bundle_version").map(String::as_str),
-        Some("1")
+        Some("2"),
+        "the real fixture is uniform: the transpose path must engage, \
+         never the fallback"
     );
     assert!(b.manifest.contains_key("consent"));
 
@@ -128,4 +130,32 @@ fn export_refuses_without_a_session_car() {
     };
     let err = bundle::build(stint_path, &session, "").unwrap_err();
     assert!(err.contains("no car"), "{err}");
+}
+
+/// A recording the transpose gate rejects (mixed record lengths) still
+/// bundles — as v1, with the raw bytes stored — and opens transparently.
+/// The gate exists for damaged files only: every real recording is uniform,
+/// so a v1 fallback showing up in practice is a signal to investigate, not
+/// normal operation.
+#[test]
+fn irregular_recording_falls_back_to_v1() {
+    let dir = std::env::temp_dir().join(format!("tuners-v1fb-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("stint-19700101-000000.ftel");
+    let mut raw = Vec::from(*tuners::telemetry::stint::MAGIC);
+    for (t, len) in [(1_000_000u64, 324u32), (1_016_667, 16)] {
+        raw.extend_from_slice(&t.to_le_bytes());
+        raw.extend_from_slice(&len.to_le_bytes());
+        raw.extend(std::iter::repeat_n(0xABu8, len as usize));
+    }
+    std::fs::write(&path, &raw).unwrap();
+
+    let (_, bytes) = bundle::build(&path, &fixture_session(), "").unwrap();
+    let b = bundle::open(&bytes).unwrap();
+    assert_eq!(
+        b.manifest.get("bundle_version").map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(b.stint, raw, "fallback stores the recording verbatim");
+    let _ = std::fs::remove_dir_all(&dir);
 }

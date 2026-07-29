@@ -27,15 +27,26 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
-pub const BUNDLE_VERSION: &str = "1";
+/// Version written when the recording transposes (v2, columnar stint
+/// member). A recording the transpose gate rejects falls back to "1" (raw
+/// bytes) — loudly, never silently: a quiet fallback would forfeit the
+/// compression win on every stint and hide recording-format drift.
+pub const BUNDLE_VERSION: &str = "2";
+/// The raw-stint layout; still written by the fallback path and accepted
+/// by `open` forever (received v1 bundles never need migrating).
+pub const BUNDLE_VERSION_V1: &str = "1";
+/// Magic of the transposed stint member: byte-columnar re-layout of a
+/// uniform-record .ftel, exactly reversible.
+const TRANSPOSED_MAGIC: &[u8; 8] = b"FH6TELT2";
 const CONSENT: &str = "collected with informed opt-in consent for tuners development; \
                        free text is stripped before export";
 /// Decompression guard for ingest: no legitimate stint approaches this.
 const MAX_UNPACKED: usize = 1 << 30;
-/// Measured FLAT on real telemetry (levels 3/9/15/19 all ≈1.9x on a 20.8 MB
-/// stint, 2026-07-26): the packet format's entropy is the wall; the plan's
-/// byte-columnar transpose is the v2 lever if size ever matters. 9 costs
-/// ~0.5s per stint, a hair smaller than default.
+/// Raw stints measured FLAT across zstd levels (≈1.9x; the interleaved
+/// packet layout is the wall). The v2 transpose is what moves the number:
+/// whole-library sweep 2026-07-29 (74 recordings, 1.2 GB) measured 1.99x
+/// raw vs 3.12x transposed at this level, zero fallbacks, all files
+/// byte-identical on round-trip (examples/transpose_scan.rs re-runs it).
 const ZSTD_LEVEL: i32 = 9;
 
 #[derive(Debug)]
@@ -61,6 +72,104 @@ pub fn bundle_name(car: i32, stint_path: &Path) -> Result<String, String> {
         .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
         .ok_or_else(|| format!("{file_name}: expected <name>.ftel with a plain-ascii stem"))?;
     Ok(format!("bundle-{car}-{stamp}.tar.zst"))
+}
+
+/// Byte-columnar transpose of a uniform-record .ftel: header (record
+/// count + record length), the recv_us stream delta-encoded, then payload
+/// byte k of every record contiguous. Same bytes, compressor-friendly
+/// order (~4.7x vs ~1.9x measured). Err = the recording is not
+/// transposable (mixed record lengths, truncated tail) and names why —
+/// the caller's fallback must be able to say the reason out loud.
+pub fn transpose_recording(raw: &[u8]) -> Result<Vec<u8>, String> {
+    let body = raw
+        .strip_prefix(crate::telemetry::stint::MAGIC.as_slice())
+        .ok_or("bad magic")?;
+    let mut off = 0usize;
+    let mut count = 0usize;
+    let mut rec_len: Option<u32> = None;
+    while off < body.len() {
+        if body.len() - off < 12 {
+            return Err(format!("{} trailing bytes", body.len() - off));
+        }
+        let len = u32::from_le_bytes(body[off + 8..off + 12].try_into().unwrap());
+        match rec_len {
+            None => rec_len = Some(len),
+            Some(l) if l != len => {
+                return Err(format!("mixed record lengths ({l} then {len})"));
+            }
+            _ => {}
+        }
+        if body.len() - off - 12 < len as usize {
+            return Err("truncated final record".into());
+        }
+        off += 12 + len as usize;
+        count += 1;
+    }
+    let rec_len = rec_len.ok_or("no records")?;
+    if rec_len == 0 {
+        return Err("zero-length records".into());
+    }
+    let l = rec_len as usize;
+    let stride = 12 + l;
+    let mut out = Vec::with_capacity(raw.len());
+    out.extend_from_slice(TRANSPOSED_MAGIC);
+    out.extend_from_slice(&(count as u64).to_le_bytes());
+    out.extend_from_slice(&rec_len.to_le_bytes());
+    let mut prev = 0u64;
+    for i in 0..count {
+        let t = u64::from_le_bytes(body[i * stride..i * stride + 8].try_into().unwrap());
+        out.extend_from_slice(&t.wrapping_sub(prev).to_le_bytes());
+        prev = t;
+    }
+    for k in 0..l {
+        for i in 0..count {
+            out.push(body[i * stride + 12 + k]);
+        }
+    }
+    Ok(out)
+}
+
+/// Exact inverse of `transpose_recording`: reproduces the original .ftel
+/// bytes, header included.
+pub fn untranspose_recording(blob: &[u8]) -> Result<Vec<u8>, String> {
+    let body = blob
+        .strip_prefix(TRANSPOSED_MAGIC.as_slice())
+        .ok_or("bad transposed magic")?;
+    if body.len() < 12 {
+        return Err("truncated transpose header".into());
+    }
+    let count = u64::from_le_bytes(body[0..8].try_into().unwrap()) as usize;
+    let rec_len = u32::from_le_bytes(body[8..12].try_into().unwrap());
+    let l = rec_len as usize;
+    let expected = count
+        .checked_mul(8 + l)
+        .and_then(|n| n.checked_add(12))
+        .ok_or("size overflow")?;
+    if body.len() != expected {
+        return Err(format!(
+            "transposed payload {} bytes != expected {expected}",
+            body.len()
+        ));
+    }
+    let total = 8 + count * (12 + l);
+    if total > MAX_UNPACKED {
+        return Err("reconstructs beyond the sanity limit".into());
+    }
+    let times = &body[12..12 + count * 8];
+    let cols = &body[12 + count * 8..];
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(crate::telemetry::stint::MAGIC);
+    let mut prev = 0u64;
+    for i in 0..count {
+        let d = u64::from_le_bytes(times[i * 8..i * 8 + 8].try_into().unwrap());
+        prev = prev.wrapping_add(d);
+        out.extend_from_slice(&prev.to_le_bytes());
+        out.extend_from_slice(&rec_len.to_le_bytes());
+        for col in cols.chunks_exact(count) {
+            out.push(col[i]);
+        }
+    }
+    Ok(out)
 }
 
 /// Build the bundle for one recording. Returns (file name, bytes).
@@ -98,17 +207,28 @@ pub fn build(
     }
     let stint = std::fs::read(stint_path).map_err(|e| e.to_string())?;
 
+    // Columnar member when the recording is uniform (every real recording
+    // is); otherwise raw v1 — and the fallback SAYS SO, because a silent
+    // one would quietly cost the compression win on every stint.
+    let (stint_member, version) = match transpose_recording(&stint) {
+        Ok(t) => (t, BUNDLE_VERSION),
+        Err(reason) => {
+            eprintln!("bundle: {name}: not transposable ({reason}); storing raw as v1");
+            (stint.clone(), BUNDLE_VERSION_V1)
+        }
+    };
+
     let session_txt = export_session(session).render();
     let journal_txt = export_journal(journal_text, car);
 
     let mut manifest = BTreeMap::new();
-    manifest.insert("bundle_version".into(), BUNDLE_VERSION.to_string());
+    manifest.insert("bundle_version".into(), version.to_string());
     manifest.insert("tool_version".into(), env!("CARGO_PKG_VERSION").to_string());
     manifest.insert("car".into(), car.to_string());
     manifest.insert("stint_stamp".into(), stamp.to_string());
     manifest.insert("packets".into(), packets.to_string());
     manifest.insert("consent".into(), CONSENT.to_string());
-    manifest.insert("sha256_stint".into(), sha256_hex(&stint));
+    manifest.insert("sha256_stint".into(), sha256_hex(&stint_member));
     manifest.insert("sha256_session".into(), sha256_hex(session_txt.as_bytes()));
     manifest.insert("sha256_journal".into(), sha256_hex(journal_txt.as_bytes()));
 
@@ -118,7 +238,7 @@ pub fn build(
         "manifest.json",
         render_manifest(&manifest).as_bytes(),
     );
-    tar_append(&mut tar, "stint.ftel", &stint);
+    tar_append(&mut tar, "stint.ftel", &stint_member);
     tar_append(&mut tar, "session.txt", session_txt.as_bytes());
     tar_append(&mut tar, "journal.txt", journal_txt.as_bytes());
     tar.extend_from_slice(&[0u8; 1024]);
@@ -160,10 +280,14 @@ pub fn open(bytes: &[u8]) -> Result<Bundle, String> {
     }
 
     let manifest = parse_manifest(&String::from_utf8_lossy(&members["manifest.json"]))?;
-    if manifest.get("bundle_version").map(String::as_str) != Some(BUNDLE_VERSION) {
+    let version = manifest
+        .get("bundle_version")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if version != BUNDLE_VERSION && version != BUNDLE_VERSION_V1 {
         return Err(format!(
-            "bundle version {:?} unsupported (expected {BUNDLE_VERSION})",
-            manifest.get("bundle_version")
+            "bundle version {version:?} unsupported (expected {BUNDLE_VERSION_V1} or {BUNDLE_VERSION})"
         ));
     }
     for (member, key) in [
@@ -178,13 +302,21 @@ pub fn open(bytes: &[u8]) -> Result<Bundle, String> {
             return Err(format!("{member}: hash mismatch vs manifest"));
         }
     }
-    if !members["stint.ftel"].starts_with(crate::telemetry::stint::MAGIC) {
+    // v2 stores the stint columnar; reconstruct so every consumer (ingest's
+    // re-decode, self-verify's byte-compare) sees the original recording.
+    let stored = members.remove("stint.ftel").unwrap();
+    let stint = if version == BUNDLE_VERSION {
+        untranspose_recording(&stored).map_err(|e| format!("stint.ftel: {e}"))?
+    } else {
+        stored
+    };
+    if !stint.starts_with(crate::telemetry::stint::MAGIC) {
         return Err("stint.ftel: bad magic".into());
     }
 
     Ok(Bundle {
         manifest,
-        stint: members.remove("stint.ftel").unwrap(),
+        stint,
         session_txt: String::from_utf8_lossy(&members["session.txt"]).into_owned(),
         journal_txt: String::from_utf8_lossy(&members["journal.txt"]).into_owned(),
     })
@@ -442,6 +574,69 @@ fn tar_entries(tar: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ftel(records: &[(u64, &[u8])]) -> Vec<u8> {
+        let mut raw = Vec::from(*crate::telemetry::stint::MAGIC);
+        for (t, payload) in records {
+            raw.extend_from_slice(&t.to_le_bytes());
+            raw.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            raw.extend_from_slice(payload);
+        }
+        raw
+    }
+
+    /// The transpose is an exact inverse pair on uniform recordings and
+    /// names its reason on every rejected shape.
+    #[test]
+    fn transpose_round_trips_and_gates_name_reasons() {
+        let uniform = ftel(&[
+            (1_000_000, &[1u8, 2, 3, 4]),
+            (1_016_667, &[5, 6, 7, 8]),
+            (1_033_333, &[9, 10, 11, 12]),
+        ]);
+        let t = transpose_recording(&uniform).unwrap();
+        assert!(t.starts_with(TRANSPOSED_MAGIC));
+        assert_eq!(untranspose_recording(&t).unwrap(), uniform);
+
+        let single = ftel(&[(42, &[7u8; 324])]);
+        let t = transpose_recording(&single).unwrap();
+        assert_eq!(untranspose_recording(&t).unwrap(), single);
+
+        let mixed = ftel(&[(1, &[0u8; 324]), (2, &[0u8; 16])]);
+        assert!(
+            transpose_recording(&mixed).unwrap_err().contains("mixed"),
+            "reason names the shape"
+        );
+
+        let mut trailing = ftel(&[(1, &[0u8; 8])]);
+        trailing.extend_from_slice(&[0xFF; 5]);
+        assert!(
+            transpose_recording(&trailing)
+                .unwrap_err()
+                .contains("trailing")
+        );
+
+        let mut truncated = ftel(&[(1, &[0u8; 8])]);
+        truncated.truncate(truncated.len() - 3);
+        assert!(
+            transpose_recording(&truncated)
+                .unwrap_err()
+                .contains("truncated")
+        );
+
+        let empty = ftel(&[]);
+        assert!(
+            transpose_recording(&empty)
+                .unwrap_err()
+                .contains("no records")
+        );
+
+        // A corrupt transposed blob must never reconstruct silently.
+        let good = transpose_recording(&uniform).unwrap();
+        let mut short = good.clone();
+        short.truncate(good.len() - 1);
+        assert!(untranspose_recording(&short).is_err());
+    }
 
     #[test]
     fn tar_roundtrip() {
