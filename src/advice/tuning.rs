@@ -39,6 +39,11 @@ pub struct TuningSession {
     /// Car facts telemetry can't provide: front_weight_pct, weight, compound,
     /// abs/tcs/stability, plus anything else the user records. Free key set.
     pub facts: BTreeMap<String, String>,
+    /// Tune values copied from a source project at duplication: pure form
+    /// seed for the baseline grid, NOT a revision. Invisible to `latest()`
+    /// and diffs; cleared by the first tune save (which becomes the real
+    /// baseline). Serialized as a stampless `[prefill]` section.
+    pub prefill: Option<BTreeMap<String, String>>,
     pub revisions: Vec<Revision>,
 }
 
@@ -266,15 +271,25 @@ impl TuningSession {
     pub fn parse(text: &str) -> TuningSession {
         let mut session = TuningSession::default();
         let mut current: Option<Revision> = None;
+        let mut in_prefill = false;
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line == "[prefill]" {
+                if let Some(rev) = current.take() {
+                    session.revisions.push(rev);
+                }
+                in_prefill = true;
+                session.prefill.get_or_insert_with(BTreeMap::new);
                 continue;
             }
             if let Some(rest) = line.strip_prefix("[tune") {
                 if let Some(rev) = current.take() {
                     session.revisions.push(rev);
                 }
+                in_prefill = false;
                 current = Some(Revision {
                     stamp: rest.trim_end_matches(']').trim().to_string(),
                     values: BTreeMap::new(),
@@ -288,6 +303,12 @@ impl TuningSession {
             match &mut current {
                 Some(rev) => {
                     rev.values.insert(key.to_string(), value.to_string());
+                }
+                None if in_prefill => {
+                    session
+                        .prefill
+                        .get_or_insert_with(BTreeMap::new)
+                        .insert(key.to_string(), value.to_string());
                 }
                 None if key == "car" => session.car = value.parse().ok(),
                 None => {
@@ -312,6 +333,12 @@ impl TuningSession {
         }
         for (k, v) in &self.facts {
             out.push_str(&format!("{k} = {v}\n"));
+        }
+        if let Some(prefill) = self.prefill.as_ref().filter(|p| !p.is_empty()) {
+            out.push_str("\n[prefill]\n");
+            for (k, v) in prefill {
+                out.push_str(&format!("{k} = {v}\n"));
+            }
         }
         for rev in &self.revisions {
             out.push_str(&format!("\n[tune {}]\n", rev.stamp));
@@ -448,6 +475,49 @@ mod tests {
         assert_eq!(parsed.car, Some(2352));
         assert_eq!(parsed.facts.get("abs").map(String::as_str), Some("on"));
         assert_eq!(parsed.revisions, s.revisions);
+    }
+
+    /// The `[prefill]` section round-trips, stays invisible to latest(), and
+    /// coexists with revisions (belt and braces: save_tune clears it on the
+    /// baseline save, but a hand-edited file must still parse sanely).
+    #[test]
+    fn prefill_roundtrips_and_stays_out_of_revisions() {
+        let mut s = TuningSession {
+            car: Some(2352),
+            ..Default::default()
+        };
+        s.facts.insert("limit_springs_f".into(), "100..600".into());
+        s.prefill = Some(
+            [("arb_f", "24"), ("arb_r", "30")]
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+        let parsed = TuningSession::parse(&s.render());
+        assert_eq!(parsed.prefill, s.prefill);
+        assert_eq!(parsed.car, Some(2352));
+        assert!(parsed.revisions.is_empty());
+        assert_eq!(parsed.latest(), None, "prefill is not a revision");
+        assert_eq!(
+            parsed.facts.get("limit_springs_f").map(String::as_str),
+            Some("100..600"),
+            "prefill keys must not leak into facts"
+        );
+        assert!(!parsed.facts.contains_key("arb_f"));
+
+        // Prefill plus revisions parses with both intact.
+        s.revisions.push(rev("20260729-120000", &[("arb_f", "22")]));
+        let parsed = TuningSession::parse(&s.render());
+        assert_eq!(parsed.revisions, s.revisions);
+        assert_eq!(parsed.prefill, s.prefill);
+        assert_eq!(
+            parsed.latest().unwrap().values.get("arb_f").unwrap(),
+            "22",
+            "latest() reads revisions, never the prefill"
+        );
+
+        // Absent section on old files parses as None.
+        assert_eq!(TuningSession::parse("car = 1\n").prefill, None);
     }
 
     #[test]

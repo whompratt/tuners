@@ -404,6 +404,144 @@ fn partial_saves_merge_and_net_into_one_note() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Project duplication: setup state (car, facts, limits, latest tune as a
+/// prefill) copies; campaign history never does. The first save after
+/// duplication is still the explicit baseline and clears the prefill.
+#[test]
+fn duplicate_session_copies_setup_never_history() {
+    let dir = std::env::temp_dir().join(format!("tuners-duplicate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let session_file = dir.join("tune-session.txt");
+    let journal_base = dir.join("tune-journal.txt");
+    let (sf, jb) = (
+        session_file.to_string_lossy().into_owned(),
+        journal_base.to_string_lossy().into_owned(),
+    );
+
+    // Source: car 2352 with facts, a limit, and two revisions.
+    let mut src = crate::advice::tuning::TuningSession {
+        car: Some(2352),
+        ..Default::default()
+    };
+    src.facts.insert("name".into(), "gt circuit".into());
+    src.facts.insert("description".into(), "original".into());
+    src.facts.insert("front_weight_pct".into(), "42.5".into());
+    src.facts
+        .insert("limit_springs_f".into(), "100..600".into());
+    src.facts.insert("unit_pressure".into(), "psi".into());
+    for (stamp, arb) in [("1", "24"), ("2", "22")] {
+        src.revisions.push(crate::advice::tuning::Revision {
+            stamp: stamp.into(),
+            values: [
+                ("arb_f".to_string(), arb.to_string()),
+                ("arb_r".to_string(), "30".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        });
+    }
+    src.save(&session_file).unwrap();
+    let journal_live = crate::advice::tuning::journal_path_for(Some(2352), &jb);
+    std::fs::write(&journal_live, "sessions/a.ftel | baseline\n").unwrap();
+
+    // Duplicate the ACTIVE project (same car): the active pair archives
+    // (freeing the live journal), the copy has the facts and limits, the
+    // posted name, NO revisions, and the source's latest tune as prefill.
+    let dup = duplicate_session(None, Some("exemplar run".into()), None, &sf, &jb).unwrap();
+    assert_eq!(dup.car, Some(2352));
+    assert_eq!(dup.facts.get("name").unwrap(), "exemplar run");
+    assert!(
+        !dup.facts.contains_key("description"),
+        "unposted description is removed, not inherited"
+    );
+    assert_eq!(dup.facts.get("front_weight_pct").unwrap(), "42.5");
+    assert_eq!(dup.facts.get("limit_springs_f").unwrap(), "100..600");
+    assert_eq!(dup.revisions, 0);
+    let prefill = dup.prefill.expect("latest tune arrives as prefill");
+    assert_eq!(prefill.get("arb_f").unwrap(), "22");
+    assert!(
+        !Path::new(&journal_live).exists(),
+        "source journal archived with its campaign, not inherited"
+    );
+    let list = sessions_view(&sf, &jb);
+    assert!(
+        list.archived
+            .iter()
+            .any(|r| r.name.as_deref() == Some("gt circuit") && r.revisions == 2),
+        "source remains resumable"
+    );
+
+    // First save after duplication: baseline (no note), prefill cleared.
+    let recorder = crate::telemetry::record::new_shared();
+    let values: Vec<(String, String)> = [("arb_f", "23"), ("arb_r", "30")]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let out = save_tune(&values, false, &session_file, &recorder).unwrap();
+    assert_eq!(out.note, None, "pre-drive tweaks never journal");
+    let s = crate::advice::tuning::TuningSession::load(&session_file);
+    assert_eq!(s.prefill, None, "prefill cleared by the baseline save");
+    assert_eq!(s.revisions.len(), 1);
+    // Second save journals a normal note against the baseline.
+    let values: Vec<(String, String)> = [("arb_f", "21"), ("arb_r", "30")]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let out = save_tune(&values, false, &session_file, &recorder).unwrap();
+    assert_eq!(out.note.as_deref(), Some("front arb -2"));
+
+    // Duplicate from the archived id: same copy semantics.
+    let id = list.archived[0].id.clone().unwrap();
+    let dup2 = duplicate_session(Some(id), Some("from archive".into()), None, &sf, &jb).unwrap();
+    assert_eq!(dup2.car, Some(2352));
+    assert_eq!(dup2.prefill.unwrap().get("arb_f").unwrap(), "22");
+
+    // Unknown id / bad id / carless source.
+    assert_eq!(
+        duplicate_session(Some("2352-19700101-000000".into()), None, None, &sf, &jb)
+            .unwrap_err()
+            .kind,
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        duplicate_session(Some("../evil".into()), None, None, &sf, &jb)
+            .unwrap_err()
+            .kind,
+        ErrorKind::BadRequest
+    );
+    crate::advice::tuning::TuningSession::default()
+        .save(&session_file)
+        .unwrap();
+    assert_eq!(
+        duplicate_session(None, None, None, &sf, &jb)
+            .unwrap_err()
+            .kind,
+        ErrorKind::BadRequest
+    );
+
+    // Legacy-parked journal conflict: a journal at the target car's
+    // unsuffixed path that archiving the active session would NOT free
+    // belongs to a parked campaign; duplication (and new_session, which
+    // shares the guard) must refuse rather than let the new campaign
+    // append to it.
+    std::fs::write(&journal_live, "sessions/z.ftel | baseline\n").unwrap();
+    let err = duplicate_session(Some(dup_archive_id(&list)), None, None, &sf, &jb).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Conflict);
+    assert_eq!(
+        new_session(Some("2352".into()), None, None, &sf, &jb)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Conflict
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn dup_archive_id(list: &SessionsView) -> String {
+    list.archived[0].id.clone().unwrap()
+}
+
 fn post_at(
     path: &Path,
     recorder: &crate::telemetry::record::SharedRecorder,

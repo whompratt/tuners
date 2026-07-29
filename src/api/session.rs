@@ -16,6 +16,9 @@ pub struct SessionView {
     pub latest: Option<BTreeMap<String, String>>,
     pub baseline: Option<BTreeMap<String, String>>,
     pub campaign_start: Option<String>,
+    /// Baseline form seed copied from a source project at duplication;
+    /// present only until the first tune save.
+    pub prefill: Option<BTreeMap<String, String>>,
 }
 
 pub fn session_view(s: &crate::advice::tuning::TuningSession, journal_base: &str) -> SessionView {
@@ -25,6 +28,7 @@ pub fn session_view(s: &crate::advice::tuning::TuningSession, journal_base: &str
         facts: s.facts.clone(),
         revisions: s.revisions.len() as u32,
         latest: s.latest().map(|rev| rev.values.clone()),
+        prefill: s.prefill.clone().filter(|p| !p.is_empty()),
         baseline: s
             .revisions
             .first()
@@ -199,6 +203,27 @@ pub(super) fn append_line(path: &str, line: &str) -> std::io::Result<()> {
     writeln!(f, "{line}")
 }
 
+/// A new campaign for `car` appends its first note to the car's UNSUFFIXED
+/// journal. If one already exists that the archive step won't free (the
+/// active session is a different car, or blank), it belongs to a campaign
+/// parked by the legacy car-switch scheme — appending would leak stints
+/// across campaigns. Same guard resume_session applies to its rename.
+fn parked_journal_conflict(
+    car: Option<i32>,
+    current: &crate::advice::tuning::TuningSession,
+    journal_base: &str,
+) -> Result<(), ApiError> {
+    let Some(car) = car else { return Ok(()) };
+    let target = crate::advice::tuning::journal_path_for(Some(car), journal_base);
+    let frees_target = !session_is_blank(current) && current.car == Some(car);
+    if Path::new(&target).exists() && !frees_target {
+        return Err(ApiError::conflict(format!(
+            "{target} already exists: another session for this car is parked; resume it first"
+        )));
+    }
+    Ok(())
+}
+
 /// Start a fresh session (e.g. after an upgrade rebuild): the active pair is
 /// archived and a blank session (carrying only the unit display prefs, plus
 /// any posted name/description/car) becomes active. The first tune save
@@ -211,6 +236,8 @@ pub fn new_session(
     journal_base: &str,
 ) -> Result<SessionView, ApiError> {
     let current = crate::advice::tuning::TuningSession::load(session_file.as_ref());
+    let posted_car: Option<i32> = car.as_deref().and_then(|v| v.trim().parse().ok());
+    parked_journal_conflict(posted_car, &current, journal_base)?;
     if !session_is_blank(&current) {
         archive_active(&current, session_file, journal_base).map_err(ApiError::internal)?;
     }
@@ -220,10 +247,75 @@ pub fn new_session(
             fresh.facts.insert(k.clone(), v.clone());
         }
     }
-    fresh.car = car.as_deref().and_then(|v| v.trim().parse().ok());
+    fresh.car = posted_car;
     for (k, v) in [("name", name), ("description", description)] {
         if let Some(v) = v.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
             fresh.facts.insert(k.to_string(), v.to_string());
+        }
+    }
+    fresh
+        .save(session_file.as_ref())
+        .map_err(ApiError::internal)?;
+    Ok(session_view(&fresh, journal_base))
+}
+
+/// New project seeded from an existing one (same-car new-circuit or exemplar
+/// work): copies SETUP STATE — car, facts, limits, and the latest tune as a
+/// `[prefill]` form seed — never campaign history (no journal, no revisions,
+/// no measurements). The first save after duplication is still the explicit
+/// baseline, so pre-drive tweaks never journal as steps. `source_id: None`
+/// duplicates the active session; `Some(id)` a stamped archive.
+pub fn duplicate_session(
+    source_id: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    session_file: &str,
+    journal_base: &str,
+) -> Result<SessionView, ApiError> {
+    let current = crate::advice::tuning::TuningSession::load(session_file.as_ref());
+    let source = match source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        None => current.clone(),
+        Some(id) => {
+            if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return Err(ApiError::bad("bad id"));
+            }
+            let path = crate::advice::tuning::suffixed_path(session_file, id);
+            if !Path::new(&path).exists() {
+                return Err(ApiError::not_found("no such session"));
+            }
+            crate::advice::tuning::TuningSession::load(path.as_ref())
+        }
+    };
+    // Car is NOT changeable on a duplicate: limits and weight facts are
+    // car-specific, so cross-car duplication would copy lies.
+    if source.car.is_none() {
+        return Err(ApiError::bad("source session has no car"));
+    }
+    parked_journal_conflict(source.car, &current, journal_base)?;
+    if !session_is_blank(&current) {
+        archive_active(&current, session_file, journal_base).map_err(ApiError::internal)?;
+    }
+    let mut fresh = crate::advice::tuning::TuningSession {
+        car: source.car,
+        facts: source.facts.clone(),
+        prefill: source
+            .latest()
+            .map(|rev| rev.values.clone())
+            .filter(|v| !v.is_empty()),
+        revisions: Vec::new(),
+    };
+    for (k, v) in [("name", name), ("description", description)] {
+        match v.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            Some(v) => {
+                fresh.facts.insert(k.to_string(), v.to_string());
+            }
+            None => {
+                fresh.facts.remove(k);
+            }
         }
     }
     fresh
@@ -406,6 +498,9 @@ pub fn save_tune(
     recorder: &crate::telemetry::record::SharedRecorder,
 ) -> Result<TuneSaveView, ApiError> {
     let mut s = crate::advice::tuning::TuningSession::load(path);
+    // The duplication prefill has done its job once any tune is saved: the
+    // first save IS the baseline the prefill existed to seed.
+    s.prefill = None;
     let mut rev = crate::advice::tuning::Revision {
         stamp: crate::util::utc_stamp(now_secs()),
         ..Default::default()

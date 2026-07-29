@@ -36,7 +36,9 @@
   let baselineSeededFor = $state<number | null>(null);
   $effect(() => {
     void app.unitsTick;
-    const vals = latest;
+    // A duplicated project carries a prefill (the source's tune) as the
+    // baseline form seed; saving it is still the explicit baseline save.
+    const vals = latest ?? app.session?.prefill ?? null;
     const facts = app.session?.facts ?? {};
     const car = app.session?.car ?? null;
     if (baselineMode && baselineSeededFor === car) return;

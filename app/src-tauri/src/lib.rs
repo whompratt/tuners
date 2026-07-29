@@ -144,6 +144,25 @@ fn resume_session(state: S, id: String) -> Result<api::SessionView, api::ApiErro
 
 #[tauri::command]
 #[specta::specta]
+fn duplicate_session(
+    state: S,
+    source_id: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+) -> Result<api::SessionView, api::ApiError> {
+    let out = api::duplicate_session(
+        source_id,
+        name,
+        description,
+        &state.session_file,
+        &state.journal_base,
+    )?;
+    api::split_and_drop_pending(&state.recorder);
+    Ok(out)
+}
+
+#[tauri::command]
+#[specta::specta]
 fn advise(state: S) -> Result<api::AdviseView, api::ApiError> {
     api::advise_active(
         &state.session_file,
@@ -308,6 +327,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             sessions,
             new_session,
             resume_session,
+            duplicate_session,
             advise,
             sharing,
             set_sharing,

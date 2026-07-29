@@ -15,6 +15,7 @@ export const commands = {
 	sessions: () => __TAURI_INVOKE<SessionsView>("sessions"),
 	newSession: (car: string | null, name: string | null, description: string | null) => typedError<SessionView, ApiError>(__TAURI_INVOKE("new_session", { car, name, description })),
 	resumeSession: (id: string) => typedError<SessionView, ApiError>(__TAURI_INVOKE("resume_session", { id })),
+	duplicateSession: (sourceId: string | null, name: string | null, description: string | null) => typedError<SessionView, ApiError>(__TAURI_INVOKE("duplicate_session", { sourceId, name, description })),
 	advise: () => typedError<AdviseView, ApiError>(__TAURI_INVOKE("advise")),
 	sharing: () => __TAURI_INVOKE<SharingView>("sharing"),
 	setSharing: (enabled: boolean, endpoint: string | null, discard: boolean) => typedError<SharingView, ApiError>(__TAURI_INVOKE("set_sharing", { enabled, endpoint, discard })),
@@ -385,6 +386,11 @@ export type SessionView = {
 	latest: { [key in string]: string } | null,
 	baseline: { [key in string]: string } | null,
 	campaignStart: string | null,
+	/**
+	 *  Baseline form seed copied from a source project at duplication;
+	 *  present only until the first tune save.
+	 */
+	prefill: { [key in string]: string } | null,
 };
 
 /**

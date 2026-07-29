@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { app, detectedCar, errMsg, loadAdvice, loadSession, loadStints } from "$lib/app.svelte";
   import { commands, type CarView, type SessionsView } from "$lib/bindings";
   import { allCars } from "$lib/cars";
@@ -101,6 +102,33 @@
     await loadSession();
     await refreshList();
     openForm(); // straight into picking the car + facts for the new project
+  }
+
+  // --- duplicate: new project seeded from a source project's setup ---
+  let dupOpen = $state(false);
+  let dupRowKey = $state("");
+  let dupName = $state("");
+  let dupSourceId: string | null = $state(null);
+
+  function openDuplicate(r: { id: string | null; name: string | null; carName: string | null; car: number | null }) {
+    dupSourceId = r.id;
+    dupRowKey = r.id ?? "active";
+    dupName = `${rowName(r)} copy`;
+    dupOpen = true;
+  }
+
+  async function duplicateProject() {
+    const r = await commands.duplicateSession(dupSourceId, dupName.trim() || null, null);
+    if (r.status === "error") {
+      await alertDialog("Duplicate failed", errMsg(r.error));
+      return;
+    }
+    dupOpen = false;
+    await loadSession();
+    await refreshList();
+    await loadAdvice();
+    await loadStints(true);
+    goto("/setup"); // review the copied tune, save it as the baseline
   }
 
   async function resumeProject(id: string) {
@@ -303,6 +331,9 @@
             <span style="color:var(--muted)">{rowMeta(r)}</span>
             {#if r.description}<span style="color:var(--ink-2)">{r.description}</span>{/if}
             <span style="flex:1"></span>
+            {#if r.car != null}
+              <Button onclick={() => openDuplicate(r)}>duplicate</Button>
+            {/if}
             {#if i === 0}
               <span style="color:var(--accent)">active</span>
             {:else if r.id}
@@ -310,6 +341,22 @@
               <Button danger onclick={() => deleteProject({ ...r, id: r.id! })}>delete</Button>
             {/if}
           </div>
+          {#if dupOpen && dupRowKey === (r.id ?? "active")}
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0 8px;color:var(--muted)">
+              <span>
+                copies the setup (car, facts, limits, tune) into a new project — no runs or notes come along;
+                the first save in Setup is the new baseline
+              </span>
+              <input
+                type="text"
+                placeholder="new project name"
+                style="width:220px;background:var(--page);color:var(--ink-2);border:1px solid var(--border);border-radius:6px;padding:5px 8px"
+                bind:value={dupName}
+              />
+              <Button go onclick={duplicateProject}>create</Button>
+              <Button onclick={() => (dupOpen = false)}>cancel</Button>
+            </div>
+          {/if}
         {/each}
       {/if}
     </div>
