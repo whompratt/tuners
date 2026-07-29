@@ -332,6 +332,22 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         .unwrap();
     }
 
+    if m.transitions.events + m.transitions.timeouts > 0 {
+        write!(
+            out,
+            "    transitions: {} flick(s)",
+            m.transitions.events + m.transitions.timeouts
+        )
+        .unwrap();
+        if let Some(lag) = m.transitions.median_lag_s {
+            write!(out, " | steer->yaw crossover median {lag:.2}s").unwrap();
+        }
+        if m.transitions.timeouts > 0 {
+            write!(out, " | {} never crossed", m.transitions.timeouts).unwrap();
+        }
+        writeln!(out).unwrap();
+    }
+
     if m.kerbs.events > 0 {
         writeln!(
             out,

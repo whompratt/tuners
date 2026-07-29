@@ -104,6 +104,29 @@ pub struct KerbStats {
 /// a single kerb flickers the flag).
 const KERB_EVENT_GAP_S: f32 = 0.5;
 
+/// Chicane transition response: at each steering FLICK (the steer input
+/// crossing from committed one side to committed the other), the delay
+/// until the yaw rate follows through zero. The event-level form of the
+/// steer->yaw relationship — the global lag correlation was measured flat
+/// across a real arb series, so responsiveness must be read per event.
+/// Measurement only until a deliberate soft/stiff transition A/B exists.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TransitionResponse {
+    /// Steering flicks that produced a yaw crossover within the timeout.
+    pub events: usize,
+    /// Median steer->yaw crossover delay (seconds) across those events.
+    pub median_lag_s: Option<f32>,
+    /// Flicks whose yaw never crossed within the timeout (long sweepers
+    /// that began with a flick, or a genuinely unresponsive car).
+    pub timeouts: usize,
+}
+
+/// A flick's yaw crossover must arrive within this or the event times out.
+const TRANSITION_TIMEOUT_S: f32 = 1.5;
+/// Minimum speed (m/s) for a flick to count: parking-lot wiggles are not
+/// transitions.
+const TRANSITION_MIN_SPEED_MPS: f32 = 15.0;
+
 /// Balance measured over a conditioned subset of cornering samples (a speed
 /// band, or on/off throttle). Same units as `understeer_index`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -231,6 +254,8 @@ pub struct StintMetrics {
     pub surface_loose: bool,
     /// Kerb contact and the suspension's behaviour while striking.
     pub kerbs: KerbStats,
+    /// Steering-flick to yaw-crossover response.
+    pub transitions: TransitionResponse,
     /// Airborne events (all four wheels at full droop >= 0.15s): jumps and crests.
     pub jumps: u32,
     /// Bottoming samples that happened on jump landings, excluded from
@@ -283,6 +308,14 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut kerb_wheel_frames = 0usize;
     let mut kerb_bottomed = 0usize;
     let mut kerb_topped = 0usize;
+    // Transition flicks: committed steer side, the unresolved flick
+    // (event time, yaw-rate sign at the event), lags and timeouts.
+    let mut steer_side: i8 = 0;
+    let mut flick_pending: Option<(f32, f32)> = None;
+    let mut flick_lags: Vec<f32> = Vec::new();
+    let mut flick_timeouts = 0usize;
+    // Yaw rate within this of zero reads as "not yet rotating" (rad/s).
+    const YAW_EPS: f32 = 0.05;
     let mut osc_extreme = frames
         .first()
         .map(|t| t.frame.suspension_travel_meters.to_array())
@@ -394,6 +427,50 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 osc_extreme[i] = travel_m[i];
             } else if (osc_dir[i] >= 0 && delta > 0.0) || (osc_dir[i] <= 0 && delta < 0.0) {
                 osc_extreme[i] = travel_m[i];
+            }
+        }
+
+        // Steering flick -> yaw crossover. A flick is the steer input
+        // committing to the opposite side at speed; the response is the yaw
+        // rate crossing zero (or waking from zero) afterwards.
+        let side: i8 = if f.steer as f32 > STEER_DEADBAND {
+            1
+        } else if (f.steer as f32) < -STEER_DEADBAND {
+            -1
+        } else {
+            0
+        };
+        if side != 0 && steer_side != 0 && side != steer_side && f.speed > TRANSITION_MIN_SPEED_MPS
+        {
+            if flick_pending.take().is_some() {
+                flick_timeouts += 1;
+            }
+            let y = f.angular_velocity[1];
+            let ysign = if y > YAW_EPS {
+                1.0
+            } else if y < -YAW_EPS {
+                -1.0
+            } else {
+                0.0
+            };
+            flick_pending = Some((t, ysign));
+        }
+        if side != 0 {
+            steer_side = side;
+        }
+        if let Some((t0, ysign)) = flick_pending {
+            let y = f.angular_velocity[1];
+            let crossed = if ysign == 0.0 {
+                y.abs() > YAW_EPS
+            } else {
+                y * ysign < 0.0 && y.abs() > YAW_EPS
+            };
+            if crossed {
+                flick_lags.push(t - t0);
+                flick_pending = None;
+            } else if t - t0 > TRANSITION_TIMEOUT_S {
+                flick_timeouts += 1;
+                flick_pending = None;
             }
         }
 
@@ -711,6 +788,14 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             bottomed_frac: kerb_bottomed as f32 / kerb_wheel_frames.max(1) as f32,
             topped_frac: kerb_topped as f32 / kerb_wheel_frames.max(1) as f32,
         },
+        transitions: {
+            flick_lags.sort_by(f32::total_cmp);
+            TransitionResponse {
+                events: flick_lags.len(),
+                median_lag_s: (!flick_lags.is_empty()).then(|| flick_lags[flick_lags.len() / 2]),
+                timeouts: flick_timeouts,
+            }
+        },
         jumps,
         landing_bottomed_excluded: landing_bottomed,
         rpm_flutter: (flutter_samples > 50).then(|| rpm_flutter_sum / flutter_samples as f32),
@@ -881,6 +966,38 @@ mod tests {
         assert!((m.suspension.fl.bottomed_frac - 0.3).abs() < 1e-5);
         assert!((m.suspension.rr.topped_frac - 0.5).abs() < 1e-5);
         assert_eq!(m.suspension.fr.bottomed_frac, 0.0);
+    }
+
+    /// A steering flick (committed right -> committed left at speed) starts
+    /// a transition event; the yaw rate crossing zero afterwards resolves
+    /// it with the lag. A flick whose yaw never crosses times out.
+    #[test]
+    fn transition_flick_measures_yaw_crossover_lag() {
+        // timed() spaces frames 0.1s apart. 20 frames committed right with
+        // positive yaw; flick to left at frame 20; yaw stays positive for 3
+        // more frames, then crosses to negative -> lag ~0.4s. A second
+        // flick back right at frame 40 never sees the yaw cross -> timeout.
+        let frames: Vec<TelemetryFrame> = (0..80)
+            .map(|i| {
+                let (steer, yaw): (i8, f32) = match i {
+                    0..=19 => (60, 0.3),
+                    20..=23 => (-60, 0.3),
+                    24..=39 => (-60, -0.3),
+                    _ => (60, -0.3),
+                };
+                TelemetryFrame {
+                    steer,
+                    speed: 40.0,
+                    angular_velocity: [0.0, yaw, 0.0],
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let m = stint_metrics(&timed(frames));
+        assert_eq!(m.transitions.events, 1, "one resolved flick");
+        assert_eq!(m.transitions.timeouts, 1, "one flick never crossed");
+        let lag = m.transitions.median_lag_s.unwrap();
+        assert!((0.3..=0.5).contains(&lag), "lag {lag}");
     }
 
     /// Two kerb touches bridged within the gap are one strike; a later touch
