@@ -1276,6 +1276,7 @@ mod tests {
             suspension: Corners::default(),
             gears: Default::default(),
             surface_rumble_avg: 0.0,
+            kerbs: Default::default(),
             surface_loose: false,
             jumps: 0,
             landing_bottomed_excluded: 0,

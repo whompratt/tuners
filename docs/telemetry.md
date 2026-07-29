@@ -37,7 +37,7 @@ Wheel quads are ordered FL, FR, RL, RR.
 | 68 | F32 ×4 | NormalizedSuspensionTravel | 0.0 = max stretch, 1.0 = max compression |
 | 84 | F32 ×4 | TireSlipRatio | normalized; 0 = full grip, \|x\| > 1 = grip loss |
 | 100 | F32 ×4 | WheelRotationSpeed | rad/s |
-| 116 | S32 ×4 | WheelOnRumbleStrip | 0/1 |
+| 116 | S32 ×4 | WheelOnRumbleStrip | 0/1 — MEASURED DEAD in FH6: zero across all 69 library recordings (2026-07-29), including kerb-heavy tarmac circuits; do not build detection on it |
 | 132 | S32 ×4 | WheelInPuddle | 0/1 |
 | 148 | F32 ×4 | SurfaceRumble | non-dimensional, feeds FFB |
 | 164 | F32 ×4 | TireSlipAngle | normalized; 0 = full grip, \|x\| > 1 = grip loss |

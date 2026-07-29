@@ -332,6 +332,18 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         .unwrap();
     }
 
+    if m.kerbs.events > 0 {
+        writeln!(
+            out,
+            "    kerbs: {} strike(s) | {} of stint | while striking: bottomed {} / topped {}",
+            m.kerbs.events,
+            pct(m.kerbs.time_frac),
+            pct(m.kerbs.bottomed_frac),
+            pct(m.kerbs.topped_frac),
+        )
+        .unwrap();
+    }
+
     if let Some(dive) = m.brake_dive_front {
         writeln!(
             out,

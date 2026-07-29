@@ -80,6 +80,30 @@ pub struct SuspensionStats {
     pub reversals_per_100m: f32,
 }
 
+/// Kerb (rumble-strip) contact, from the per-wheel WheelOnRumbleStrip flag.
+/// Measurement only: how much kerb the driving uses and what the suspension
+/// does while striking — a wheel bottoming on kerbs wants softer bump or
+/// more travel; one fired to full extension wants less rebound.
+///
+/// CAVEAT (2026-07-29): FH6 has never populated the flag — zero across all
+/// 69 library recordings including kerb-heavy circuits (telemetry.md). The
+/// plumbing is kept because it is free and self-activating if a venue or
+/// patch ever sets it; nothing may DEPEND on it firing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KerbStats {
+    /// Distinct strikes (contacts separated by more than the bridge gap).
+    pub events: usize,
+    /// Share of stint frames with any wheel on a kerb.
+    pub time_frac: f32,
+    /// Of striking-wheel samples: share bottomed / at full extension.
+    pub bottomed_frac: f32,
+    pub topped_frac: f32,
+}
+
+/// Two kerb touches closer than this are one strike (a wheel skipping along
+/// a single kerb flickers the flag).
+const KERB_EVENT_GAP_S: f32 = 0.5;
+
 /// Balance measured over a conditioned subset of cornering samples (a speed
 /// band, or on/off throttle). Same units as `understeer_index`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -205,6 +229,8 @@ pub struct StintMetrics {
     /// Loose surface (dirt/gravel) per SurfaceRumble. Baselines for suspension
     /// activity and slip differ enormously from tarmac.
     pub surface_loose: bool,
+    /// Kerb contact and the suspension's behaviour while striking.
+    pub kerbs: KerbStats,
     /// Airborne events (all four wheels at full droop >= 0.15s): jumps and crests.
     pub jumps: u32,
     /// Bottoming samples that happened on jump landings, excluded from
@@ -251,6 +277,12 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut susp_bottomed = [0usize; 4];
     let mut susp_topped = [0usize; 4];
     let mut osc_reversals = [0u32; 4];
+    let mut kerb_frames = 0usize;
+    let mut kerb_events = 0usize;
+    let mut kerb_last_t = f32::NEG_INFINITY;
+    let mut kerb_wheel_frames = 0usize;
+    let mut kerb_bottomed = 0usize;
+    let mut kerb_topped = 0usize;
     let mut osc_extreme = frames
         .first()
         .map(|t| t.frame.suspension_travel_meters.to_array())
@@ -362,6 +394,22 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 osc_extreme[i] = travel_m[i];
             } else if (osc_dir[i] >= 0 && delta > 0.0) || (osc_dir[i] <= 0 && delta < 0.0) {
                 osc_extreme[i] = travel_m[i];
+            }
+        }
+
+        let strips = f.wheel_on_rumble_strip.to_array();
+        if strips.iter().any(|s| *s) {
+            kerb_frames += 1;
+            if t - kerb_last_t > KERB_EVENT_GAP_S {
+                kerb_events += 1;
+            }
+            kerb_last_t = t;
+            for i in 0..4 {
+                if strips[i] {
+                    kerb_wheel_frames += 1;
+                    kerb_bottomed += (travel[i] >= BOTTOMED) as usize;
+                    kerb_topped += (travel[i] <= TOPPED) as usize;
+                }
             }
         }
 
@@ -657,6 +705,12 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         },
         surface_rumble_avg: rumble_sum / n as f32,
         surface_loose: rumble_sum / n as f32 > LOOSE_SURFACE_RUMBLE,
+        kerbs: KerbStats {
+            events: kerb_events,
+            time_frac: kerb_frames as f32 / n as f32,
+            bottomed_frac: kerb_bottomed as f32 / kerb_wheel_frames.max(1) as f32,
+            topped_frac: kerb_topped as f32 / kerb_wheel_frames.max(1) as f32,
+        },
         jumps,
         landing_bottomed_excluded: landing_bottomed,
         rpm_flutter: (flutter_samples > 50).then(|| rpm_flutter_sum / flutter_samples as f32),
@@ -827,6 +881,41 @@ mod tests {
         assert!((m.suspension.fl.bottomed_frac - 0.3).abs() < 1e-5);
         assert!((m.suspension.rr.topped_frac - 0.5).abs() < 1e-5);
         assert_eq!(m.suspension.fr.bottomed_frac, 0.0);
+    }
+
+    /// Two kerb touches bridged within the gap are one strike; a later touch
+    /// is a second event. Bottoming is attributed to striking wheels only.
+    #[test]
+    fn kerb_strikes_counted_and_bridged() {
+        // timed() spaces frames 0.1s apart. Touch A: frames 0-2 and 4-6 (gap
+        // 0.2s, bridged); touch B: frames 30-32 (2.4s later, new event).
+        let frames: Vec<TelemetryFrame> = (0..50)
+            .map(|i| {
+                let on = matches!(i, 0..=2 | 4..=6 | 30..=32);
+                TelemetryFrame {
+                    wheel_on_rumble_strip: Corners {
+                        fl: on,
+                        ..Default::default()
+                    },
+                    norm_suspension_travel: Corners {
+                        fl: if on { 0.99 } else { 0.5 },
+                        fr: 0.5,
+                        rl: 0.5,
+                        rr: 0.5,
+                    },
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let m = stint_metrics(&timed(frames));
+        assert_eq!(m.kerbs.events, 2, "bridge within 0.5s, split beyond");
+        assert!((m.kerbs.time_frac - 9.0 / 50.0).abs() < 1e-5);
+        assert!(
+            (m.kerbs.bottomed_frac - 1.0).abs() < 1e-5,
+            "striking wheel bottomed every kerb sample: {}",
+            m.kerbs.bottomed_frac
+        );
+        assert_eq!(m.kerbs.topped_frac, 0.0);
     }
 
     /// A 10 Hz sine of 5mm amplitude sampled at 10 samples/cycle: two reversals
