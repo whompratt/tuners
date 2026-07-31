@@ -259,6 +259,51 @@ pub(super) fn enrich_with_tune(
         .collect()
 }
 
+/// Resolve the drag model's final-drive scale ("ideal ≈ current × N") into a
+/// concrete caveated target on the gearing rec. Runs AFTER enrich_with_tune
+/// so non-tunable/exhausted rewrites have already cleared what no longer
+/// applies, and only decorates a rec that carries no suggestion of its own:
+/// measured paths (vertex, probe, return-to-best) always outrank a model
+/// estimate. The direction must agree (scale > 1 = shorten = higher number).
+pub(super) fn apply_fd_scale(
+    recs: &mut [recommend::Recommendation],
+    session: &TuningSession,
+    scale: Option<f32>,
+) {
+    let Some(scale) = scale else { return };
+    let Some(cur) = session
+        .latest()
+        .and_then(|rev| rev.values.get("final_drive"))
+        .and_then(|v| v.parse::<f32>().ok())
+    else {
+        return;
+    };
+    let mut target = cur * scale;
+    if let Some((lo, hi)) = crate::advice::tuning::limit_of(&session.facts, "final_drive") {
+        target = target.clamp(lo, hi);
+    }
+    let target = (target * 100.0).round() / 100.0;
+    if (target - cur).abs() < 0.005 {
+        return;
+    }
+    for r in recs {
+        let Some(implied) = r.implied else { continue };
+        if implied.family != journal::Family::Gearing
+            || r.suggestion.is_some()
+            || !r.apply.is_empty()
+            || (scale > 1.0) == implied.softer
+        {
+            continue;
+        }
+        r.suggestion = Some(format!(
+            "final drive {cur} → {target} (drag-model estimate — rough; a \
+             driven step will refine it)"
+        ));
+        r.apply = vec![("final_drive".to_string(), target.to_string())];
+        return;
+    }
+}
+
 /// One Low-confidence suggestion from the cross-campaign effect map (built
 /// by `tuners map`): the best grounded, context-matched cell whose pooled
 /// behavioural movement aligns with the pace trends, for a family without

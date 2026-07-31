@@ -172,13 +172,16 @@ pub fn car_pool_saturation(
     grip::occupancy(&target, &curves, source)
 }
 
+/// Returns the recommendations plus the drag model's final-drive scale (the
+/// "ideal ≈ current × N" estimate), which enrichment resolves into a concrete
+/// caveated target once the current tune is known.
 fn blind_recommendations(
     stint: &analysis::Stint,
     path: &str,
     ctx: &recommend::Context,
     sat: Option<analysis::grip::GripSaturation>,
     stints_dir: Option<&str>,
-) -> Result<Vec<recommend::Recommendation>, String> {
+) -> Result<(Vec<recommend::Recommendation>, Option<f32>), String> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments
         .iter()
@@ -198,7 +201,11 @@ fn blind_recommendations(
         .filter(|l| l.time_s.is_some() && !l.standing_start)
         .map(|l| analysis::metrics::stint_metrics(l.frames))
         .collect();
-    Ok(recommend::recommend(&overall, &per_lap, ctx))
+    let fd_scale = overall
+        .driveline
+        .as_ref()
+        .and_then(|d| d.final_drive_scale(overall.gears.effective_redline));
+    Ok((recommend::recommend(&overall, &per_lap, ctx), fd_scale))
 }
 
 /// Full advise: journal trajectory when one exists, blind fallback otherwise.
@@ -230,8 +237,8 @@ pub fn advise(
                     None,
                     Some(stints_dir),
                 ) {
-                    Ok(recs) => {
-                        picked = Some((path, stint, recs));
+                    Ok((recs, fd_scale)) => {
+                        picked = Some((path, stint, recs, fd_scale));
                         break;
                     }
                     Err(e) => {
@@ -243,7 +250,7 @@ pub fn advise(
                 }
             }
         }
-        let Some((path, stint, mut recs)) = picked else {
+        let Some((path, stint, mut recs, fd_scale)) = picked else {
             return Err(first_err.unwrap_or_else(|| "no stints recorded yet; drive first".into()));
         };
         // Cold start: no journal means no local trends, but the driver's
@@ -271,6 +278,7 @@ pub fn advise(
             }
         }
         let current_tune = enrich_with_tune(&mut recs, &session);
+        enrich::apply_fd_scale(&mut recs, &session, fd_scale);
         return Ok(AdviseView {
             journal: None,
             steps: Vec::new(),
@@ -486,7 +494,7 @@ pub fn advise(
     let latest = c.latest();
 
     let last = c.stints.last().unwrap();
-    let mut recs = blind_recommendations(
+    let (mut recs, fd_scale) = blind_recommendations(
         &last.stint,
         &last.entry.path,
         &rule_context(&session),
@@ -966,7 +974,9 @@ pub fn advise(
     // car's; an explicitly passed foreign journal must not quote this car's
     // sliders as if they were its own.
     let current_tune = if car_of(&last.stint) == session.car {
-        enrich_with_tune(&mut recs, &session)
+        let tune = enrich_with_tune(&mut recs, &session);
+        enrich::apply_fd_scale(&mut recs, &session, fd_scale);
+        tune
     } else {
         Vec::new()
     };

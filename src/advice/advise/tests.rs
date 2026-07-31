@@ -544,3 +544,71 @@ fn stint_stamps_parse_from_both_naming_schemes() {
     );
     assert_eq!(stint_stamp("sessions/other.ftel"), None);
 }
+
+fn gearing_rec(softer: bool) -> Recommendation {
+    Recommendation {
+        apply: Vec::new(),
+        area: "gearing",
+        advice: "shorten the final drive".into(),
+        evidence: vec![],
+        confidence: Confidence::Medium,
+        suggestion: None,
+        implied: Some(journal::Change {
+            family: journal::Family::Gearing,
+            softer,
+            magnitude: None,
+        }),
+    }
+}
+
+/// The drag model's scale resolves to a concrete, caveated final-drive
+/// target on the matching gearing rec (shorten = scale > 1 = softer false).
+#[test]
+fn fd_scale_resolves_to_caveated_target() {
+    let session = session_with(&[("final_drive", "3.4")], &[]);
+    let mut recs = vec![gearing_rec(false)];
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.2));
+    let s = recs[0].suggestion.as_deref().unwrap();
+    assert!(s.contains("3.4 → 4.08"), "{s}");
+    assert!(s.contains("drag-model estimate"), "{s}");
+    assert_eq!(
+        recs[0].apply,
+        vec![("final_drive".to_string(), "4.08".to_string())]
+    );
+}
+
+/// Direction mismatch, an existing suggestion, or a near-no-op scale must
+/// all leave the rec untouched; the target clamps into the slider range.
+#[test]
+fn fd_scale_respects_direction_ownership_and_limits() {
+    let session = session_with(&[("final_drive", "3.4")], &[]);
+    // Lengthen rec (softer) with a shorten scale: untouched.
+    let mut recs = vec![gearing_rec(true)];
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.2));
+    assert!(recs[0].suggestion.is_none());
+
+    // A measured suggestion already owns the rec: untouched.
+    let mut recs = vec![gearing_rec(false)];
+    recs[0].suggestion = Some("final drive 3.4 → 4.2 (measured)".into());
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.2));
+    assert!(recs[0].suggestion.as_deref().unwrap().contains("measured"));
+    assert!(recs[0].apply.is_empty());
+
+    // Near-1.0 scale = no-op: untouched.
+    let mut recs = vec![gearing_rec(false)];
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.0004));
+    assert!(recs[0].suggestion.is_none());
+
+    // Clamped to the slider limit when the estimate overshoots.
+    let session = session_with(
+        &[("final_drive", "3.4")],
+        &[("limit_final_drive", "2.2..4.0")],
+    );
+    let mut recs = vec![gearing_rec(false)];
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.5));
+    assert!(
+        recs[0].suggestion.as_deref().unwrap().contains("3.4 → 4"),
+        "{:?}",
+        recs[0].suggestion
+    );
+}
