@@ -153,6 +153,13 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   `WheelRotationSpeed` per `Gear`.
 - Full behaviour set for tuning analysis: per-corner suspension travel (normalized
   *and* meters), slip ratio/angle/combined, tire temps, G-forces, inputs.
+- **Slip normalization is load-dependent**: normalized slip angle is per tire
+  against that tire's CURRENT grip limit. While cornering, the unloaded inside
+  wheel reads consistently HIGHER than the loaded outside (measured across five
+  cars, 2026-08-01: inside ~0.05-0.09 above the axle mean, outside below it),
+  because load loss shrinks the inside tire's limit. Axle means therefore lean
+  slightly toward the inside wheel's reading; they do not mask outside-wheel
+  saturation.
 
 ## What is NOT in the packet
 
