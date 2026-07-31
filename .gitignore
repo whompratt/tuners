@@ -10,6 +10,7 @@
 /HANDOVER.md
 /docs/plans/
 /docs/data_requests.md
+todo.md
 
 # flatpak build artifacts (manifest is tracked)
 /flatpak/build-dir/
