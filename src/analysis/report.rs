@@ -48,9 +48,30 @@ pub fn full_session_report(path: &Path) -> Result<String, String> {
         }
     }
     writeln!(out).unwrap();
-    for (i, stint) in segments.iter().enumerate() {
-        let metrics = stint_metrics(stint);
-        writeln!(out, "{}", render_stint(i + 1, &metrics)).unwrap();
+    // Grip curves self-fitted from this recording alone (analyzing a single
+    // stint is an intentional act: the label owns the missing campaign
+    // context). Dirt curves are their own regime — deferred, tarmac only.
+    let per_seg: Vec<Vec<super::grip::GripSample>> = segments
+        .iter()
+        .map(|s| super::grip::cornering_samples(s))
+        .collect();
+    let mut metrics: Vec<StintMetrics> = segments.iter().map(|s| stint_metrics(s)).collect();
+    let pooled: Vec<super::grip::GripSample> = metrics
+        .iter()
+        .zip(&per_seg)
+        .filter(|(m, _)| !m.surface_loose)
+        .flat_map(|(_, s)| s.iter().copied())
+        .collect();
+    if let Some(curves) = super::grip::fit_curves(&pooled) {
+        for (m, samples) in metrics.iter_mut().zip(&per_seg) {
+            if !m.surface_loose {
+                m.grip_saturation =
+                    super::grip::occupancy(samples, &curves, super::grip::CurveSource::SelfFit);
+            }
+        }
+    }
+    for (i, (stint, metrics)) in segments.iter().zip(&metrics).enumerate() {
+        writeln!(out, "{}", render_stint(i + 1, metrics)).unwrap();
         let laps = split_laps(stint);
         if laps.len() > 1 {
             writeln!(out, "{}", render_laps(&laps)).unwrap();
@@ -252,6 +273,40 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
                      relatively harder)",
                 )
                 .unwrap();
+            }
+            if let Some(gs) = &m.grip_saturation {
+                let mut line = format!(
+                    "    front saturation: push {} of cornering (front at its grip \
+                     limit, rear with spare) | slide {} (both at the limit)",
+                    pct(gs.push_frac),
+                    pct(gs.slide_frac),
+                );
+                if let Some(u) = gs.rear_use_at_push {
+                    write!(
+                        line,
+                        " | rear at {:.0}% of its limit while pushing",
+                        u * 100.0
+                    )
+                    .unwrap();
+                }
+                writeln!(out, "{line}").unwrap();
+                let source = match gs.source {
+                    crate::analysis::grip::CurveSource::Campaign => "campaign-pooled grip curve",
+                    crate::analysis::grip::CurveSource::CarPool => {
+                        "grip curve pooled across this car's recordings"
+                    }
+                    crate::analysis::grip::CurveSource::SelfFit => {
+                        "grip curve fitted from this recording alone — indicative only"
+                    }
+                };
+                let mut note = format!("      ({source}");
+                if gs.banded {
+                    write!(note, "; speed-banded: aero-significant car").unwrap();
+                }
+                if gs.coverage < 0.995 {
+                    write!(note, "; covers {} of cornering", pct(gs.coverage)).unwrap();
+                }
+                writeln!(out, "{note})").unwrap();
             }
         }
         _ => writeln!(out, "    no significant cornering in this stint").unwrap(),

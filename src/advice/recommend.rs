@@ -1381,6 +1381,7 @@ mod tests {
             landing_bottomed_excluded: 0,
             rpm_flutter: None,
             wheelspeed_flutter: None,
+            grip_saturation: None,
         }
     }
 

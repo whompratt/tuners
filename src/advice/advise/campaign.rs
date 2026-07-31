@@ -108,6 +108,68 @@ pub fn latest_stint_for_car(dir: &str, car: Option<i32>) -> Option<String> {
     stints_for_car_newest_first(dir, car).next()
 }
 
+/// Grip-curve pooling over the campaign (plan 015): pool every tarmac
+/// stint's cornering samples, fit the car's curves once, and stamp each
+/// stint's PUSH/SLIDE occupancy into its metrics. A thin campaign pool
+/// (< POOL_TARGET) pulls the car's other recordings in, newest first
+/// (crosses setups — labeled CarPool so downstream consumers know). Dirt
+/// stints neither feed nor receive the fit (its curves are a separate
+/// regime, deferred).
+pub(crate) fn attach_saturation(stints: &mut [CampaignStint], stints_dir: &str) {
+    use crate::analysis::grip;
+    let per: Vec<Option<Vec<grip::GripSample>>> = stints
+        .iter()
+        .map(|cs| {
+            let m = cs.met.as_ref()?;
+            if m.surface_loose {
+                return None;
+            }
+            let segments = analysis::driving_segments(&cs.stint.frames, 5.0);
+            let longest = segments.iter().max_by_key(|s| s.len())?;
+            Some(grip::cornering_samples(longest))
+        })
+        .collect();
+    let mut pooled: Vec<grip::GripSample> = per.iter().flatten().flatten().copied().collect();
+    let mut source = grip::CurveSource::Campaign;
+    if pooled.len() < grip::POOL_TARGET {
+        let campaign_car = stints.iter().find_map(|cs| car_of(&cs.stint));
+        let have: Vec<Option<&std::ffi::OsStr>> = stints
+            .iter()
+            .map(|cs| Path::new(cs.entry.path.as_str()).file_name())
+            .collect();
+        for path in stints_for_car_newest_first(stints_dir, campaign_car) {
+            if pooled.len() >= grip::POOL_TARGET {
+                break;
+            }
+            // Separator-safe exclusion of the campaign's own recordings.
+            if have.contains(&Path::new(&path).file_name()) {
+                continue;
+            }
+            let Ok(stint) = analysis::Stint::load(path.as_ref()) else {
+                continue;
+            };
+            let segments = analysis::driving_segments(&stint.frames, 5.0);
+            let Some(longest) = segments.iter().max_by_key(|s| s.len()) else {
+                continue;
+            };
+            let samples = grip::cornering_samples(longest);
+            if samples.is_empty() || analysis::metrics::stint_metrics(longest).surface_loose {
+                continue;
+            }
+            pooled.extend(samples);
+            source = grip::CurveSource::CarPool;
+        }
+    }
+    let Some(curves) = grip::fit_curves(&pooled) else {
+        return;
+    };
+    for (cs, samples) in stints.iter_mut().zip(&per) {
+        if let (Some(m), Some(samples)) = (cs.met.as_mut(), samples) {
+            m.grip_saturation = grip::occupancy(samples, &curves, source);
+        }
+    }
+}
+
 /// One measured effect for a family, harvested from the campaign: a stint
 /// pair whose setups isolate it (DIRECT: setups differ in exactly one area,
 /// a clean A/B regardless of how many steps lie between) or an adjacent-step

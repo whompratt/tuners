@@ -7,7 +7,7 @@ use crate::telemetry::packet::Corners;
 /// |normalized slip| above this = the tire has lost grip (per the packet spec).
 pub const SLIP_LIMIT: f32 = 1.0;
 /// Lateral acceleration (m/s²) above which a sample counts as cornering.
-const CORNERING_LAT_ACCEL: f32 = 4.0;
+pub const CORNERING_LAT_ACCEL: f32 = 4.0;
 /// Instantaneous front−rear slip delta at or below this = a clear oversteer
 /// moment (the rear is the sliding end right now, whatever the stint average
 /// says).
@@ -54,7 +54,7 @@ const LANDING_WINDOW_S: f32 = 0.6;
 const FLUTTER_MAX_DT_S: f32 = 0.2;
 /// Cornering at or above this speed (m/s, ~85 mph) is the high-speed balance
 /// band, where aero dominates roll stiffness; below it, mechanical grip does.
-const HIGH_SPEED_MPS: f32 = 38.0;
+pub const HIGH_SPEED_MPS: f32 = 38.0;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TempStats {
@@ -291,6 +291,11 @@ pub struct StintMetrics {
     pub rpm_flutter: Option<f32>,
     /// Mean |d wheel-speed/dt| on throttle in-gear (rad/s²), same signal.
     pub wheelspeed_flutter: Option<f32>,
+    /// PUSH/SLIDE occupancy against a fitted grip curve. Not computable from
+    /// one stint's frames alone (the curve must pool): stint_metrics leaves
+    /// it None and callers holding a pooled fit fill it in (analyze self-fit,
+    /// advise campaign pool). See analysis::grip.
+    pub grip_saturation: Option<super::grip::GripSaturation>,
 }
 
 impl StintMetrics {
@@ -851,6 +856,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         rpm_flutter: (flutter_samples > 50).then(|| rpm_flutter_sum / flutter_samples as f32),
         wheelspeed_flutter: (flutter_samples > 50)
             .then(|| wheel_flutter_sum / flutter_samples as f32),
+        grip_saturation: None,
     }
 }
 

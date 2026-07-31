@@ -6,6 +6,7 @@ pub mod compare;
 pub mod corners;
 pub mod driveline;
 pub mod effects;
+pub mod grip;
 pub mod metrics;
 pub mod profile;
 pub mod report;

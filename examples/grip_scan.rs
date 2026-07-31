@@ -1,88 +1,19 @@
-//! Front grip-curve scan (plan 015 phase 1): fit slip-angle vs lateral-G
-//! curves per CAR (pooled across its stints: the curve is a car property and
-//! per-stint fits proved unstable), locate each axle's grip plateau, then
-//! measure each stint's occupancy: PUSH (front saturated, rear with spare:
-//! the understeer signal) vs SLIDE (both saturated: drifts/oversteer). TSV
-//! per stint; --curve dumps each car's fitted bins.
+//! Grip-curve calibration scan: runs the production analysis::grip fit
+//! (pooled per car+surface, speed-banded with agreement-collapse) over a
+//! set of recordings and prints per-car curve summaries plus per-stint
+//! PUSH/SLIDE occupancy. The curve summary lines (pooled + per-band onsets)
+//! are the calibration data for the band-agreement tolerance; the TSV is
+//! the threshold-calibration corpus.
 //!
 //! Accepts .ftel recordings and .tar.zst sender bundles.
 //!
 //!   cargo run --release --example grip_scan -- sessions/*.ftel library/*/*.tar.zst
+//!   --curve additionally dumps each car's raw per-bin means.
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use tuners::analysis::{self, TimedFrame, metrics};
+use tuners::analysis::{self, TimedFrame, grip, metrics};
 use tuners::telemetry::{packet, stint::StintReader};
-
-/// Cornering gate, matching metrics::CORNERING_LAT_ACCEL (m/s^2).
-const CORNERING_LAT_ACCEL: f32 = 4.0;
-/// Slip-angle bin width for the curve fit (game-normalized units, ~1.0 =
-/// nominal limit).
-const BIN_W: f32 = 0.05;
-/// Curve range cap: slip angles beyond this are lumped into the last bin
-/// (deep slides carry no curve information).
-const ALPHA_MAX: f32 = 2.0;
-/// A bin participates in peak-finding only with at least this many samples.
-const BIN_MIN: usize = 200;
-/// Minimum pooled cornering samples for a fit worth reporting.
-const FIT_MIN: usize = 5000;
-/// Saturation onset: first supported bin reaching this share of peak mean G
-/// (the plateau start; the argmax alone overshoots into the plateau tail).
-const PLATEAU_FRAC: f32 = 0.97;
-
-struct Curve {
-    bins: Vec<(usize, f32)>,
-    /// Plateau onset: slip angle where mean G first reaches PLATEAU_FRAC of
-    /// the peak. Time beyond this adds slip without adding grip.
-    alpha_sat: f32,
-    g_peak: f32,
-}
-
-fn fit(samples: impl Iterator<Item = (f32, f32)>) -> Option<Curve> {
-    let n_bins = (ALPHA_MAX / BIN_W) as usize;
-    let mut sums = vec![(0usize, 0.0f64); n_bins];
-    let mut n_total = 0usize;
-    for (alpha, g) in samples {
-        let i = ((alpha / BIN_W) as usize).min(n_bins - 1);
-        sums[i].0 += 1;
-        sums[i].1 += g as f64;
-        n_total += 1;
-    }
-    if n_total < FIT_MIN {
-        return None;
-    }
-    let bins: Vec<(usize, f32)> = sums
-        .iter()
-        .map(|&(n, s)| (n, if n > 0 { (s / n as f64) as f32 } else { 0.0 }))
-        .collect();
-    // Sample-weighted 3-bin smoothing before plateau detection: a single
-    // noisy bin must not set the peak.
-    let smooth: Vec<(usize, f32)> = (0..bins.len())
-        .map(|i| {
-            let lo = i.saturating_sub(1);
-            let hi = (i + 1).min(bins.len() - 1);
-            let (mut n, mut s) = (0usize, 0.0f64);
-            for &(bn, bg) in &bins[lo..=hi] {
-                n += bn;
-                s += bn as f64 * bg as f64;
-            }
-            (n, if n > 0 { (s / n as f64) as f32 } else { 0.0 })
-        })
-        .collect();
-    let g_peak = smooth
-        .iter()
-        .filter(|(n, _)| *n >= BIN_MIN)
-        .map(|(_, g)| *g)
-        .max_by(f32::total_cmp)?;
-    let onset_i = smooth
-        .iter()
-        .position(|(n, g)| *n >= BIN_MIN && *g >= PLATEAU_FRAC * g_peak)?;
-    Some(Curve {
-        bins,
-        alpha_sat: (onset_i as f32 + 0.5) * BIN_W,
-        g_peak,
-    })
-}
 
 fn load_frames(path: &Path) -> Result<Vec<TimedFrame>, String> {
     let name = path.to_string_lossy();
@@ -110,8 +41,7 @@ struct StintRow {
     loose: bool,
     idx: Option<f32>,
     margin: Option<f32>,
-    /// (front axle |alpha|, rear axle |alpha|, |lat G|) per cornering frame.
-    samples: Vec<(f32, f32, f32)>,
+    samples: Vec<grip::GripSample>,
 }
 
 fn main() {
@@ -141,17 +71,6 @@ fn main() {
             continue;
         };
         let m = metrics::stint_metrics(seg);
-        let mut samples = Vec::new();
-        for tf in seg.iter() {
-            let f = &tf.frame;
-            let lat = f.acceleration[0];
-            if lat.abs() <= CORNERING_LAT_ACCEL {
-                continue;
-            }
-            let fa = (f.tire_slip_angle.fl.abs() + f.tire_slip_angle.fr.abs()) / 2.0;
-            let ra = (f.tire_slip_angle.rl.abs() + f.tire_slip_angle.rr.abs()) / 2.0;
-            samples.push((fa, ra, lat.abs()));
-        }
         let name = path.file_stem().unwrap().to_string_lossy();
         let name = name.strip_suffix(".tar").unwrap_or(&name).to_string();
         rows.push(StintRow {
@@ -160,13 +79,13 @@ fn main() {
             loose: m.surface_loose,
             idx: m.understeer_index,
             margin: m.margin_ratio(),
-            samples,
+            samples: grip::cornering_samples(seg),
         });
     }
 
-    // Pass 2: pooled per-car curves. Surface splits the pool: the curve
-    // differs on dirt.
-    let mut car_curves: BTreeMap<(i32, bool), (Option<Curve>, Option<Curve>)> = BTreeMap::new();
+    // Pass 2: pooled per-car curves via the production banded fit. Surface
+    // splits the pool: the curve differs on dirt.
+    let mut car_curves: BTreeMap<(i32, bool), grip::CarCurves> = BTreeMap::new();
     for ((car, loose), group) in &rows.iter().fold(
         BTreeMap::<(i32, bool), Vec<&StintRow>>::new(),
         |mut acc, r| {
@@ -174,65 +93,77 @@ fn main() {
             acc
         },
     ) {
-        let front = fit(group
+        let pooled: Vec<grip::GripSample> = group
             .iter()
-            .flat_map(|r| r.samples.iter().map(|s| (s.0, s.2))));
-        let rear = fit(group
-            .iter()
-            .flat_map(|r| r.samples.iter().map(|s| (s.1, s.2))));
-        if dump_curve && let Some(c) = &front {
+            .flat_map(|r| r.samples.iter().copied())
+            .collect();
+        let Some(curves) = grip::fit_curves(&pooled) else {
             eprintln!(
-                "car {car} ({}) front: onset {:.2}, peak G {:.1}",
+                "car {car} ({}): no stable pooled curve ({} samples)",
                 if *loose { "dirt" } else { "tarmac" },
-                c.alpha_sat,
-                c.g_peak
+                pooled.len()
             );
-            for (i, (n, g)) in c.bins.iter().enumerate() {
+            continue;
+        };
+        let pair = |p: &grip::AxlePair| {
+            format!(
+                "F {:.2} R {:.2} pkG {:.1}",
+                p.front.onset, p.rear.onset, p.front.peak_g
+            )
+        };
+        let band = |p: &Option<grip::AxlePair>| p.as_ref().map(&pair).unwrap_or_else(|| "-".into());
+        let ratio = match (&curves.low, &curves.high) {
+            (Some(l), Some(h)) => format!("{:.2}", h.front.peak_g / l.front.peak_g),
+            _ => "-".into(),
+        };
+        eprintln!(
+            "car {car} ({}): pooled {} | low {} | high {} | pk-ratio {ratio} | banded {}",
+            if *loose { "dirt" } else { "tarmac" },
+            pair(&curves.pooled),
+            band(&curves.low),
+            band(&curves.high),
+            curves.banded,
+        );
+        if dump_curve {
+            let bins = grip::bin_means(pooled.iter().map(|s| (s.front, s.lat_g)));
+            for (i, (n, g)) in bins.iter().enumerate() {
                 if *n > 0 {
-                    eprintln!("  {:.2}\t{n}\t{g:.2}", (i as f32 + 0.5) * BIN_W);
+                    eprintln!("  {:.2}\t{n}\t{g:.2}", grip::bin_alpha(i));
                 }
             }
         }
-        car_curves.insert((*car, *loose), (front, rear));
+        car_curves.insert((*car, *loose), curves);
     }
 
     // Pass 3: per-stint occupancy against the car curve.
     println!(
-        "file\tcar\tsurface\tncorner\tfront_sat\trear_sat\tpush%\tslide%\t\
-         at_limit%\trear_use@push\tidx\tmargin"
+        "file\tcar\tsurface\tncorner\tpush%\tslide%\tcover%\trear_use@push\tbanded\tidx\tmargin"
     );
     for r in &rows {
-        let Some((Some(front), Some(rear))) = car_curves.get(&(r.car, r.loose)) else {
-            eprintln!("{}: no stable pooled curve for car {}", r.name, r.car);
+        let Some(curves) = car_curves.get(&(r.car, r.loose)) else {
             continue;
         };
-        let mut push = 0usize;
-        let mut slide = 0usize;
-        let mut rear_use_sum = 0.0f32;
-        for &(fa, ra, _) in &r.samples {
-            if fa < front.alpha_sat {
-                continue;
-            }
-            if ra < rear.alpha_sat {
-                push += 1;
-                rear_use_sum += ra / rear.alpha_sat;
-            } else {
-                slide += 1;
-            }
-        }
-        let n = r.samples.len().max(1);
+        let Some(occ) = grip::occupancy(&r.samples, curves, grip::CurveSource::CarPool) else {
+            eprintln!(
+                "{}: occupancy withheld ({} cornering samples)",
+                r.name,
+                r.samples.len()
+            );
+            continue;
+        };
         println!(
-            "{}\t{}\t{}\t{}\t{:.2}\t{:.2}\t{:.1}\t{:.1}\t{:.1}\t{:.2}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{:.0}\t{}\t{}\t{}\t{}",
             r.name,
             r.car,
             if r.loose { "dirt" } else { "tarmac" },
             r.samples.len(),
-            front.alpha_sat,
-            rear.alpha_sat,
-            push as f32 / n as f32 * 100.0,
-            slide as f32 / n as f32 * 100.0,
-            (push + slide) as f32 / n as f32 * 100.0,
-            rear_use_sum / push.max(1) as f32,
+            occ.push_frac * 100.0,
+            occ.slide_frac * 100.0,
+            occ.coverage * 100.0,
+            occ.rear_use_at_push
+                .map(|u| format!("{u:.2}"))
+                .unwrap_or_default(),
+            occ.banded,
             r.idx.map(|i| format!("{i:+.3}")).unwrap_or_default(),
             r.margin.map(|m| format!("{m:.2}")).unwrap_or_default(),
         );

@@ -19,7 +19,8 @@ mod view;
 
 use campaign::pair_effects;
 pub(crate) use campaign::{
-    Campaign, Measurement, campaign_closed, implicit_steps, load_campaign, stint_stamp,
+    Campaign, Measurement, attach_saturation, campaign_closed, implicit_steps, load_campaign,
+    stint_stamp,
 };
 pub use campaign::{latest_stint_for_car, stints_for_car_newest_first};
 pub(crate) use compose::composition_proposal;
@@ -234,7 +235,8 @@ pub fn advise(
         }
     }
 
-    let c = load_campaign(entries, &session, journal_path)?;
+    let mut c = load_campaign(entries, &session, journal_path)?;
+    attach_saturation(&mut c.stints, stints_dir);
     let n = c.stints.len();
 
     let mut steps = Vec::new();
