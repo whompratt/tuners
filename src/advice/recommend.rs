@@ -292,8 +292,10 @@ fn balance_rule(
             .all(|i| i.signum() == idx_v.signum() && i.abs() >= BALANCE_MILD);
 
     let confidence = if let Some(gs) = &sat {
-        // Saturation-led: severity from occupancy (pooled sources only).
-        if gs.push_frac >= PUSH_SEVERE {
+        // Saturation-led: severity from occupancy (pooled sources only). A
+        // speed-banded fit (aero-significant car) caps at Medium: the high
+        // band still mixes speeds internally, so its magnitude is coarse.
+        if gs.push_frac >= PUSH_SEVERE && !gs.banded {
             Confidence::High
         } else {
             Confidence::Medium
@@ -467,6 +469,14 @@ fn balance_rule(
                 "grip curve: fitted from this recording alone — indicative only".into()
             }
         });
+        if gs.banded {
+            evidence.push(
+                "speed-banded fit (downforce raises this car's grip ceiling \
+                 with speed): the high-speed curve is coarse, treat the \
+                 magnitude as approximate"
+                    .into(),
+            );
+        }
         if idx.is_some() {
             evidence.push(format!(
                 "averaged balance index {idx_v:+.2}: the driver's operating \
