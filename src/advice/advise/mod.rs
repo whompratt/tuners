@@ -105,17 +105,94 @@ fn rule_context(session: &TuningSession) -> recommend::Context<'_> {
     }
 }
 
+/// Fit a grip curve from the car's recordings in `stints_dir` (the target's
+/// own samples plus era-nearest siblings, up to CAR_POOL_SIBLINGS) and
+/// classify `longest` against it. Labeled CarPool only when another
+/// recording really joined the pool: a lone recording stays SelfFit, which
+/// detection ignores (single-recording fits measured push 0.1-19.6% on
+/// known-healthy stints, 2026-07-31 — display-only noise).
+pub fn car_pool_saturation(
+    longest: &[analysis::TimedFrame],
+    stint_path: &str,
+    stints_dir: &str,
+    car: Option<i32>,
+) -> Option<analysis::grip::GripSaturation> {
+    use analysis::grip;
+    // "YYYYMMDD-HHMMSS" stamp as a sortable number for era distance.
+    fn stamp_num(path: &str) -> Option<u64> {
+        stint_stamp(path)?
+            .bytes()
+            .filter(u8::is_ascii_digit)
+            .try_fold(0u64, |n, b| {
+                n.checked_mul(10)?.checked_add((b - b'0') as u64)
+            })
+    }
+    let target = grip::cornering_samples(longest);
+    let mut pooled = target.clone();
+    let mut source = grip::CurveSource::SelfFit;
+    // Nearest-in-time siblings first: grip curves move with setup changes
+    // (aero, pressures, compound), so the pool must be era-local to the
+    // target — a newest-first pool judged a pre-aero-cut baseline against
+    // the cut-era curve and misread it as a pusher.
+    let target_stamp = stamp_num(stint_path);
+    let mut siblings: Vec<String> = stints_for_car_newest_first(stints_dir, car)
+        .filter(|p| Path::new(p).file_name() != Path::new(stint_path).file_name())
+        .collect();
+    siblings.sort_by_key(|p| match (stamp_num(p), target_stamp) {
+        (Some(s), Some(t)) => s.abs_diff(t),
+        _ => u64::MAX,
+    });
+    // The pool must not be dominated by the target's own idiosyncrasy, so
+    // the loop is driven by SIBLING sample count, not total pool size — and
+    // it aims well above FIT_MIN because sub-20k pools misread (BIN_MIN is
+    // absolute; see grip.rs).
+    let mut sibling_samples = 0usize;
+    let mut files = 0usize;
+    for path in siblings {
+        if sibling_samples >= grip::CAR_POOL_SIBLINGS || files >= 12 {
+            break;
+        }
+        let Ok(sibling) = analysis::Stint::load(path.as_ref()) else {
+            continue;
+        };
+        let segments = analysis::driving_segments(&sibling.frames, 5.0);
+        let Some(seg) = segments.iter().max_by_key(|s| s.len()) else {
+            continue;
+        };
+        let samples = grip::cornering_samples(seg);
+        if samples.is_empty() || analysis::metrics::stint_metrics(seg).surface_loose {
+            continue;
+        }
+        sibling_samples += samples.len();
+        files += 1;
+        pooled.extend(samples);
+        source = grip::CurveSource::CarPool;
+    }
+    let curves = grip::fit_curves(&pooled)?;
+    grip::occupancy(&target, &curves, source)
+}
+
 fn blind_recommendations(
     stint: &analysis::Stint,
     path: &str,
     ctx: &recommend::Context,
+    sat: Option<analysis::grip::GripSaturation>,
+    stints_dir: Option<&str>,
 ) -> Result<Vec<recommend::Recommendation>, String> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments
         .iter()
         .max_by_key(|s| s.len())
         .ok_or_else(|| format!("{path}: no driving stints of 5s or longer"))?;
-    let overall = analysis::metrics::stint_metrics(longest);
+    let mut overall = analysis::metrics::stint_metrics(longest);
+    // The balance rule's understeer detection is saturation-led (plan 015)
+    // and needs a POOLED curve: campaign-pooled when the caller has one,
+    // else pooled across the car's recordings (blind mode; tarmac only).
+    if !overall.surface_loose {
+        overall.grip_saturation = sat.or_else(|| {
+            stints_dir.and_then(|dir| car_pool_saturation(longest, path, dir, car_of(stint)))
+        });
+    }
     let per_lap: Vec<_> = analysis::split_laps(longest)
         .iter()
         .filter(|l| l.time_s.is_some() && !l.standing_start)
@@ -146,7 +223,13 @@ pub fn advise(
         let mut picked = None;
         for path in stints_for_car_newest_first(stints_dir, session.car) {
             match analysis::Stint::load(path.as_ref()) {
-                Ok(stint) => match blind_recommendations(&stint, &path, &rule_context(&session)) {
+                Ok(stint) => match blind_recommendations(
+                    &stint,
+                    &path,
+                    &rule_context(&session),
+                    None,
+                    Some(stints_dir),
+                ) {
                     Ok(recs) => {
                         picked = Some((path, stint, recs));
                         break;
@@ -403,7 +486,13 @@ pub fn advise(
     let latest = c.latest();
 
     let last = c.stints.last().unwrap();
-    let mut recs = blind_recommendations(&last.stint, &last.entry.path, &rule_context(&session))?;
+    let mut recs = blind_recommendations(
+        &last.stint,
+        &last.entry.path,
+        &rule_context(&session),
+        last.met.as_ref().and_then(|m| m.grip_saturation),
+        None,
+    )?;
     let mut matched_families: Vec<journal::Family> = Vec::new();
     for m in &latest {
         if journal::reconcile(

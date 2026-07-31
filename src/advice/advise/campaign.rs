@@ -130,15 +130,30 @@ pub(crate) fn attach_saturation(stints: &mut [CampaignStint], stints_dir: &str) 
         })
         .collect();
     let mut pooled: Vec<grip::GripSample> = per.iter().flatten().flatten().copied().collect();
-    let mut source = grip::CurveSource::Campaign;
-    if pooled.len() < grip::POOL_TARGET {
+    // Cross-recording stability is the point of pooling: a single-stint
+    // campaign is no better than a self-fit (measured push 0.1-19.6% on
+    // healthy stints), so at least two recordings must contribute before
+    // the pool carries a detection-grade label.
+    let contributing = per
+        .iter()
+        .filter(|s| s.as_ref().is_some_and(|v| !v.is_empty()))
+        .count();
+    let mut source = if contributing >= 2 {
+        grip::CurveSource::Campaign
+    } else {
+        grip::CurveSource::SelfFit
+    };
+    if pooled.len() < grip::POOL_TARGET || contributing < 2 {
         let campaign_car = stints.iter().find_map(|cs| car_of(&cs.stint));
         let have: Vec<Option<&std::ffi::OsStr>> = stints
             .iter()
             .map(|cs| Path::new(cs.entry.path.as_str()).file_name())
             .collect();
+        let mut recordings = contributing;
         for path in stints_for_car_newest_first(stints_dir, campaign_car) {
-            if pooled.len() >= grip::POOL_TARGET {
+            // Aim well past FIT_MIN: sub-20k pools misread (grip::BIN_MIN
+            // is absolute).
+            if pooled.len() >= grip::CAR_POOL_SIBLINGS && recordings >= 2 {
                 break;
             }
             // Separator-safe exclusion of the campaign's own recordings.
@@ -156,6 +171,7 @@ pub(crate) fn attach_saturation(stints: &mut [CampaignStint], stints_dir: &str) 
             if samples.is_empty() || analysis::metrics::stint_metrics(longest).surface_loose {
                 continue;
             }
+            recordings += 1;
             pooled.extend(samples);
             source = grip::CurveSource::CarPool;
         }

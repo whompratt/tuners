@@ -29,7 +29,13 @@ const BIN_W: f32 = 0.05;
 /// Curve range cap: slip beyond this is lumped into the last bin (deep
 /// slides carry no curve information).
 const ALPHA_MAX: f32 = 2.0;
-/// A bin participates in peak-finding only with at least this many samples.
+/// A bin participates in peak/onset-finding only with at least this many
+/// samples. Absolute by design: a proportional gate was tried 2026-07-31 and
+/// rejected — it re-supported different bins on the 200k+ tester pools and
+/// moved every calibrated number. The consequence is that POOL SIZE matters:
+/// the validated corpus pools ran ~20k-300k samples, and ~13k pools misread
+/// (a healthy 3.7%-push stint as 19.6% — low-slip rear bins lose support and
+/// the onset slides up). Pool builders must aim well above FIT_MIN.
 const BIN_MIN: usize = 200;
 /// Minimum samples for a fit worth trusting (per pool or per speed band).
 pub const FIT_MIN: usize = 5000;
@@ -55,6 +61,11 @@ const OCC_MIN: usize = 200;
 /// Pooling target for campaign fits: below this, advise pulls the car's
 /// other recordings in (biased across setups, better than an unstable fit).
 pub const POOL_TARGET: usize = 2 * FIT_MIN;
+/// Sibling-sample target when building a car pool around one recording:
+/// the absolute BIN_MIN makes onset estimates size-sensitive, and pools
+/// under ~20k misread, so pull siblings until the pool is comfortably in
+/// the validated 20k-300k regime (or the era runs out of recordings).
+pub const CAR_POOL_SIBLINGS: usize = 50_000;
 
 /// One cornering frame's grip observation.
 #[derive(Debug, Clone, Copy)]

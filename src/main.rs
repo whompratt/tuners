@@ -182,7 +182,24 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
         return Err("no driving stints of 5s or longer found".into());
     };
 
-    let overall = analysis::metrics::stint_metrics(stint);
+    let mut overall = analysis::metrics::stint_metrics(stint);
+    // Saturation-led balance detection needs a POOLED grip curve: pool the
+    // car's other recordings sitting next to this file (a lone recording
+    // stays SelfFit, which detection ignores as unstable).
+    if !overall.surface_loose {
+        let dir = std::path::Path::new(path.as_str())
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_string_lossy()
+            .into_owned();
+        overall.grip_saturation = tuners::advice::advise::car_pool_saturation(
+            stint,
+            path,
+            &dir,
+            stint.first().map(|f| f.frame.car_ordinal),
+        );
+    }
     let laps = analysis::split_laps(stint);
     let per_lap: Vec<_> = laps
         .iter()

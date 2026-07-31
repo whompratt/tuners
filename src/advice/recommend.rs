@@ -3,11 +3,26 @@
 //! phrased to survive unknown limits.
 
 use super::journal::{Change, Family};
+use crate::analysis::grip::CurveSource;
 use crate::analysis::metrics::StintMetrics;
 
-/// Balance index magnitudes: mild tendency vs clear problem.
+/// Balance index magnitudes: mild tendency vs clear problem. Since plan 015
+/// the index gates only dirt balance and tarmac net-OVERSTEER means: on
+/// tarmac every normally-driven stint reads +0.11..+0.38 (the driver's
+/// operating point), so positive means are context, not detection.
 const BALANCE_MILD: f32 = 0.05;
 const BALANCE_CLEAR: f32 = 0.10;
+/// Front-saturation occupancy gates (plan 015): share of cornering time with
+/// the front pinned at its fitted grip peak while the rear has spare.
+/// Library 2026-07-31: healthy tarmac 0-5%, known pushers 7.5-30 with a
+/// clean gap; severe (High confidence) covers the aero-cut exemplar (18.5)
+/// and the tester Mustang (14.5-30.5).
+const PUSH_PROBLEM: f32 = 0.075;
+const PUSH_SEVERE: f32 = 0.15;
+/// RWD off-throttle rear/front wheel-speed convergence at or under this
+/// reads as decel lock visibly dragging entry (open decel diffs measure
+/// ~1.0 against the free-rolling front; the max-decel A/B fell to 0.58).
+const CONV_OFF_LOCKED: f32 = 0.8;
 /// Entry−exit index gap before an imbalance counts as phase-concentrated and
 /// the fix priorities change (forza.guide "Balance & Fix-It" cards). Corpus:
 /// converged tarmac tunes read |gap| 0.01-0.06; dirt entry push 0.10-0.28;
@@ -148,9 +163,14 @@ const OVERDAMPED_BUMP_TOPPED: f32 = 0.10;
 /// gate is blind (a setup reading 4.8/s at 51 m/s reads ~6.1/s at 65 m/s —
 /// past OVERDAMPED_BUMP_REV — but ~9.4 per 100m either way). Healthy tarmac
 /// reads 11-16 per 100m across all ten library cars; the bump-max exemplar
-/// 9.4; the rebound-only-max stint (behaviourally invisible on smooth
-/// tarmac, correctly so) 11.5.
+/// 9.4; the rebound-only-max stint 11.5 (invisible HERE — the damper-phase
+/// vratio gate below is that stint's own channel since plan 015 phase 3).
 const OVERDAMPED_SPATIAL_TARMAC: f32 = 10.0;
+/// Extension/compression mean-speed ratio at or under this = rebound
+/// overdamped (tarmac; per axle). Healthy tarmac 0.76-0.84 across every
+/// library car and both drivers; the maxed-rebound A/B read 0.59 front /
+/// 0.69 rear against an otherwise-identical setup.
+const REBOUND_VRATIO_LOW: f32 = 0.72;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
@@ -225,27 +245,66 @@ pub fn recommend(
 
 /// Returns the balance direction sign (+1 understeer, -1 oversteer) when the rule
 /// fired, so the tire rule can attribute axle heat to scrub.
+///
+/// Two-stage since plan 015. Tarmac UNDERSTEER detection is saturation-led:
+/// share of cornering time with the front pinned at its fitted grip peak
+/// while the rear has spare — the physical definition of terminal push, and
+/// an adapted driver still operates pinned there, they just stop asking for
+/// more. The averaged index is demoted to evidence context (it measures the
+/// driver's operating point and clears the old gates on every tarmac stint
+/// ever recorded). Net-OVERSTEER means stay index-gated (rare; the episodic
+/// side belongs to stability_rule). Dirt keeps the legacy index gate whole:
+/// grip curves are deferred there.
 fn balance_rule(
     overall: &StintMetrics,
     per_lap: &[StintMetrics],
     recs: &mut Vec<Recommendation>,
 ) -> Option<f32> {
-    let idx = overall.understeer_index?;
-    if idx.abs() < BALANCE_MILD {
+    let idx = overall.understeer_index;
+    // Detection requires a POOLED curve: single-recording self-fits measured
+    // push 0.1-19.6% on known-healthy stints (2026-07-31) — display-only.
+    let sat = if overall.surface_loose {
+        None
+    } else {
+        overall
+            .grip_saturation
+            .filter(|g| g.source != CurveSource::SelfFit && g.push_frac >= PUSH_PROBLEM)
+    };
+    let mean_fired = idx.is_some_and(|i| {
+        if overall.surface_loose {
+            i.abs() >= BALANCE_MILD
+        } else {
+            i <= -BALANCE_MILD
+        }
+    });
+    let idx_v = idx.unwrap_or(0.0);
+    let (understeer, dir) = if sat.is_some() {
+        (true, 1.0f32)
+    } else if mean_fired {
+        (idx_v > 0.0, idx_v.signum())
+    } else {
         return None;
-    }
+    };
     let lap_indices: Vec<f32> = per_lap.iter().filter_map(|m| m.understeer_index).collect();
     let consistent = lap_indices.len() >= 2
         && lap_indices
             .iter()
-            .all(|i| i.signum() == idx.signum() && i.abs() >= BALANCE_MILD);
+            .all(|i| i.signum() == idx_v.signum() && i.abs() >= BALANCE_MILD);
 
-    let confidence = match (idx.abs() >= BALANCE_CLEAR, consistent) {
-        (true, true) => Confidence::High,
-        (true, false) => Confidence::Medium,
-        (false, _) => Confidence::Low,
+    let confidence = if let Some(gs) = &sat {
+        // Saturation-led: severity from occupancy (pooled sources only).
+        if gs.push_frac >= PUSH_SEVERE {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        }
+    } else {
+        match (idx_v.abs() >= BALANCE_CLEAR, consistent) {
+            (true, true) => Confidence::High,
+            (true, false) => Confidence::Medium,
+            (false, _) => Confidence::Low,
+        }
     };
-    let understeer = idx > 0.0;
 
     // Where in the corner the imbalance lives decides WHICH end/system to
     // touch (forza.guide fix-it cards): entry and mid-corner imbalance are
@@ -262,7 +321,7 @@ fn balance_rule(
             });
     let lean = phase_split
         .map(|(e, x)| {
-            let gap = (e - x) * idx.signum(); // + = entry-concentrated for this sign
+            let gap = (e - x) * dir; // + = entry-concentrated for this sign
             if gap >= PHASE_GAP && e.abs() >= BALANCE_MILD {
                 PhaseLean::Entry
             } else if gap <= -PHASE_GAP && x.abs() >= BALANCE_MILD {
@@ -276,19 +335,40 @@ fn balance_rule(
         .balance_on_throttle
         .index
         .filter(|_| overall.balance_on_throttle.samples >= BAND_MIN_SAMPLES)
-        .is_some_and(|on| on * idx.signum() >= BALANCE_MILD);
+        .is_some_and(|on| on * dir >= BALANCE_MILD);
+
+    // Entry-lever signatures (plan 015): which second lever the entry push
+    // implicates is read from its own channel, not a fixed ordering.
+    let brake_bound = !overall.surface_loose
+        && overall
+            .balance_on_brake
+            .index
+            .filter(|_| overall.balance_on_brake.samples >= BAND_MIN_SAMPLES)
+            .is_some_and(|b| b >= BRAKE_PUSH);
+    let conv_off = overall.diff_drag.conv_off();
+    let decel_locked = overall.drivetrain_type == 1 // rear-driven reference only
+        && conv_off.is_some_and(|c| c <= CONV_OFF_LOCKED);
 
     let front_driven = overall.drivetrain_type != 1; // FWD or AWD
     let (advice, family, softer): (String, _, _) = match (understeer, lean) {
-        (true, PhaseLean::Entry) => (
-            "reduce front roll stiffness: soften the front anti-roll bar first \
-             (springs second). The push concentrates at corner entry; if a \
-             softer front end doesn't clear it, shift brake balance rearward \
-             or reduce rear diff decel next"
-                .into(),
-            Family::FrontRoll,
-            true,
-        ),
+        (true, PhaseLean::Entry) => {
+            let mut advice = String::from(
+                "reduce front roll stiffness (soften the front anti-roll bar \
+                 or springs): the push concentrates at corner entry",
+            );
+            if brake_bound {
+                advice.push_str(
+                    "; the braking band implicates bias too — shift brake \
+                     balance rearward next",
+                );
+            } else if decel_locked {
+                advice.push_str(
+                    "; the decel-locked rear diff is resisting turn-in — \
+                     reduce rear diff decel next",
+                );
+            }
+            (advice, Family::FrontRoll, true)
+        }
         (true, PhaseLean::Exit) if on_power && front_driven => (
             "reduce front diff accel lock: the front washes out under power on \
              corner exit, so softening the front end would dull turn-in without \
@@ -325,15 +405,16 @@ fn balance_rule(
             true,
         ),
         (true, _) => (
-            "reduce front roll stiffness: soften the front anti-roll bar first \
-             (springs second)"
+            "reduce front roll stiffness: soften the front anti-roll bar or \
+             springs (which of the two is not separable from this data yet: \
+             bars move roll only, springs also jounce and pitch)"
                 .into(),
             Family::FrontRoll,
             true,
         ),
         (false, _) => (
-            "reduce rear roll stiffness: soften the rear anti-roll bar first \
-             (springs second)"
+            "reduce rear roll stiffness: soften the rear anti-roll bar or \
+             springs"
                 .into(),
             Family::RearRoll,
             true,
@@ -360,14 +441,56 @@ fn balance_rule(
         confidence = confidence.min(Confidence::Medium);
     }
 
-    let mut evidence = vec![format!(
-        "{} tendency: front−rear slip angle delta {idx:+.2} while cornering",
-        if understeer {
-            "understeer"
-        } else {
-            "oversteer"
-        },
-    )];
+    let mut evidence = Vec::new();
+    if let Some(gs) = &sat {
+        let mut line = format!(
+            "front saturation: pushing {:.1}% of cornering — front pinned at \
+             its fitted grip peak with the rear inside its own (healthy \
+             tarmac <= 5%)",
+            gs.push_frac * 100.0,
+        );
+        if let Some(u) = gs.rear_use_at_push {
+            line.push_str(&format!(
+                "; rear at {:.0}% of its limit while pushing ({:.0}% spare \
+                 grip unused)",
+                u * 100.0,
+                (1.0 - u) * 100.0,
+            ));
+        }
+        evidence.push(line);
+        evidence.push(match gs.source {
+            CurveSource::Campaign => "grip curve: campaign-pooled".into(),
+            CurveSource::CarPool => {
+                "grip curve: pooled across this car's recordings (crosses setups)".into()
+            }
+            CurveSource::SelfFit => {
+                "grip curve: fitted from this recording alone — indicative only".into()
+            }
+        });
+        if idx.is_some() {
+            evidence.push(format!(
+                "averaged balance index {idx_v:+.2}: the driver's operating \
+                 point (every tarmac stint reads positive) — context, not the \
+                 trigger",
+            ));
+        }
+        if understeer && decel_locked && matches!(lean, PhaseLean::Entry) {
+            evidence.push(format!(
+                "off-throttle rear/front wheel-speed convergence {:.2} (open \
+                 decel diffs read ~1.0): the locked rear drags against turn-in",
+                conv_off.unwrap_or(0.0),
+            ));
+        }
+    } else {
+        evidence.push(format!(
+            "{} tendency: front−rear slip angle delta {idx_v:+.2} while cornering",
+            if understeer {
+                "understeer"
+            } else {
+                "oversteer"
+            },
+        ));
+    }
     if !lap_indices.is_empty() {
         let laps_fmt: Vec<String> = lap_indices.iter().map(|i| format!("{i:+.2}")).collect();
         evidence.push(format!(
@@ -405,7 +528,7 @@ fn balance_rule(
     if let (Some(lo), Some(hi)) =
         supported_pair(&overall.balance_low_speed, &overall.balance_high_speed)
     {
-        evidence.push(if (lo - hi) * idx.signum() >= AERO_BAND_GAP / 2.0 {
+        evidence.push(if (lo - hi) * dir >= AERO_BAND_GAP / 2.0 {
             format!(
                 "concentrated at low speed ({lo:+.2} below 85 mph vs {hi:+.2} above): \
                  mechanical grip, so bars/springs over aero"
@@ -499,7 +622,7 @@ fn balance_rule(
             }),
         });
     }
-    Some(idx.signum())
+    Some(dir)
 }
 
 /// Episodic oversteer detected through EVENT channels (flashes, rear-first
@@ -1199,6 +1322,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     };
 
     for (axle, a, b) in [("front", s.fl, s.fr), ("rear", s.rl, s.rr)] {
+        let fired_before = recs.len();
         let rev = (a.reversals_per_sec + b.reversals_per_sec) / 2.0;
         let spatial = (a.reversals_per_100m + b.reversals_per_100m) / 2.0;
         let topped = a.topped_frac.max(b.topped_frac);
@@ -1307,6 +1431,45 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 implied: None,
             });
         }
+
+        // Rebound overdamping straight from the damper phase split (plan 015
+        // phase 3): extension speed collapsing against compression is
+        // rebound's OWN signature, visible on smooth tarmac where reversal
+        // counts stay healthy (the maxed-rebound A/B kept 5-6 reversals/s and
+        // never topped out — the channels above were blind to it). Healthy
+        // tarmac reads 0.76-0.84 across every library car and driver.
+        let vratio = if axle == "front" {
+            overall.damper_phase.vratio_front
+        } else {
+            overall.damper_phase.vratio_rear
+        };
+        if recs.len() == fired_before
+            && !loose
+            && let Some(v) = vratio
+            && v <= REBOUND_VRATIO_LOW
+        {
+            recs.push(Recommendation {
+                apply: Vec::new(),
+                area: "damping",
+                advice: format!(
+                    "reduce {axle} rebound: the {axle} dampers extend far slower \
+                     than they compress, holding the wheels down after every \
+                     bump and body movement"
+                ),
+                evidence: vec![format!(
+                    "{axle} extension speed {v:.2}x compression (healthy tarmac \
+                     0.76-0.84 on every library car; the maxed-rebound A/B read \
+                     0.59 and cost +0.28s)"
+                )],
+                confidence: Confidence::Medium,
+                suggestion: None,
+                implied: Some(Change {
+                    family: Family::Damping,
+                    softer: true,
+                    magnitude: None,
+                }),
+            });
+        }
     }
 }
 
@@ -1395,10 +1558,27 @@ mod tests {
         }
     }
 
+    fn sat(push: f32, source: CurveSource) -> Option<crate::analysis::grip::GripSaturation> {
+        Some(crate::analysis::grip::GripSaturation {
+            push_frac: push,
+            slide_frac: 0.0,
+            rear_use_at_push: Some(0.6),
+            coverage: 1.0,
+            banded: false,
+            source,
+        })
+    }
+
+    /// Campaign-pooled front saturation at `push` share of cornering.
+    fn push_sat(push: f32) -> Option<crate::analysis::grip::GripSaturation> {
+        sat(push, CurveSource::Campaign)
+    }
+
     #[test]
     fn consistent_understeer_is_high_confidence_front_advice() {
         let mut overall = base_metrics();
         overall.understeer_index = Some(0.24);
+        overall.grip_saturation = push_sat(0.20);
         let laps = [
             lap_with_index(0.23),
             lap_with_index(0.26),
@@ -1417,6 +1597,120 @@ mod tests {
                 .evidence
                 .iter()
                 .any(|e| e.contains("consistent across 3"))
+        );
+    }
+
+    /// The plan-015 core change: a positive averaged index alone is the
+    /// driver's operating point, not a diagnosis. Every tarmac stint ever
+    /// recorded reads +0.11..+0.38, so without front saturation the balance
+    /// card stays silent.
+    #[test]
+    fn tarmac_positive_index_without_saturation_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.24);
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(
+            recs.iter().all(|r| r.area != "balance"),
+            "index alone must not fire: {:?}",
+            recs.iter().map(|r| r.area).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn push_below_gate_or_selffit_source_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.understeer_index = Some(0.24);
+        overall.grip_saturation = push_sat(0.05); // healthy band
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(recs.iter().all(|r| r.area != "balance"));
+
+        // Single-recording fits measured push 0.1-19.6% on healthy stints:
+        // display-only, never a detection source.
+        overall.grip_saturation = sat(0.30, CurveSource::SelfFit);
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(
+            recs.iter().all(|r| r.area != "balance"),
+            "SelfFit must not fire detection"
+        );
+
+        overall.grip_saturation = sat(0.30, CurveSource::CarPool);
+        let recs = recommend(&overall, &[], &Default::default());
+        let bal = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert_eq!(bal.confidence, Confidence::High);
+        assert!(
+            bal.evidence
+                .iter()
+                .any(|e| e.contains("pooled across this car")),
+            "{:?}",
+            bal.evidence
+        );
+    }
+
+    /// Dirt keeps the legacy index gate whole (saturation curves deferred).
+    #[test]
+    fn dirt_understeer_still_fires_on_the_index() {
+        let mut overall = base_metrics();
+        overall.surface_loose = true;
+        overall.understeer_index = Some(0.24);
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(recs.iter().any(|r| r.area == "balance"));
+    }
+
+    /// Entry push on a rear-driven car with the decel diff visibly dragging
+    /// (off-throttle convergence collapsed vs the free-rolling front) names
+    /// rear diff decel as the next lever instead of brake balance.
+    #[test]
+    fn entry_push_with_locked_decel_names_the_diff() {
+        let mut overall = base_metrics();
+        overall.drivetrain_type = 1;
+        overall.understeer_index = Some(0.24);
+        overall.grip_saturation = push_sat(0.10);
+        overall.corners = corners(0.30, 0.10);
+        overall.diff_drag = crate::analysis::metrics::DiffDrag {
+            rear_off: Some(0.024),
+            front_off: Some(0.040), // conv 0.6 <= 0.8 = locked
+            rear_on: None,
+            front_on: None,
+        };
+        let recs = recommend(&overall, &[], &Default::default());
+        let bal = recs.iter().find(|r| r.area == "balance").unwrap();
+        assert!(bal.advice.contains("rear diff decel"), "{}", bal.advice);
+        assert!(
+            bal.evidence
+                .iter()
+                .any(|e| e.contains("wheel-speed convergence")),
+            "{:?}",
+            bal.evidence
+        );
+    }
+
+    /// Rebound overdamping fires from the damper-phase velocity asymmetry
+    /// alone (the maxed-rebound A/B kept healthy reversal counts).
+    #[test]
+    fn collapsed_extension_speed_fires_reduce_rebound() {
+        let mut overall = base_metrics();
+        overall.damper_phase = crate::analysis::metrics::DamperPhase {
+            ext_share_front: Some(0.63),
+            ext_share_rear: Some(0.55),
+            vratio_front: Some(0.59),
+            vratio_rear: Some(0.80), // healthy: must stay quiet
+        };
+        let recs = recommend(&overall, &[], &Default::default());
+        let damping: Vec<_> = recs.iter().filter(|r| r.area == "damping").collect();
+        assert_eq!(damping.len(), 1, "{:?}", damping);
+        assert!(
+            damping[0].advice.contains("front rebound"),
+            "{}",
+            damping[0].advice
+        );
+        assert_eq!(damping[0].confidence, Confidence::Medium);
+
+        // Dirt distributions are unmeasured for this channel: stay quiet.
+        overall.surface_loose = true;
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(
+            recs.iter()
+                .all(|r| r.area != "damping" || !r.advice.contains("rebound: the"))
         );
     }
 
@@ -1445,6 +1739,7 @@ mod tests {
     fn hot_fronts_defer_to_understeer() {
         let mut overall = base_metrics();
         overall.understeer_index = Some(0.24);
+        overall.grip_saturation = push_sat(0.10);
         overall.tire_temp.fl.avg = 245.0;
         overall.tire_temp.fr.avg = 245.0;
         let recs = recommend(&overall, &[], &Default::default());
@@ -1499,6 +1794,7 @@ mod tests {
     fn entry_understeer_names_entry_levers_and_brakes() {
         let mut overall = base_metrics();
         overall.understeer_index = Some(0.24);
+        overall.grip_saturation = push_sat(0.10);
         overall.corners = corners(0.30, 0.10);
         overall.balance_on_brake = band(1000, 0.40);
         let recs = recommend(&overall, &[], &Default::default());
@@ -1630,6 +1926,7 @@ mod tests {
     fn exit_understeer_redirects_by_drivetrain() {
         let mut overall = base_metrics();
         overall.understeer_index = Some(0.30);
+        overall.grip_saturation = push_sat(0.10);
         overall.corners = corners(0.12, 0.35);
         overall.balance_on_throttle = band(5000, 0.30);
         overall.drivetrain_type = 2; // AWD
@@ -1682,6 +1979,7 @@ mod tests {
     fn transient_oversteer_counters_the_average() {
         let mut overall = base_metrics();
         overall.understeer_index = Some(0.16);
+        overall.grip_saturation = push_sat(0.20);
         overall.transient_oversteer = crate::analysis::metrics::TransientOversteer {
             clear_frac: 0.06,
             on_power_frac: 0.045,
@@ -1920,6 +2218,7 @@ mod tests {
     fn uniform_understeer_is_mechanical_not_aero() {
         let mut overall = base_metrics();
         overall.understeer_index = Some(0.24);
+        overall.grip_saturation = push_sat(0.10);
         overall.balance_low_speed = band(9000, 0.37);
         overall.balance_high_speed = band(30000, 0.20);
         let recs = recommend(&overall, &[], &Default::default());
