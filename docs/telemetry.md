@@ -159,6 +159,9 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 - Weight, weight distribution, fitted upgrades, tune settings, tire compound,
   suspension type: must come from user input or a community car dataset.
 - Tire wear, track/route identifier.
+- **Per-wheel effective camber**: displayed on the in-game telemetry HUD but not in
+  the packet (the 324 bytes are fully accounted for; no camber field). Not derivable
+  from suspension travel without per-car geometry.
 - **Inner/middle/outer tire temps**: the packet carries a single temp per tire,
   although the in-game telemetry HUD displays IMO temps. Camber advice therefore
   needs manual IMO input (planned for the web UI); see design.md for the
