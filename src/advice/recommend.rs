@@ -1382,6 +1382,9 @@ mod tests {
             rpm_flutter: None,
             wheelspeed_flutter: None,
             grip_saturation: None,
+            diff_drag: Default::default(),
+            damper_phase: Default::default(),
+            roll_use: Default::default(),
         }
     }
 

@@ -52,6 +52,21 @@ const LANDING_WINDOW_S: f32 = 0.6;
 /// Flutter (|d rpm/dt|, |d wheel speed/dt|) sampling: same gear, on throttle,
 /// frame gaps up to this many seconds.
 const FLUTTER_MAX_DT_S: f32 = 0.2;
+/// Wheel-speed splits need forward motion: mean axle wheel speed (rad/s)
+/// below this skips the frame, and cornering below this ground speed (m/s)
+/// carries no usable path-geometry split.
+const DIFF_MIN_WHEEL_RADS: f32 = 1.0;
+const DIFF_MIN_SPEED_MPS: f32 = 5.0;
+/// Gated samples below this leave a wheel-speed split channel None.
+const DIFF_MIN_SAMPLES: usize = 200;
+/// Suspension-travel velocity within ±this (m/s) is holding, not moving:
+/// the damper phase split only counts genuine motion.
+const DAMPER_V_EPS: f32 = 0.005;
+/// Minimum per-axle moving time (s) before damper phase shares/ratios report.
+const DAMPER_MIN_MOVE_S: f64 = 10.0;
+/// Minimum summed |lateral accel| (m/s² × frames) over cornering before the
+/// roll gradient reports (~2s of cornering at the gate minimum).
+const ROLL_MIN_LAT_SUM: f64 = 500.0;
 /// Cornering at or above this speed (m/s, ~85 mph) is the high-speed balance
 /// band, where aero dominates roll stiffness; below it, mechanical grip does.
 pub const HIGH_SPEED_MPS: f32 = 38.0;
@@ -215,6 +230,78 @@ pub struct TractionSpin {
     pub both_frac: f32,
 }
 
+/// Inside/outside wheel-speed split per axle while cornering, throttle-gated
+/// (plan 015 phase 3: the diff-lock channel). Path geometry makes the outside
+/// wheel faster; a locking diff forces the pair toward equal speeds against
+/// it, and an open diff spinning the inside rear makes the split NEGATIVE
+/// (inside faster). Splits are (outer − inner) / axle mean, outer labeled by
+/// suspension travel (more compressed = loaded). Calibrated 2026-07-31:
+/// off-throttle rear split fell 0.037 → 0.028 on the behaviourally-silent
+/// max rear diff decel A/B and recovered to 0.049 on revert; the R12 accel
+/// sweep read on-throttle rear −0.029 / −0.006 / −0.009 at 0/100/50% lock.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DiffDrag {
+    pub rear_off: Option<f32>,
+    pub front_off: Option<f32>,
+    pub rear_on: Option<f32>,
+    pub front_on: Option<f32>,
+}
+
+impl DiffDrag {
+    /// Rear/front split ratio off-throttle. On a rear-driven car the free-
+    /// rolling front is the geometric reference: an open decel diff reads
+    /// ~1.0 (R8 GT measured 1.05-1.07), lock drags it toward 0. Only
+    /// meaningful rear-driven; AWD fronts are driven too.
+    pub fn conv_off(&self) -> Option<f32> {
+        Self::conv(self.rear_off, self.front_off)
+    }
+
+    /// Same ratio on-throttle: the accel-lock dial (negative = the inside
+    /// rear is spinning up against a free-rolling front).
+    pub fn conv_on(&self) -> Option<f32> {
+        Self::conv(self.rear_on, self.front_on)
+    }
+
+    fn conv(rear: Option<f32>, front: Option<f32>) -> Option<f32> {
+        let (r, f) = (rear?, front?);
+        (f.abs() > 0.002).then(|| r / f)
+    }
+}
+
+/// Damper motion phase split per axle from suspension-travel velocity (plan
+/// 015 phase 3: the rebound channel). Rebound damping slows extension, so
+/// its signature is time skewing toward extension and the extension/
+/// compression mean-speed ratio collapsing. Calibrated 2026-07-31: healthy
+/// tarmac vratio 0.76-0.84 and ext share 0.544-0.568 across EVERY car; the
+/// max-rebound-both-ends A/B was a lone outlier on both (front vratio 0.77
+/// → 0.59, ext share 0.566 → 0.628 vs its otherwise-identical baseline).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DamperPhase {
+    /// Extension share of axle damper-moving time.
+    pub ext_share_front: Option<f32>,
+    pub ext_share_rear: Option<f32>,
+    /// Mean extension speed / mean compression speed.
+    pub vratio_front: Option<f32>,
+    pub vratio_rear: Option<f32>,
+}
+
+/// Roll usage per axle and overall spring compression (plan 015 phase 3:
+/// the ARB/springs channel). Gradient = outside−inside travel per unit
+/// lateral G while cornering, per axle. Responds axle-specifically to LARGE
+/// roll-stiffness changes (Ford GT rear arb ±33.5: rear 0.58 → 0.50 → 0.58
+/// mm per m/s², front unmoved; Ferrari rear arb +35.7 agrees) but ±1.5-step
+/// changes sit under its floor (McLaren front-arb series flat at 0.57-0.59).
+/// Jounce = mean four-wheel compression: the springs-only load channel
+/// (also moves on rebound packing: +1.6mm on the max-rebound A/B).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RollUse {
+    /// mm of travel delta per m/s² of lateral acceleration.
+    pub grad_front: Option<f32>,
+    pub grad_rear: Option<f32>,
+    /// Mean four-wheel suspension compression (mm) over the stint.
+    pub jounce_mm: f32,
+}
+
 #[derive(Debug, Clone)]
 pub struct StintMetrics {
     pub samples: usize,
@@ -269,6 +356,12 @@ pub struct StintMetrics {
     pub wheelspin_frac: Option<f32>,
     /// Rear spin symmetry while cornering on throttle (diff-accel direction).
     pub traction_spin: TractionSpin,
+    /// Wheel-speed convergence per axle while cornering (diff lock).
+    pub diff_drag: DiffDrag,
+    /// Damper extension/compression occupancy per axle (rebound).
+    pub damper_phase: DamperPhase,
+    /// Roll gradient per axle + mean compression (ARB/springs).
+    pub roll_use: RollUse,
     /// Any-wheel lockup as a fraction of on-brake samples. None if never on brake.
     pub lockup_frac: Option<f32>,
     pub suspension: Corners<SuspensionStats>,
@@ -384,6 +477,19 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
     let mut ts_samples = 0usize;
     let mut ts_inside_only = 0usize;
     let mut ts_both = 0usize;
+    // Wheel-speed splits: [rear off, front off, rear on, front on] (sum, n).
+    let mut dd = [(0.0f64, 0usize); 4];
+    // Damper phase per wheel: (extending time, compressing time, extension
+    // distance, compression distance).
+    let mut dp_ext_t = [0.0f64; 4];
+    let mut dp_comp_t = [0.0f64; 4];
+    let mut dp_ext_d = [0.0f64; 4];
+    let mut dp_comp_d = [0.0f64; 4];
+    let mut dp_prev: Option<(f32, [f32; 4])> = None; // (race t, travel m)
+    // Roll gradient: [front, rear] outside−inside travel sums + |lat| sum.
+    let mut roll_d = [0.0f64; 2];
+    let mut roll_lat = 0.0f64;
+    let mut jounce_sum = 0.0f64;
     let mut brake_samples = 0usize;
     let mut lockup = 0usize;
     // Grounded real-gear frames (gear, rpm), kept whole so gearing stats can
@@ -463,6 +569,26 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             }
         }
 
+        // Damper motion phase: travel velocity against the race clock
+        // (frozen across pauses, so gaps read as dt 0 and drop out).
+        jounce_sum += (travel_m.iter().sum::<f32>() / 4.0) as f64;
+        if let Some((pt, ptravel)) = dp_prev {
+            let dt = t - pt;
+            if dt > 0.0 && dt <= FLUTTER_MAX_DT_S {
+                for i in 0..4 {
+                    let d = travel_m[i] - ptravel[i];
+                    if d / dt >= DAMPER_V_EPS {
+                        dp_comp_t[i] += dt as f64;
+                        dp_comp_d[i] += d as f64;
+                    } else if d / dt <= -DAMPER_V_EPS {
+                        dp_ext_t[i] += dt as f64;
+                        dp_ext_d[i] += -d as f64;
+                    }
+                }
+            }
+        }
+        dp_prev = Some((t, travel_m));
+
         // Steering flick -> yaw crossover. A flick is the steer input
         // committing to the opposite side at speed; the response is the yaw
         // rate crossing zero (or waking from zero) afterwards.
@@ -541,6 +667,43 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 bands[4].1 += front;
                 bands[4].2 += rear;
             }
+            // Wheel-speed splits (outer − inner over axle mean, outer = more
+            // compressed) and the roll gradient share the cornering gate.
+            if f.speed >= DIFF_MIN_SPEED_MPS {
+                let ws = f.wheel_rotation_speed.to_array();
+                let split = |a: usize, b: usize| -> Option<f32> {
+                    let (out, inn) = if travel[a] >= travel[b] {
+                        (a, b)
+                    } else {
+                        (b, a)
+                    };
+                    let mean = (ws[out].abs() + ws[inn].abs()) / 2.0;
+                    (mean > DIFF_MIN_WHEEL_RADS).then(|| (ws[out].abs() - ws[inn].abs()) / mean)
+                };
+                let on = (f.accel >= PEDAL_ON) as usize;
+                if let Some(s) = split(2, 3) {
+                    dd[2 * on].0 += s as f64;
+                    dd[2 * on].1 += 1;
+                }
+                if let Some(s) = split(0, 1) {
+                    dd[2 * on + 1].0 += s as f64;
+                    dd[2 * on + 1].1 += 1;
+                }
+            }
+            let (fo, fi) = if travel[0] >= travel[1] {
+                (0, 1)
+            } else {
+                (1, 0)
+            };
+            let (ro, ri) = if travel[2] >= travel[3] {
+                (2, 3)
+            } else {
+                (3, 2)
+            };
+            roll_d[0] += (travel_m[fo] - travel_m[fi]) as f64;
+            roll_d[1] += (travel_m[ro] - travel_m[ri]) as f64;
+            roll_lat += f.acceleration[0].abs() as f64;
+
             // Transient oversteer: brief rear-first moments a stint-length
             // average hides entirely (a net-understeer car can still snap).
             let delta = front - rear;
@@ -803,6 +966,41 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             samples: ts_samples,
             inside_only_frac: ts_inside_only as f32 / ts_samples.max(1) as f32,
             both_frac: ts_both as f32 / ts_samples.max(1) as f32,
+        },
+        diff_drag: {
+            let mean =
+                |(s, n): (f64, usize)| (n >= DIFF_MIN_SAMPLES).then(|| (s / n as f64) as f32);
+            DiffDrag {
+                rear_off: mean(dd[0]),
+                front_off: mean(dd[1]),
+                rear_on: mean(dd[2]),
+                front_on: mean(dd[3]),
+            }
+        },
+        damper_phase: {
+            let axle = |i: usize, j: usize| -> (Option<f32>, Option<f32>) {
+                let (et, ct) = (dp_ext_t[i] + dp_ext_t[j], dp_comp_t[i] + dp_comp_t[j]);
+                let (ed, cd) = (dp_ext_d[i] + dp_ext_d[j], dp_comp_d[i] + dp_comp_d[j]);
+                let share = (et + ct >= DAMPER_MIN_MOVE_S).then(|| (et / (et + ct)) as f32);
+                let vr =
+                    (et >= DAMPER_MIN_MOVE_S / 2.0 && ct >= DAMPER_MIN_MOVE_S / 2.0 && cd > 0.0)
+                        .then(|| ((ed / et) / (cd / ct)) as f32);
+                (share, vr)
+            };
+            let ((esf, vrf), (esr, vrr)) = (axle(0, 1), axle(2, 3));
+            DamperPhase {
+                ext_share_front: esf,
+                ext_share_rear: esr,
+                vratio_front: vrf,
+                vratio_rear: vrr,
+            }
+        },
+        roll_use: RollUse {
+            grad_front: (roll_lat >= ROLL_MIN_LAT_SUM)
+                .then(|| (roll_d[0] / roll_lat * 1000.0) as f32),
+            grad_rear: (roll_lat >= ROLL_MIN_LAT_SUM)
+                .then(|| (roll_d[1] / roll_lat * 1000.0) as f32),
+            jounce_mm: (jounce_sum / n as f64 * 1000.0) as f32,
         },
         lockup_frac: (brake_samples > 0).then(|| lockup as f32 / brake_samples as f32),
         suspension: {
@@ -1209,5 +1407,110 @@ mod tests {
         }
         let m = stint_metrics(&timed(frames));
         assert_eq!(m.lockup_frac, Some(0.4)); // 2 lockup samples of 5 braking
+    }
+
+    #[test]
+    fn diff_drag_split_signed_outer_minus_inner() {
+        // Cornering with the left side loaded (outside). Front: outer 52 vs
+        // inner 48 rad/s (geometric split +0.08). Rear off-throttle equal
+        // (locked-style, 0.0); on-throttle the inside rear spins up
+        // (outer 45 vs inner 55 = split -0.2).
+        let frames: Vec<TelemetryFrame> = (0..500)
+            .map(|i| TelemetryFrame {
+                speed: 30.0,
+                acceleration: [6.0, 0.0, 0.0],
+                accel: if i % 2 == 0 { 255 } else { 0 },
+                norm_suspension_travel: Corners {
+                    fl: 0.6,
+                    fr: 0.4,
+                    rl: 0.6,
+                    rr: 0.4,
+                },
+                wheel_rotation_speed: Corners {
+                    fl: 52.0,
+                    fr: 48.0,
+                    rl: if i % 2 == 0 { 45.0 } else { 50.0 },
+                    rr: if i % 2 == 0 { 55.0 } else { 50.0 },
+                },
+                ..Default::default()
+            })
+            .collect();
+        let m = stint_metrics(&timed(frames));
+        let dd = &m.diff_drag;
+        assert!((dd.front_off.unwrap() - 0.08).abs() < 1e-3);
+        assert!((dd.front_on.unwrap() - 0.08).abs() < 1e-3);
+        assert!(dd.rear_off.unwrap().abs() < 1e-3);
+        assert!((dd.rear_on.unwrap() - -0.2).abs() < 1e-3);
+        assert!(dd.conv_off().unwrap().abs() < 0.02);
+        assert!((dd.conv_on().unwrap() - -2.5).abs() < 0.05);
+    }
+
+    #[test]
+    fn damper_phase_reads_slow_extension() {
+        // Sawtooth travel: compress 0.1 m/s for 0.5s, extend 0.05 m/s for
+        // 1.0s. Extension holds 2/3 of moving time at half the speed.
+        let mut frames = Vec::new();
+        let mut travel = 0.0f32;
+        for _ in 0..12 {
+            for _ in 0..5 {
+                travel += 0.01;
+                frames.push(TelemetryFrame {
+                    suspension_travel_meters: Corners {
+                        fl: travel,
+                        fr: travel,
+                        rl: travel,
+                        rr: travel,
+                    },
+                    ..Default::default()
+                });
+            }
+            for _ in 0..10 {
+                travel -= 0.005;
+                frames.push(TelemetryFrame {
+                    suspension_travel_meters: Corners {
+                        fl: travel,
+                        fr: travel,
+                        rl: travel,
+                        rr: travel,
+                    },
+                    ..Default::default()
+                });
+            }
+        }
+        let m = stint_metrics(&timed(frames));
+        let dp = &m.damper_phase;
+        assert!((dp.ext_share_front.unwrap() - 2.0 / 3.0).abs() < 0.02);
+        assert!((dp.ext_share_rear.unwrap() - 2.0 / 3.0).abs() < 0.02);
+        assert!((dp.vratio_front.unwrap() - 0.5).abs() < 0.02);
+        assert!((dp.vratio_rear.unwrap() - 0.5).abs() < 0.02);
+    }
+
+    #[test]
+    fn roll_gradient_per_axle_and_jounce() {
+        // Sustained cornering at 8 m/s²: front delta 0.02 m, rear 0.01 m.
+        let frames: Vec<TelemetryFrame> = (0..100)
+            .map(|_| TelemetryFrame {
+                acceleration: [8.0, 0.0, 0.0],
+                norm_suspension_travel: Corners {
+                    fl: 0.6,
+                    fr: 0.4,
+                    rl: 0.6,
+                    rr: 0.4,
+                },
+                suspension_travel_meters: Corners {
+                    fl: 0.03,
+                    fr: 0.01,
+                    rl: 0.02,
+                    rr: 0.01,
+                },
+                ..Default::default()
+            })
+            .collect();
+        let m = stint_metrics(&timed(frames));
+        assert!((m.roll_use.grad_front.unwrap() - 2.5).abs() < 1e-3);
+        assert!((m.roll_use.grad_rear.unwrap() - 1.25).abs() < 1e-3);
+        assert!((m.roll_use.jounce_mm - 17.5).abs() < 0.01);
+        // Static travel = no damper motion; the phase split must stay None.
+        assert!(m.damper_phase.ext_share_front.is_none());
     }
 }

@@ -242,6 +242,22 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
         // With ABS on, sustained slip at the limit is normal threshold braking.
         writeln!(out, "    braking at/over slip limit: {}", pct(l)).unwrap();
     }
+    let dd = &m.diff_drag;
+    if let (Some(ro), Some(rn)) = (dd.rear_off, dd.rear_on) {
+        let conv = |c: Option<f32>| c.map(|c| format!("{c:.2}")).unwrap_or_else(|| "-".into());
+        writeln!(
+            out,
+            "    wheel-speed split while cornering (outer-inner): rear {:+.3} \
+             off-throttle / {:+.3} on | rear/front ratio {} / {} (the front is a \
+             free-rolling reference only when undriven: ~1.0 off = open decel \
+             diff, toward 0 = locked; negative on-throttle = inside spinning up)",
+            ro,
+            rn,
+            conv(dd.conv_off()),
+            conv(dd.conv_on()),
+        )
+        .unwrap();
+    }
     match (
         m.understeer_index,
         m.cornering_front_slip,
@@ -395,6 +411,36 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
             pct(s.topped_frac),
             s.reversals_per_sec,
             s.reversals_per_100m,
+        )
+        .unwrap();
+    }
+
+    let dp = &m.damper_phase;
+    if let (Some(ef), Some(er), Some(vf), Some(vr)) = (
+        dp.ext_share_front,
+        dp.ext_share_rear,
+        dp.vratio_front,
+        dp.vratio_rear,
+    ) {
+        writeln!(
+            out,
+            "    damper phase: extension {} of motion front / {} rear | extension \
+             speed {:.2}x compression front / {:.2}x rear (healthy tarmac \
+             0.76-0.84; maxed rebound measured 0.59)",
+            pct(ef),
+            pct(er),
+            vf,
+            vr,
+        )
+        .unwrap();
+    }
+    if let (Some(gf), Some(gr)) = (m.roll_use.grad_front, m.roll_use.grad_rear) {
+        writeln!(
+            out,
+            "    roll gradient: {gf:.2} mm/(m/s²) front / {gr:.2} rear | mean \
+             compression {:.1} mm (roll responds to large bar/spring changes; \
+             compression rises with soft springs or rebound packing)",
+            m.roll_use.jounce_mm,
         )
         .unwrap();
     }
