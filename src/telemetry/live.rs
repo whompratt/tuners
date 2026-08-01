@@ -90,12 +90,16 @@ pub enum Band {
     Good,
 }
 
-/// Corroboration score at or above this reads green. Recalibrated when
-/// hole-aware, corner-atomic splicing tightened the score distribution:
-/// tarmac multi-lap sessions now read 0.85+, the real dirt sessions ~0.75.
-pub const GOOD_MIN_SCORE: f32 = 0.70;
-/// At or above this reads orange; below is red.
-pub const OK_MIN_SCORE: f32 = 0.50;
+/// Corroboration score at or above this reads green. Calibrated against the
+/// GRADED score's library distribution (2026-08-01): per lap count the
+/// medians read 0.62 (2 laps) / 0.80 (3) / 0.89 (4) / 0.95+ (6+), so green
+/// needs either 4+ agreeing laps or an unusually tight 3-lap stint —
+/// deliberately cautious, the gauge asks for more laps rather than
+/// flattering thin data.
+pub const GOOD_MIN_SCORE: f32 = 0.85;
+/// At or above this reads orange; below is red. Two-lap stints land orange
+/// (median 0.62) unless the two laps genuinely disagree.
+pub const OK_MIN_SCORE: f32 = 0.60;
 
 impl Band {
     pub fn from_score(score: f32) -> Band {
@@ -128,10 +132,13 @@ pub struct Quality {
     pub spread_frac: f32,
     /// Distance every profiled lap covers (the comparable route length).
     pub shared_km: f32,
-    /// Time-weighted share of the ideal lap reproduced by a second lap
+    /// Time-weighted graded support of the ideal lap by the other laps
     /// (profile::Corroboration), the headline confidence value.
     pub confidence: f32,
     pub band: Band,
+    /// Why confidence is not green, when it isn't: the one thing the driver
+    /// can do about it. None when the band is Good.
+    pub note: Option<&'static str>,
 }
 
 /// Quality over the frames captured so far; None until a comparable lap exists.
@@ -140,7 +147,22 @@ pub fn compute_quality(frames: &[TimedFrame]) -> Option<Quality> {
     let laps = profile.laps.len();
     let worst = profile.laps.iter().map(|l| l.time_s).fold(0.0f32, f32::max);
     let spread_frac = (worst - profile.best_lap_time_s).max(0.0) / profile.best_lap_time_s;
-    let confidence = profile.corroboration().score;
+    let corr = profile.corroboration();
+    let confidence = corr.score;
+    let band = Band::from_score(confidence);
+    let note = match band {
+        Band::Good => None,
+        _ if laps < 2 => {
+            Some("one comparable lap: nothing can confirm it yet — more laps build confidence")
+        }
+        _ if laps == 2 => Some(
+            "two laps: every stretch rests on a single confirmation — more laps build confidence",
+        ),
+        _ if corr.harvest_support.is_some_and(|s| s < 0.5) => Some(
+            "the optimal lap uses stretches no other lap reproduced — more consistent laps build confidence",
+        ),
+        _ => Some("laps vary lap-to-lap — more consistent laps build confidence"),
+    };
     Some(Quality {
         laps,
         standing_only: profile.standing_start_only,
@@ -148,7 +170,8 @@ pub fn compute_quality(frames: &[TimedFrame]) -> Option<Quality> {
         spread_frac,
         shared_km: profile.shared_bins as f32 * crate::analysis::profile::BIN_METERS / 1000.0,
         confidence,
-        band: Band::from_score(confidence),
+        band,
+        note,
     })
 }
 

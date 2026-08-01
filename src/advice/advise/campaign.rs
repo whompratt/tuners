@@ -234,9 +234,23 @@ pub(crate) struct CampaignStint {
     /// (unfamiliar car, chaotic drive, traffic): every measurement touching
     /// it is weak — kept visible, never trusted alone.
     pub suspect: bool,
-    /// Comparison vs the previous stint: (ideal delta, phase attribution),
-    /// or why it isn't comparable. None for the first stint.
-    pub vs_prev: Option<Result<(f32, analysis::attribution::Attribution), String>>,
+    /// Comparison vs the previous stint, or why it isn't comparable. None
+    /// for the first stint.
+    pub vs_prev: Option<Result<PairVerdict, String>>,
+}
+
+/// Outcome of comparing a stint against its predecessor: the 2-of-3 vote
+/// verdict (median of ideal/best/median-lap deltas), its component
+/// currencies for disagreement hedges, and the phase attribution of the
+/// composite delta (spatial decomposition explains the ideal component;
+/// the vote has no per-bin form).
+#[derive(Clone, Copy)]
+pub(crate) struct PairVerdict {
+    pub verdict_s: f32,
+    pub ideal_s: f32,
+    pub best_s: f32,
+    pub median_lap_s: f32,
+    pub attr: analysis::attribution::Attribution,
 }
 
 /// A stint-pair comparison is THIN when either side ran a single flying lap
@@ -438,9 +452,12 @@ pub(crate) fn load_campaign<'s>(
             .as_deref()
             .is_some_and(|n| n.to_lowercase().contains("suspect"));
         let vs_prev = stints.last().map(|prev: &CampaignStint| {
-            analysis::compare::compare(&prev.profile, &profile).map(|cmp| {
-                let attr = analysis::attribution::split_delta(&prev.profile, &cmp.bin_delta_s);
-                (cmp.ideal_delta_s, attr)
+            analysis::compare::compare(&prev.profile, &profile).map(|cmp| PairVerdict {
+                verdict_s: cmp.verdict_delta_s,
+                ideal_s: cmp.ideal_delta_s,
+                best_s: cmp.best_lap_delta_s,
+                median_lap_s: cmp.median_lap_delta_s,
+                attr: analysis::attribution::split_delta(&prev.profile, &cmp.bin_delta_s),
             })
         });
         stints.push(CampaignStint {
@@ -500,7 +517,7 @@ pub(crate) fn load_campaign<'s>(
                 continue;
             }
             if let Ok(cmp) = analysis::compare::compare(&stints[i].profile, &stints[j].profile) {
-                drift_obs.push(cmp.ideal_delta_s.abs());
+                drift_obs.push(cmp.verdict_delta_s.abs());
                 // Same-setup behavioural movement is pure drift too: the
                 // campaign's own per-field noise floor.
                 effects::fold_floor(&mut effect_floor, &pair_effects(&stints[i], &stints[j]));
@@ -553,7 +570,7 @@ pub(crate) fn load_campaign<'s>(
                     softer: vals.iter().sum::<f32>() < 0.0,
                     magnitude: (vals.len() == 1).then(|| vals[0]),
                 },
-                outcome: journal::judge(cmp.ideal_delta_s),
+                outcome: journal::judge(cmp.verdict_delta_s),
                 desc: format!(
                     "{} (steps {}→{})",
                     crate::advice::tuning::diff_note(si, sj),
@@ -580,9 +597,10 @@ pub(crate) fn load_campaign<'s>(
         let Some(note) = stints[j].entry.note.clone() else {
             continue;
         };
-        let Some(Ok((delta, attr))) = stints[j].vs_prev else {
+        let Some(Ok(pv)) = stints[j].vs_prev else {
             continue;
         };
+        let (delta, attr) = (pv.verdict_s, pv.attr);
         if let Some(change) = journal::parse_change(&note) {
             measurements.push(Measurement {
                 change,

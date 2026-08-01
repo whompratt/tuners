@@ -85,8 +85,27 @@ fn nodes_summary(nodes: &[(f32, f32, usize)]) -> String {
         .join(", ")
 }
 
+/// Sample sd of a stint's flying-lap times; None under 3 laps (a 2-lap "sd"
+/// is just half the gap between them, not a spread estimate).
+fn lap_scatter(profile: &analysis::profile::StintProfile) -> Option<f32> {
+    let n = profile.laps.len();
+    if n < 3 {
+        return None;
+    }
+    let mean = profile.laps.iter().map(|l| l.time_s).sum::<f32>() / n as f32;
+    Some(
+        (profile
+            .laps
+            .iter()
+            .map(|l| (l.time_s - mean).powi(2))
+            .sum::<f32>()
+            / (n - 1) as f32)
+            .sqrt(),
+    )
+}
+
 /// Metrics of a stint's longest driving segment: the basis for both the
-/// step balance display and the plan-011 effect vector.
+/// step balance display and the effect vector.
 fn stint_overall_metrics(stint: &analysis::Stint) -> Option<analysis::metrics::StintMetrics> {
     let segments = analysis::driving_segments(&stint.frames, 5.0);
     let longest = segments.iter().max_by_key(|s| s.len())?;
@@ -333,13 +352,19 @@ pub fn advise(
     let mut steps = Vec::new();
     for (i, cs) in c.stints.iter().enumerate() {
         let mut split = None;
+        let mut currencies = None;
         let outcome = match (i, &cs.vs_prev) {
             (0, _) | (_, None) => None,
-            (_, Some(Ok((delta, attr)))) => {
-                split = Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s));
+            (_, Some(Ok(pv))) => {
+                split = Some((
+                    pv.attr.entry_delta_s,
+                    pv.attr.exit_delta_s,
+                    pv.attr.straight_delta_s,
+                ));
+                currencies = Some((pv.ideal_s, pv.best_s, pv.median_lap_s));
                 Some(Ok((
-                    journal::judge(*delta).word(),
-                    *delta,
+                    journal::judge(pv.verdict_s).word(),
+                    pv.verdict_s,
                     c.stints[i - 1].profile.laps.len() != cs.profile.laps.len(),
                 )))
             }
@@ -350,6 +375,8 @@ pub fn advise(
             laps: cs.profile.laps.len(),
             best_s: cs.profile.best_lap_time_s,
             ideal_s: cs.profile.composite.time_s,
+            scatter_s: lap_scatter(&cs.profile),
+            currencies,
             balance: cs.met.as_ref().and_then(|m| {
                 Some((
                     m.understeer_index?,
@@ -405,8 +432,8 @@ pub fn advise(
         step.anchor = Some(RowAnchor {
             vs_step: i + 1,
             areas: area_list(&keys).join(", "),
-            delta_s: cmp.ideal_delta_s,
-            word: journal::judge(cmp.ideal_delta_s).word(),
+            delta_s: cmp.verdict_delta_s,
+            word: journal::judge(cmp.verdict_delta_s).word(),
             weak: c.thin(i, j),
         });
     }
@@ -426,7 +453,7 @@ pub fn advise(
         let areas = area_list(&keys);
         let changes = crate::advice::tuning::diff_note(c.setups[i].unwrap(), last_setup);
         let weak = c.weak_pair(i, n - 1);
-        let outcome = journal::judge(cmp.ideal_delta_s);
+        let outcome = journal::judge(cmp.verdict_delta_s);
         let single_family = (areas.len() == 1)
             .then(|| journal::family_for_area(areas[0]))
             .flatten();
@@ -450,7 +477,12 @@ pub fn advise(
             vs_step: i + 1,
             areas: areas.join(", "),
             changes,
-            delta_s: cmp.ideal_delta_s,
+            delta_s: cmp.verdict_delta_s,
+            currencies: (
+                cmp.ideal_delta_s,
+                cmp.best_lap_delta_s,
+                cmp.median_lap_delta_s,
+            ),
             word: outcome.word(),
             weak,
             reconciled: anchor_change.is_some(),
@@ -467,7 +499,7 @@ pub fn advise(
         c.stints[idx]
             .vs_prev
             .as_ref()
-            .and_then(|r| r.as_ref().ok().map(|(d, _)| *d))
+            .and_then(|r| r.as_ref().ok().map(|pv| pv.verdict_s))
     };
     let aba = (n >= 3)
         .then(|| {
@@ -774,7 +806,7 @@ pub fn advise(
                     r.confidence = recommend::Confidence::Medium;
                     r.evidence.push(format!(
                         "measured landscape ({phrase}): {landscape} (cumulative \
-                         ideal delta vs first tried value; lower = faster)"
+                         verdict delta vs first tried value; lower = faster)"
                     ));
                 }
             }
@@ -820,7 +852,7 @@ pub fn advise(
                     magnitude: None,
                 });
                 r.evidence.push(format!(
-                    "measured landscape ({phrase}): {} (cumulative ideal delta; \
+                    "measured landscape ({phrase}): {} (cumulative verdict delta; \
                      lower = faster)",
                     nodes_summary(&nodes),
                 ));
@@ -855,7 +887,7 @@ pub fn advise(
                      changes in one stint cannot be separated"
                 ),
                 evidence: vec![format!(
-                    "mapped so far: {} (cumulative ideal delta; lower = faster)",
+                    "mapped so far: {} (cumulative verdict delta; lower = faster)",
                     nodes_summary(&nodes),
                 )],
                 confidence: recommend::Confidence::Low,

@@ -1,8 +1,8 @@
 //! Verdict-currency survey over journaled campaigns: for every stint pair,
-//! compare the ideal-composite delta (the app's verdict currency) against the
-//! best-lap and mean-lap deltas. Pairs are labeled same-setup (the drift
-//! corpus: true effect is zero), single-area, or multi-area from the bound
-//! tune revisions. TSV to stdout; run from the data root.
+//! compare the ideal-composite delta against the best-lap and median-lap
+//! deltas (the production vote's components). Pairs are labeled same-setup
+//! (the drift corpus: true effect is zero), single-area, or multi-area from
+//! the bound tune revisions. TSV to stdout; run from the data root.
 //!
 //! Adjacent journal pairs are emitted plus non-adjacent same-setup pairs
 //! (flagged adj=0). Implicit trailing stints (driven after the last journal
@@ -26,15 +26,13 @@ struct Row {
 }
 
 fn lap_stats(p: &StintProfile) -> (f32, f32) {
-    let n = p.laps.len() as f32;
-    let mean = p.laps.iter().map(|l| l.time_s).sum::<f32>() / n;
-    (p.best_lap_time_s, mean)
+    (p.best_lap_time_s, p.median_lap_time_s())
 }
 
 fn main() {
     let root = std::env::args().nth(1).unwrap_or_else(|| ".".into());
     let root = Path::new(&root);
-    println!("journal\ti\tj\tadj\tkind\tareas\tn_i\tn_j\tideal_d\tbest_d\tmean_d");
+    println!("journal\ti\tj\tadj\tkind\tareas\tn_i\tn_j\tideal_d\tbest_d\tmedlap_d");
 
     let mut names: Vec<String> = std::fs::read_dir(root)
         .expect("read root")

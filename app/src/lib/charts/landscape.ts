@@ -4,7 +4,7 @@
 import type { Palette } from "./palette";
 
 export type LandscapeData = {
-  /** (value, cumulative ideal delta s); sanitized, ascending by value. */
+  /** (value, cumulative verdict delta s); sanitized, ascending by value. */
   nodes: [number, number][];
   fit: [number, number, number] | null;
   vertex: number | null;

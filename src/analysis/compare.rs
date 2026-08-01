@@ -22,6 +22,15 @@ pub struct Comparison {
     pub bin_delta_s: Vec<f32>,
     pub ideal_delta_s: f32,
     pub best_lap_delta_s: f32,
+    /// Median flying-lap delta: the typical lap, robust to one ruined lap.
+    pub median_lap_delta_s: f32,
+    /// THE verdict currency: median of (ideal, best, median-lap) deltas, a
+    /// 2-of-3 vote. The spliced ideal rewards spatial lap scatter it can
+    /// harvest (a driving-style term, measured up to ~0.3s), so it no longer
+    /// decides alone; it stays the tie-breaker when best and median-lap
+    /// disagree. The per-bin spatial decomposition remains composite-based,
+    /// so phase splits explain the ideal component, not the whole vote.
+    pub verdict_delta_s: f32,
     /// Sessions were driven in different cars: a car comparison, not a tune A/B.
     pub car_mismatch: bool,
 }
@@ -62,12 +71,22 @@ pub fn compare(a: &StintProfile, b: &StintProfile) -> Result<Comparison, String>
         .map(|bin| b.composite.bins[bin].time_s - a.composite.bins[bin].time_s)
         .collect();
 
+    let ideal_delta_s: f32 = bin_delta_s.iter().sum();
+    let best_lap_delta_s = b.best_lap_time_s - a.best_lap_time_s;
+    let median_lap_delta_s = b.median_lap_time_s() - a.median_lap_time_s();
     Ok(Comparison {
-        ideal_delta_s: bin_delta_s.iter().sum(),
-        best_lap_delta_s: b.best_lap_time_s - a.best_lap_time_s,
+        ideal_delta_s,
+        best_lap_delta_s,
+        median_lap_delta_s,
+        verdict_delta_s: median3(ideal_delta_s, best_lap_delta_s, median_lap_delta_s),
         car_mismatch: a.car_ordinal != b.car_ordinal,
         bin_delta_s,
     })
+}
+
+/// Middle of three values: the 2-of-3 vote.
+fn median3(a: f32, b: f32, c: f32) -> f32 {
+    a.max(b).min(a.max(c)).min(b.max(c))
 }
 
 pub fn render(a: &StintProfile, b: &StintProfile, cmp: &Comparison) -> String {
@@ -124,7 +143,24 @@ pub fn render(a: &StintProfile, b: &StintProfile, cmp: &Comparison) -> String {
         }
     };
     writeln!(out, "\n{}", verdict(cmp.best_lap_delta_s, "best lap")).unwrap();
+    writeln!(out, "{}", verdict(cmp.median_lap_delta_s, "median lap")).unwrap();
     writeln!(out, "{}", verdict(cmp.ideal_delta_s, "ideal lap (spliced)")).unwrap();
+    writeln!(
+        out,
+        "{}",
+        verdict(cmp.verdict_delta_s, "verdict (2-of-3 vote)")
+    )
+    .unwrap();
+    if cmp.verdict_delta_s.signum() != cmp.ideal_delta_s.signum()
+        && cmp.verdict_delta_s.abs() >= 0.01
+    {
+        writeln!(
+            out,
+            "note: best and median lap agree against the spliced ideal; the ideal \
+             rewards laps that are fast in different places, so the vote overrules it",
+        )
+        .unwrap();
+    }
 
     // Segment breakdown: where the time comes from.
     let mut segments: Vec<(usize, f32)> = cmp
@@ -234,6 +270,78 @@ mod tests {
         let rendered = render(&a, &b, &cmp);
         assert!(rendered.contains("B faster by 0.25s"), "{rendered}");
         assert!(rendered.contains("0.50-0.75 km"), "{rendered}");
+    }
+
+    fn profile_from_laps(bin_times: &[Vec<f32>]) -> StintProfile {
+        let laps: Vec<LapProfile> = bin_times
+            .iter()
+            .enumerate()
+            .map(|(i, times)| LapProfile {
+                lap_number: i as u16 + 1,
+                time_s: times.iter().sum(),
+                standing_start: false,
+                bins: times
+                    .iter()
+                    .map(|t| BinStats {
+                        time_s: *t,
+                        speed_avg: 50.0,
+                        samples: 10,
+                        ..Default::default()
+                    })
+                    .collect(),
+            })
+            .collect();
+        let n = laps[0].bins.len();
+        StintProfile {
+            composite: build_composite(&laps, n),
+            shared_bins: n,
+            best_lap_time_s: laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min),
+            standing_start_only: false,
+            car_ordinal: 42,
+            laps,
+        }
+    }
+
+    /// The verdict is a 2-of-3 vote: a stint whose laps are fast in DIFFERENT
+    /// places builds a low composite the driver never demonstrated as one
+    /// lap; when best and median lap both disagree with the ideal, the vote
+    /// sides with them and the ideal is overruled (the measured Porsche
+    /// front-arb case).
+    #[test]
+    fn verdict_vote_overrules_scatter_harvesting_ideal() {
+        // A: two 19.5s laps, each fast on a different stretch -> composite
+        // harvests both (19.0s). B: two identical 19.4s laps, nothing to
+        // harvest.
+        let mut lap1 = vec![0.2f32; 100];
+        let mut lap2 = vec![0.2f32; 100];
+        lap1[10..20].fill(0.15);
+        lap2[60..70].fill(0.15);
+        let a = profile_from_laps(&[lap1, lap2]);
+        let b = profile_from_laps(&[vec![0.194f32; 100], vec![0.194f32; 100]]);
+        assert!((a.composite.time_s - 19.0).abs() < 0.01, "harvested both");
+
+        let cmp = compare(&a, &b).unwrap();
+        assert!(cmp.ideal_delta_s > 0.3, "ideal says B worse");
+        assert!(cmp.best_lap_delta_s < 0.0, "best lap says B faster");
+        assert!(cmp.median_lap_delta_s < 0.0, "median lap says B faster");
+        assert!(
+            (cmp.verdict_delta_s - cmp.best_lap_delta_s).abs() < 1e-4,
+            "vote sides with the majority"
+        );
+        let rendered = render(&a, &b, &cmp);
+        assert!(rendered.contains("the vote overrules it"), "{rendered}");
+    }
+
+    #[test]
+    fn median_lap_time_averages_even_counts() {
+        let p = profile_from_laps(&[
+            vec![0.2f32; 100], // 20.0
+            vec![0.21f32; 100],
+            vec![0.25f32; 100], // ruined lap
+        ]);
+        assert!((p.median_lap_time_s() - 21.0).abs() < 0.01);
+        let p2 = profile_from_laps(&[vec![0.2f32; 100], vec![0.21f32; 100]]);
+        assert!((p2.median_lap_time_s() - 20.5).abs() < 0.01);
     }
 
     #[test]

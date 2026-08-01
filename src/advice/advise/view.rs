@@ -16,14 +16,23 @@ pub struct StepView {
     pub laps: usize,
     pub best_s: f32,
     pub ideal_s: f32,
+    /// Sample sd of the stint's flying-lap times (None under 3 laps).
+    /// REPORT-ONLY consistency channel: a change that shrinks scatter at
+    /// equal pace made the car easier to drive, but no rule reads this yet
+    /// (its same-setup noise floor is uncalibrated).
+    pub scatter_s: Option<f32>,
     /// (understeer index, front slip frac, rear slip frac).
     pub balance: Option<(f32, f32, f32)>,
     pub note: Option<String>,
     /// Slider positions relative to baseline, when the note trail supports them.
     pub pos: Option<(f32, f32)>,
-    /// Measured outcome vs the previous step: Ok((word, ideal delta, unequal
-    /// laps)) or Err(reason) when not comparable. None for the first step.
+    /// Measured outcome vs the previous step: Ok((word, verdict delta,
+    /// unequal laps)) or Err(reason) when not comparable. None for the first
+    /// step. The delta is the 2-of-3 vote (median of ideal/best/median-lap).
     pub outcome: Option<Result<(&'static str, f32, bool), String>>,
+    /// The vote's component deltas vs the previous step (ideal, best,
+    /// median lap), for disagreement hedges. Set whenever outcome is Ok.
+    pub currencies: Option<(f32, f32, f32)>,
     /// Where the time moved vs the previous step: (corner entry, corner exit,
     /// straights). Corner total = entry + exit.
     pub split: Option<(f32, f32, f32)>,
@@ -73,8 +82,11 @@ pub struct AnchorView {
     pub areas: String,
     /// Human description of the setup difference ("front rebound +12.2; ...").
     pub changes: String,
-    /// Ideal-lap delta anchor -> last (positive = last is slower).
+    /// Verdict delta anchor -> last (positive = last is slower): the 2-of-3
+    /// vote of the component currencies below.
     pub delta_s: f32,
+    /// Component deltas (ideal, best, median lap), for disagreement hedges.
+    pub currencies: (f32, f32, f32),
     pub word: &'static str,
     /// Single-flying-lap comparison on either side.
     pub weak: bool,
@@ -113,7 +125,7 @@ pub struct LandscapeView {
     /// Slider label when the axis is a single known key, else the area.
     pub phrase: String,
     pub key: Option<String>,
-    /// (value, cumulative ideal delta s, samples), ascending by value.
+    /// (value, cumulative verdict delta s, samples), ascending by value.
     pub nodes: Vec<(f32, f32, usize)>,
     /// y = ax² + bx + c least-squares fit over the nodes (3+ nodes).
     pub fit: Option<(f32, f32, f32)>,

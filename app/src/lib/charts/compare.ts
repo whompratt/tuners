@@ -6,12 +6,16 @@ import type { UnitDef } from "$lib/units";
 
 export type Cmp = {
   binMeters: number;
-  a: { file: string; laps: number; best: number; ideal: number; standingOnly: boolean };
-  b: { file: string; laps: number; best: number; ideal: number; standingOnly: boolean };
+  a: { file: string; laps: number; best: number; median: number; ideal: number; standingOnly: boolean };
+  b: { file: string; laps: number; best: number; median: number; ideal: number; standingOnly: boolean };
   speedsA: number[];
   speedsB: number[];
   timesA: number[];
   delta: number[];
+  // The 2-of-3 vote (median of ideal/best/median-lap deltas) and its
+  // component deltas (ideal, best, median lap), B minus A.
+  verdictDeltaS: number;
+  currencies: [number, number, number];
   unequalLaps: boolean;
   carMismatch: boolean;
 };

@@ -30,6 +30,16 @@
   const sgn = (v: number | null) => `${N(v) > 0 ? "+" : ""}${N(v).toFixed(2)}s`;
   const dcol = (v: number | null) => (N(v) > 0.02 ? "#e66767" : N(v) < -0.02 ? "#199e70" : "var(--muted)");
   const fl = (v: number | null) => fmtLap(N(v));
+  // The verdict is a 2-of-3 vote (ideal / best / median lap); when the
+  // spliced ideal loses the vote beyond noise, say so.
+  const overruled = (
+    v: number | null | undefined,
+    c: [number | null, number | null, number | null] | null | undefined,
+  ) =>
+    v != null &&
+    c?.[0] != null &&
+    Math.sign(v) !== Math.sign(c[0]) &&
+    (Math.abs(v) >= 0.05 || Math.abs(c[0]) >= 0.05);
   // Run identity is the stamp: strip the constant prefix/suffix for display.
   const base = (p: string) => baseName(p).replace(/^stint-/, "").replace(/\.ftel$/, "");
 
@@ -123,7 +133,12 @@
                     href="#top"
                     onclick={(e) => { e.preventDefault(); jump(st.path); }}>{base(st.path)}</a>
                 </td>
-                <td class="num">{st.laps}</td>
+                <td class="num">
+                  {st.laps}{#if st.scatterS != null}<br /><span
+                      style="color:var(--muted);font-size:11px"
+                      title="lap-time scatter (sd of flying laps): shrinking scatter at equal pace means the car got easier to drive"
+                      >±{N(st.scatterS).toFixed(2)}</span>{/if}
+                </td>
                 <td class="num">{fl(st.bestS)}</td>
                 <td class="num">{fl(st.idealS)}</td>
                 <td>
@@ -144,7 +159,22 @@
                     {#if "error" in o}
                       <span style="color:var(--muted)">not comparable: {o.error}</span>
                     {:else}
-                      <span style="color:{OUTCOME_COLOR[o.word] || 'inherit'}">{o.word} {sgn(o.deltaS)}</span>
+                      <span
+                        style="color:{OUTCOME_COLOR[o.word] || 'inherit'}"
+                        title={st.currencies
+                          ? `vote of three: ideal ${sgn(st.currencies[0])} / best ${sgn(st.currencies[1])} / median lap ${sgn(st.currencies[2])}`
+                          : undefined}>{o.word} {sgn(o.deltaS)}</span>
+                      {#if overruled(o.deltaS, st.currencies)}
+                        <br />
+                        <span
+                          style="color:var(--muted)"
+                          title="the spliced ideal rewards laps that are fast in different places; best and median lap agree against it, so the vote overrules it"
+                        >
+                          ideal {sgn(st.currencies![0])} overruled by best {sgn(st.currencies![1])} + median {sgn(
+                            st.currencies![2],
+                          )}
+                        </span>
+                      {/if}
                     {/if}
                   {:else}–{/if}
                   {#if st.anchor}
@@ -214,8 +244,13 @@
             <span title="where the time moved: corner entry / corner exit / straights">
               entry {sgn(a.anchor.split[0])} / exit {sgn(a.anchor.split[1])} / straights {sgn(a.anchor.split[2])}
             </span>{a.anchor.weak ? " (single-lap side)" : ""}{a.anchor.reconciled ? "" : " (multi-area, informational)"}
+            {#if overruled(a.anchor.deltaS, a.anchor.currencies)}
+              <br />
+              currencies: ideal {sgn(a.anchor.currencies[0])} overruled by best {sgn(a.anchor.currencies[1])} + median lap
+              {sgn(a.anchor.currencies[2])}
+            {/if}
           {:else}
-            step {a.anchor.vsStep} has the same setup: {sgn(a.anchor.deltaS)} ideal is pure driver/track drift
+            step {a.anchor.vsStep} has the same setup: {sgn(a.anchor.deltaS)} verdict is pure driver/track drift
           {/if}
         </div>
       {/if}

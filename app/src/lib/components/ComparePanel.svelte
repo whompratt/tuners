@@ -15,12 +15,14 @@
   const n = (v: number | null) => v ?? 0;
   const sanitize = (v: CompareView): Cmp => ({
     binMeters: n(v.binMeters),
-    a: { ...v.a, best: n(v.a.best), ideal: n(v.a.ideal) },
-    b: { ...v.b, best: n(v.b.best), ideal: n(v.b.ideal) },
+    a: { ...v.a, best: n(v.a.best), median: n(v.a.median), ideal: n(v.a.ideal) },
+    b: { ...v.b, best: n(v.b.best), median: n(v.b.median), ideal: n(v.b.ideal) },
     speedsA: v.speedsA.map(n),
     speedsB: v.speedsB.map(n),
     timesA: v.timesA.map(n),
     delta: v.delta.map(n),
+    verdictDeltaS: n(v.verdictDeltaS),
+    currencies: [n(v.currencies[0]), n(v.currencies[1]), n(v.currencies[2])],
     unequalLaps: v.unequalLaps,
     carMismatch: v.carMismatch,
   });
@@ -119,8 +121,16 @@
       <div style="font-size:13px;color:var(--ink-2);margin-bottom:8px">cannot compare: {error}</div>
     {:else if cmpData}
       <div style="font-size:13px;color:var(--ink-2);margin-bottom:8px">
-        best lap: <span class="num">{word(cmpData.b.best - cmpData.a.best)}</span> · optimal lap (spliced):
-        <span class="num">{word(cmpData.b.ideal - cmpData.a.ideal)}</span>
+        best lap: <span class="num">{word(cmpData.b.best - cmpData.a.best)}</span> · median lap:
+        <span class="num">{word(cmpData.b.median - cmpData.a.median)}</span> · optimal lap (spliced):
+        <span class="num">{word(cmpData.b.ideal - cmpData.a.ideal)}</span> · <b>verdict (2-of-3 vote):
+        <span class="num">{word(cmpData.verdictDeltaS)}</span></b>
+        {#if Math.sign(cmpData.verdictDeltaS) !== Math.sign(cmpData.currencies[0]) && (Math.abs(cmpData.verdictDeltaS) >= 0.05 || Math.abs(cmpData.currencies[0]) >= 0.05)}
+          <div style="color:var(--muted)">
+            best and median lap agree against the optimal-lap comparison (it rewards laps fast in different places);
+            the verdict follows the majority
+          </div>
+        {/if}
         {#if cmpData.unequalLaps}
           · <span style="color:var(--muted)">note: unequal lap counts bias the optimal lap toward the run with more laps</span>
         {/if}

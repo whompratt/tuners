@@ -41,6 +41,18 @@
     return { tone: "meh", text: `Run ${runN}: within noise of run ${runN - 1} (${d}s), inconclusive` };
   });
 
+  // The verdict is a 2-of-3 vote (ideal / best / median lap). When the
+  // spliced ideal lost the vote, one honest line says so; detail lives on
+  // the Analysis screen.
+  let voteNote = $derived.by(() => {
+    const st = lastStep;
+    const v = st?.outcome && !("error" in st.outcome) ? st.outcome.deltaS : null;
+    const ideal = st?.currencies?.[0];
+    if (v == null || ideal == null) return null;
+    if (Math.sign(v) === Math.sign(ideal) || (Math.abs(v) < 0.05 && Math.abs(ideal) < 0.05)) return null;
+    return "best and median lap agreed against the optimal-lap comparison here; the verdict follows the majority";
+  });
+
   // Consequence display for compound runs where several families changed at
   // once: say where the time moved and which change that points at. Directional,
   // never absolute (effect vectors may separate these later).
@@ -174,6 +186,9 @@
             <div class="dash-line">recording; the verdict lands here when the run ends</div>
           {:else if verdict}
             <div class="dash-verdict {verdict.tone}">{verdict.text}</div>
+            {#if voteNote}
+              <div class="dash-line">{voteNote}</div>
+            {/if}
             {#if consequence}
               <div class="dash-line" style="margin-top:6px">{consequence}</div>
             {/if}

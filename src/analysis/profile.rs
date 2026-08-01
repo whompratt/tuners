@@ -254,46 +254,81 @@ pub struct StintProfile {
 
 /// How much of the composite ideal has been independently reproduced.
 ///
-/// A bin is corroborated when a lap other than the one the composite took it
-/// from matches the composite's speed there, within the same tolerance the
-/// splicer uses to call two speeds equal. The score is the corroborated share
-/// of the composite weighted by bin time (a confirmed hairpin counts for more
-/// than a confirmed straight of equal length). Reproducibility, not optimality:
-/// a corner driven consistently wrong still corroborates. Monotone in laps
-/// driven: a mistake lap fails to corroborate but never lowers the score.
+/// GRADED: each lap other than the one the composite took a bin from
+/// contributes agreement weight falling linearly from 1 (identical speed) to
+/// 0 at the splice tolerance, and laps combine with diminishing returns
+/// (1 − Π(1 − w)) — a third similar lap raises support, a near-identical lap
+/// counts for more than a barely-in-tolerance one. The score is the
+/// time-weighted mean support (a confirmed hairpin counts for more than a
+/// confirmed straight of equal length). Reproducibility, not optimality: a
+/// corner driven consistently wrong still corroborates. Monotone in laps
+/// driven: a mistake lap fails to support but never lowers the score.
+/// (The binary within-tolerance score saturated at 0.94-0.98 on healthy
+/// stints and carried no signal; graded spreads 0.62/0.80/0.89 at 2/3/4
+/// laps — confidence now rises with laps driven, by construction.)
 #[derive(Debug)]
 pub struct Corroboration {
-    /// Per shared bin: reproduced by a second lap.
+    /// Per shared bin: reproduced by a second lap (binary, for the strip).
     pub corroborated: Vec<bool>,
-    /// Time-weighted corroborated share, 0..1.
+    /// Time-weighted graded support, 0..1.
     pub score: f32,
+    /// Graded support over HARVESTED bins only (composite bins not sourced
+    /// from the base lap); None when the composite is entirely the base lap.
+    /// Low values mean the optimal lap leans on road other laps didn't
+    /// reproduce.
+    pub harvest_support: Option<f32>,
 }
 
 impl StintProfile {
+    /// Median flying-lap time: the stint's typical lap, robust to a single
+    /// ruined lap (traffic, mistake). Even lap counts average the middle two.
+    pub fn median_lap_time_s(&self) -> f32 {
+        let mut ts: Vec<f32> = self.laps.iter().map(|l| l.time_s).collect();
+        ts.sort_by(f32::total_cmp);
+        let n = ts.len();
+        if n % 2 == 1 {
+            ts[n / 2]
+        } else {
+            (ts[n / 2 - 1] + ts[n / 2]) / 2.0
+        }
+    }
+
     pub fn corroboration(&self) -> Corroboration {
         let med = median_bin_times(&self.laps, self.shared_bins);
+        let base = self
+            .laps
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.time_s.total_cmp(&b.1.time_s))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
         let mut corroborated = vec![false; self.shared_bins];
-        let (mut time_ok, mut time_total) = (0.0f32, 0.0f32);
+        let (mut sup, mut total) = (0.0f32, 0.0f32);
+        let (mut h_sup, mut h_total) = (0.0f32, 0.0f32);
         for (b, ok) in corroborated.iter_mut().enumerate() {
             let cb = &self.composite.bins[b];
             let src = self.composite.source[b];
-            *ok = self.laps.iter().enumerate().any(|(li, lap)| {
-                li != src
-                    && lap.bins[b].time_s >= HOLE_TIME_SHARE * med[b]
-                    && (lap.bins[b].speed_avg - cb.speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
-            });
-            time_total += cb.time_s;
-            if *ok {
-                time_ok += cb.time_s;
+            let mut miss = 1.0f32;
+            for (li, lap) in self.laps.iter().enumerate() {
+                if li == src || lap.bins[b].time_s < HOLE_TIME_SHARE * med[b] {
+                    continue;
+                }
+                let dv = (lap.bins[b].speed_avg - cb.speed_avg).abs();
+                *ok |= dv <= SPLICE_SPEED_TOLERANCE_MPS;
+                miss *= 1.0 - (1.0 - dv / SPLICE_SPEED_TOLERANCE_MPS).max(0.0);
+            }
+            let support = 1.0 - miss;
+            sup += support * cb.time_s;
+            total += cb.time_s;
+            if src != base {
+                h_sup += support * cb.time_s;
+                h_total += cb.time_s;
             }
         }
         Corroboration {
             corroborated,
-            score: if time_total > 0.0 {
-                time_ok / time_total
-            } else {
-                0.0
-            },
+            score: if total > 0.0 { sup / total } else { 0.0 },
+            harvest_support: (h_total > 0.0).then(|| h_sup / h_total),
         }
     }
 }
@@ -589,13 +624,25 @@ mod tests {
         assert_eq!(c.score, 0.0);
         assert!(c.corroborated.iter().all(|b| !b));
 
+        // GRADED: a lap 0.5 m/s off supports at 1 - 0.5/2.5 = 0.8, not 1.0
+        // (near-identical counts for more than barely-in-tolerance).
         let p = profile_of(vec![
             lap_from_speeds(1, &[50.0; 50]),
             lap_from_speeds(2, &[50.5; 50]), // within splice tolerance everywhere
         ]);
         let c = p.corroboration();
-        assert!(c.score > 0.999, "score {}", c.score);
-        assert!(c.corroborated.iter().all(|b| *b));
+        assert!((c.score - 0.8).abs() < 0.01, "score {}", c.score);
+        assert!(c.corroborated.iter().all(|b| *b), "binary strip still full");
+
+        // An identical second lap is full support; a slower third lap can
+        // only raise it (diminishing returns, never a penalty).
+        let p = profile_of(vec![
+            lap_from_speeds(1, &[50.0; 50]),
+            lap_from_speeds(2, &[50.0; 50]),
+            lap_from_speeds(3, &[49.0; 50]),
+        ]);
+        let c = p.corroboration();
+        assert!(c.score > 0.999, "identical lap = full support: {}", c.score);
     }
 
     /// The user-struggle case: one segment driven three wildly different ways

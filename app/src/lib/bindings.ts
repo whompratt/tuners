@@ -94,6 +94,8 @@ export type AnchorView = {
 	areas: string,
 	changes: string,
 	deltaS: number | null,
+	/**  Component deltas (ideal, best, median lap); deltaS is their median. */
+	currencies: [number | null, number | null, number | null],
 	word: string,
 	weak: boolean,
 	reconciled: boolean,
@@ -125,6 +127,7 @@ export type CompareSide = {
 	file: string,
 	laps: number,
 	best: number | null,
+	median: number | null,
 	ideal: number | null,
 	standingOnly: boolean,
 };
@@ -141,6 +144,10 @@ export type CompareView = {
 	speedsB: (number | null)[],
 	timesA: (number | null)[],
 	delta: (number | null)[],
+	/**  The 2-of-3 vote (median of ideal/best/median-lap deltas), B minus A. */
+	verdictDeltaS: number | null,
+	/**  Component deltas (ideal, best, median lap). */
+	currencies: [number | null, number | null, number | null],
 	unequalLaps: boolean,
 	carMismatch: boolean,
 };
@@ -208,7 +215,7 @@ export type LandscapeView = {
 	area: string,
 	phrase: string,
 	key: string | null,
-	/**  (value, cumulative ideal delta s, samples), ascending by value. */
+	/**  (value, cumulative verdict delta s, samples), ascending by value. */
 	nodes: ([number | null, number | null, number])[],
 	/**  y = ax² + bx + c least-squares fit over the nodes (3+ nodes). */
 	fit: [number | null, number | null, number | null] | null,
@@ -296,6 +303,8 @@ export type QualityView = {
 	sharedKm: number | null,
 	confidencePct: number | null,
 	band: string,
+	/**  Why confidence is not green, when it isn't (None when band is good). */
+	note: string | null,
 };
 
 export type RecommendationView = {
@@ -431,12 +440,22 @@ export type StepView = {
 	laps: number,
 	bestS: number | null,
 	idealS: number | null,
+	/**
+	 *  Sample sd of flying-lap times (None under 3 laps). Report-only
+	 *  consistency channel.
+	 */
+	scatterS: number | null,
 	/**  (understeer index, front slip frac, rear slip frac). */
 	balance: [number | null, number | null, number | null] | null,
 	note: string | null,
 	/**  Slider positions relative to baseline, when the note trail supports them. */
 	pos: [number | null, number | null] | null,
 	outcome: OutcomeView | null,
+	/**
+	 *  The vote's component deltas vs the previous step (ideal, best, median
+	 *  lap); the outcome's deltaS is their median. For disagreement hedges.
+	 */
+	currencies: [number | null, number | null, number | null] | null,
 	/**  Where the time moved vs the previous step: (entry, exit, straights). */
 	split: [number | null, number | null, number | null] | null,
 	anchor: RowAnchorView | null,

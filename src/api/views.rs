@@ -59,6 +59,7 @@ pub struct CompareSide {
     pub file: String,
     pub laps: u32,
     pub best: f32,
+    pub median: f32,
     pub ideal: f32,
     pub standing_only: bool,
 }
@@ -75,6 +76,10 @@ pub struct CompareView {
     pub speeds_b: Vec<f32>,
     pub times_a: Vec<f32>,
     pub delta: Vec<f32>,
+    /// The 2-of-3 vote (median of ideal/best/median-lap deltas), B minus A.
+    pub verdict_delta_s: f32,
+    /// Component deltas (ideal, best, median lap).
+    pub currencies: (f32, f32, f32),
     pub unequal_laps: bool,
     pub car_mismatch: bool,
 }
@@ -102,6 +107,7 @@ pub fn compare_view(a: &str, b: &str) -> Result<CompareView, ApiError> {
         file: path.display().to_string(),
         laps: p.laps.len() as u32,
         best: p.best_lap_time_s,
+        median: p.median_lap_time_s(),
         ideal: p.composite.time_s,
         standing_only: p.standing_start_only,
     };
@@ -116,6 +122,12 @@ pub fn compare_view(a: &str, b: &str) -> Result<CompareView, ApiError> {
             .map(|b| b.time_s)
             .collect(),
         delta: cmp.bin_delta_s.clone(),
+        verdict_delta_s: cmp.verdict_delta_s,
+        currencies: (
+            cmp.ideal_delta_s,
+            cmp.best_lap_delta_s,
+            cmp.median_lap_delta_s,
+        ),
         unequal_laps: pa.laps.len() != pb.laps.len(),
         car_mismatch: cmp.car_mismatch,
     })
@@ -170,12 +182,18 @@ pub struct StepView {
     pub laps: u32,
     pub best_s: f32,
     pub ideal_s: f32,
+    /// Sample sd of flying-lap times (None under 3 laps). Report-only
+    /// consistency channel.
+    pub scatter_s: Option<f32>,
     /// (understeer index, front slip frac, rear slip frac).
     pub balance: Option<(f32, f32, f32)>,
     pub note: Option<String>,
     /// Slider positions relative to baseline, when the note trail supports them.
     pub pos: Option<(f32, f32)>,
     pub outcome: Option<OutcomeView>,
+    /// The vote's component deltas vs the previous step (ideal, best, median
+    /// lap); the outcome's deltaS is their median. For disagreement hedges.
+    pub currencies: Option<(f32, f32, f32)>,
     /// Where the time moved vs the previous step: (entry, exit, straights).
     pub split: Option<(f32, f32, f32)>,
     pub anchor: Option<RowAnchorView>,
@@ -190,6 +208,8 @@ pub struct AnchorView {
     pub areas: String,
     pub changes: String,
     pub delta_s: f32,
+    /// Component deltas (ideal, best, median lap); deltaS is their median.
+    pub currencies: (f32, f32, f32),
     pub word: String,
     pub weak: bool,
     pub reconciled: bool,
@@ -225,7 +245,7 @@ pub struct LandscapeView {
     pub area: String,
     pub phrase: String,
     pub key: Option<String>,
-    /// (value, cumulative ideal delta s, samples), ascending by value.
+    /// (value, cumulative verdict delta s, samples), ascending by value.
     pub nodes: Vec<(f32, f32, u32)>,
     /// y = ax² + bx + c least-squares fit over the nodes (3+ nodes).
     pub fit: Option<(f32, f32, f32)>,
@@ -296,6 +316,7 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
                 laps: s.laps as u32,
                 best_s: s.best_s,
                 ideal_s: s.ideal_s,
+                scatter_s: s.scatter_s,
                 balance: s.balance,
                 note: s.note.clone(),
                 pos: s.pos,
@@ -307,6 +328,7 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
                     },
                     Err(e) => OutcomeView::NotComparable { error: e.clone() },
                 }),
+                currencies: s.currencies,
                 split: s.split,
                 families: s
                     .families
@@ -330,6 +352,7 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
             areas: a.areas.clone(),
             changes: a.changes.clone(),
             delta_s: a.delta_s,
+            currencies: a.currencies,
             word: a.word.to_string(),
             weak: a.weak,
             reconciled: a.reconciled,

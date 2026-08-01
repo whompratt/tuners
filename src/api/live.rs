@@ -120,6 +120,8 @@ pub struct QualityView {
     pub shared_km: f32,
     pub confidence_pct: f32,
     pub band: String,
+    /// Why confidence is not green, when it isn't (None when band is good).
+    pub note: Option<String>,
 }
 
 pub fn quality_view(q: Option<&crate::telemetry::live::Quality>) -> Option<QualityView> {
@@ -131,5 +133,6 @@ pub fn quality_view(q: Option<&crate::telemetry::live::Quality>) -> Option<Quali
         shared_km: q.shared_km,
         confidence_pct: q.confidence * 100.0,
         band: q.band.as_str().to_string(),
+        note: q.note.map(str::to_string),
     })
 }

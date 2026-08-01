@@ -30,5 +30,8 @@
     <div style="font-size:13px;color:var(--muted)">
       {q.laps} {q.standingOnly ? "standing run(s)" : "flying lap(s)"} · best {fmtLap(q.bestLapS ?? 0)}
     </div>
+    {#if q.note}
+      <div style="font-size:12px;color:var(--muted);max-width:230px">{q.note}</div>
+    {/if}
   {/if}
 </div>

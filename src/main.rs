@@ -223,6 +223,12 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The spliced-ideal delta disagrees with the vote's verdict beyond noise:
+/// worth a hedge line showing the components.
+fn currencies_conflict(verdict_s: f32, ideal_s: f32) -> bool {
+    verdict_s.signum() != ideal_s.signum() && (verdict_s.abs() >= 0.05 || ideal_s.abs() >= 0.05)
+}
+
 fn cmd_advise(args: &[String]) -> Result<(), String> {
     let journal_path = match args {
         [] => {
@@ -266,6 +272,9 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                 tuners::util::format_lap_time(step.best_s),
                 tuners::util::format_lap_time(step.ideal_s),
             );
+            if let Some(sc) = step.scatter_s {
+                line.push_str(&format!("  scatter {sc:.2}s"));
+            }
             if let Some((idx, front, rear)) = step.balance {
                 line.push_str(&format!(
                     "  balance {idx:+.2} (F {:.0}%/R {:.0}% of limit)",
@@ -281,7 +290,14 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             }
             match &step.outcome {
                 Some(Ok((word, delta, unequal))) => {
-                    line.push_str(&format!("  → {word} (ideal {delta:+.2}s)"));
+                    line.push_str(&format!("  → {word} ({delta:+.2}s)"));
+                    if let Some((id, bd, md)) = step.currencies
+                        && currencies_conflict(*delta, id)
+                    {
+                        line.push_str(&format!(
+                            "  [vote: ideal {id:+.2}s overruled by best {bd:+.2}s + median {md:+.2}s]"
+                        ));
+                    }
                     if let Some((e, x, st)) = step.split {
                         line.push_str(&format!(
                             "  [entry {e:+.2}s / exit {x:+.2}s / straights {st:+.2}s]"
@@ -321,7 +337,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             if a.areas.is_empty() {
                 println!(
                     "  cleanest comparison for the last stint: step {} has the SAME \
-                     setup, so the {:+.2}s ideal delta is pure driver/track drift",
+                     setup, so the {:+.2}s verdict delta is pure driver/track drift",
                     a.vs_step, a.delta_s,
                 );
             } else {
@@ -348,6 +364,14 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                         "  [multi-area, informational]"
                     },
                 );
+                if currencies_conflict(a.delta_s, a.currencies.0) {
+                    println!(
+                        "    currencies: ideal {:+.2}s overruled by best {:+.2}s + \
+                         median lap {:+.2}s (the ideal rewards laps fast in \
+                         different places; the vote sides with the majority)",
+                        a.currencies.0, a.currencies.1, a.currencies.2,
+                    );
+                }
                 if let Some(m) = movers(&a.effects) {
                     println!("    behaviour that moved with it (above noise): {m}");
                 }
@@ -355,7 +379,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         }
         if let Some(aba) = &view.aba {
             println!(
-                "  A-B-A on {}: drift-corrected cost of the excursion {:+.2}s ideal; \
+                "  A-B-A on {}: drift-corrected cost of the excursion {:+.2}s; \
                  driver/track drift {:+.2}s per stint; outcome margins near that \
                  drift are noise",
                 aba.families, aba.effect_s, aba.drift_s,
@@ -390,7 +414,9 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
         .filter(|l| l.nodes.len() >= 2)
         .collect();
     if !mapped.is_empty() {
-        println!("\nmeasured landscapes (cumulative ideal delta vs first tried; lower = faster):");
+        println!(
+            "\nmeasured landscapes (cumulative verdict delta vs first tried; lower = faster):"
+        );
         for l in mapped {
             let nodes: Vec<String> = l
                 .nodes
