@@ -49,7 +49,7 @@ export function drawLaps(
   const x = (bin: number) => pad.l + (bin / (bins - 1)) * plotW;
   const y = (v: number) => pad.t + plotH - (v / yMax) * plotH;
 
-  ctx.font = "13px system-ui, sans-serif";
+  ctx.font = '13px "JetBrains Mono", ui-monospace, monospace';
   ctx.lineWidth = 1;
   for (let g = 0; g <= yMax; g += 40) {
     ctx.strokeStyle = pal.grid;

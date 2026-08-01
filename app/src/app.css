@@ -1,3 +1,9 @@
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
 :root {
   color-scheme: dark;
   /* reference dataviz dark tokens */
@@ -10,13 +16,13 @@
   --ok: #199e70; --danger: #e66767; --info: #3987e5;
   /* shape + type scale */
   --radius: 8px; --radius-sm: 6px;
-  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, Consolas, monospace;
+  --font-ui: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
 }
 * { box-sizing: border-box; margin: 0; }
 body {
   background: var(--page); color: var(--ink-2);
-  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 15px/1.5 var(--font-ui);
   display: flex; height: 100vh;
 }
 aside {
@@ -37,7 +43,7 @@ aside h1 span { color: var(--muted); font-weight: normal; font-size: 13px; }
 .ab { margin-left: auto; display: flex; gap: 4px; }
 .ab button {
   background: none; border: 1px solid var(--border); border-radius: 4px;
-  color: var(--muted); font: 600 12px system-ui; width: 24px; height: 22px;
+  color: var(--muted); font: 600 12px var(--font-ui); width: 24px; height: 22px;
   cursor: pointer; padding: 0;
 }
 .ab button.on-a { border-color: #3987e5; color: #3987e5; }
@@ -46,7 +52,7 @@ aside h1 span { color: var(--muted); font-weight: normal; font-size: 13px; }
 #car-filter {
   width: 100%; margin-bottom: 10px; padding: 6px 8px;
   background: var(--surface); color: var(--ink-2);
-  border: 1px solid var(--border); border-radius: 6px; font: 14px system-ui;
+  border: 1px solid var(--border); border-radius: 6px; font: 14px var(--font-ui);
 }
 .session .car { color: var(--accent); font-size: 13px; }
 .sector {
@@ -73,14 +79,14 @@ canvas { width: 100%; display: block; }
 }
 .tip .t-head { color: var(--muted); margin-bottom: 2px; }
 .tip .num { font-variant-numeric: tabular-nums; color: var(--ink); }
-pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; }
+pre { white-space: pre-wrap; font: 14px/1.45 var(--font-mono); }
 .placeholder { color: var(--muted); }
 /* Drive: dim only what has no data (placeholder values, idle gauge);
    whole-screen dimming while not recording was uncomfortable. */
 .dim { opacity: 0.4; transition: opacity 0.3s; }
 #rec-split, .btn {
   background: none; border: 1px solid var(--border); border-radius: 6px;
-  color: var(--ink-2); font: 13px system-ui; padding: 5px 12px; cursor: pointer;
+  color: var(--ink-2); font: 13px var(--font-ui); padding: 5px 12px; cursor: pointer;
 }
 #rec-split:hover, .btn:hover { border-color: var(--accent); color: var(--ink); }
 .btn-go { border-color: var(--accent); }
@@ -98,7 +104,7 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 }
 .fg-col { display: flex; flex-direction: column; gap: 8px; width: 168px; }
 .form-grid input, .form-grid select {
-  width: 100%; background: var(--page); color: var(--ink-2); font: 14px system-ui;
+  width: 100%; background: var(--page); color: var(--ink-2); font: 14px var(--font-ui);
   border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
 }
 .adv-table { border-collapse: collapse; font-size: 14px; margin-top: 4px; }
@@ -118,7 +124,7 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
 #rec-status .rec-dot { color: #e66767; }
 #split-form { display: flex; gap: 6px; align-items: center; }
 #split-form select, #split-form input, #split-form button {
-  background: var(--surface); color: var(--ink-2); font: 13px system-ui;
+  background: var(--surface); color: var(--ink-2); font: 13px var(--font-ui);
   border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
 }
 #split-form input { width: 120px; }
@@ -158,7 +164,7 @@ pre { white-space: pre-wrap; font: 14px/1.45 ui-monospace, Consolas, monospace; 
   fill: none; stroke: var(--qcolor); stroke-width: 10; stroke-linecap: round;
   transition: stroke-dasharray 0.4s, stroke 0.4s;
 }
-.q-pct { fill: var(--ink); font: 600 20px system-ui; text-anchor: middle; }
+.q-pct { fill: var(--ink); font: 600 20px var(--font-ui); text-anchor: middle; }
 .q-label { font-size: 15px; color: var(--ink); font-weight: 600; text-align: center; }
 
 

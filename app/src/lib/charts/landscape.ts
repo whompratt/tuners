@@ -54,7 +54,7 @@ export function drawLandscape(
   pal: Palette,
 ) {
   const { cssW: W, cssH: H } = L;
-  ctx.font = "11px system-ui";
+  ctx.font = '11px "JetBrains Mono", ui-monospace, monospace';
   if (data.nodes.length < 2) {
     ctx.fillStyle = pal.muted;
     ctx.fillText("not enough mapped values to chart. Drive more single-change stints", 10, 24);

@@ -89,7 +89,7 @@ export function drawCompare(
   const cumTop = pad.t + speedH + gapH + barsH + gapH;
   const cum0 = cumTop + cumH / 2;
   const yCum = (d: number) => cum0 - (-d / cumMax) * (cumH / 2); // up = B ahead (delta sum negative)
-  ctx.font = "13px system-ui, sans-serif";
+  ctx.font = '13px "JetBrains Mono", ui-monospace, monospace';
 
   ctx.lineWidth = 1;
   for (let g = 0; g <= yMax; g += 40) {
