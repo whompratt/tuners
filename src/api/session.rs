@@ -19,9 +19,15 @@ pub struct SessionView {
     /// Baseline form seed copied from a source project at duplication;
     /// present only until the first tune save.
     pub prefill: Option<BTreeMap<String, String>>,
+    /// Working tire temperature band (canonical °F) for the session's
+    /// compound, so live displays color against the same band the advice
+    /// engine uses. Legacy slick band when no compound is on file.
+    pub temp_band_f: (f32, f32),
 }
 
 pub fn session_view(s: &crate::advice::tuning::TuningSession, journal_base: &str) -> SessionView {
+    let (band_lo, band_hi, _) =
+        crate::advice::recommend::temp_band(s.facts.get("tire_compound").map(String::as_str));
     SessionView {
         car: s.car,
         car_name: s.car.and_then(crate::cars::car_name).map(str::to_string),
@@ -35,6 +41,7 @@ pub fn session_view(s: &crate::advice::tuning::TuningSession, journal_base: &str
             .filter(|_| s.revisions.len() > 1)
             .map(|rev| rev.values.clone()),
         campaign_start: campaign_start(s, journal_base),
+        temp_band_f: (band_lo, band_hi),
     }
 }
 

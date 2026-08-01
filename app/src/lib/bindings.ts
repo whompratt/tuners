@@ -391,6 +391,12 @@ export type SessionView = {
 	 *  present only until the first tune save.
 	 */
 	prefill: { [key in string]: string } | null,
+	/**
+	 *  Working tire temperature band (canonical °F) for the session's
+	 *  compound, so live displays color against the same band the advice
+	 *  engine uses. Legacy slick band when no compound is on file.
+	 */
+	tempBandF: [number | null, number | null],
 };
 
 /**

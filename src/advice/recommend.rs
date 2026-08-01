@@ -65,8 +65,10 @@ const MARGIN_COLLAPSE: f32 = 1.2;
 /// using real-world relative operating windows: street compounds run their
 /// best grip cooler than race rubber, loose-surface compounds far cooler,
 /// snow coldest. Heuristic: the game publishes no per-compound numbers, so
-/// these are extrapolations, not measurements.
-fn temp_band(compound: Option<&str>) -> (f32, f32, &'static str) {
+/// these are extrapolations, not measurements — except the stock/vintage
+/// ceiling, observed in-game (tire UI turns orange from ~70°C ≈ 158°F on a
+/// stock-compound car).
+pub(crate) fn temp_band(compound: Option<&str>) -> (f32, f32, &'static str) {
     match compound.unwrap_or("") {
         "slick" => (160.0, 210.0, "slick"),
         "semi-slick" => (150.0, 200.0, "semi-slick"),
@@ -74,8 +76,8 @@ fn temp_band(compound: Option<&str>) -> (f32, f32, &'static str) {
         "drift" => (140.0, 210.0, "drift"),
         "sport" => (140.0, 190.0, "sport"),
         "street" => (130.0, 180.0, "street"),
-        "stock" => (120.0, 175.0, "stock"),
-        "vintage" => (120.0, 175.0, "vintage"),
+        "stock" => (120.0, 158.0, "stock"),
+        "vintage" => (120.0, 158.0, "vintage"),
         "rally" => (110.0, 160.0, "rally"),
         "offroad" => (100.0, 150.0, "offroad"),
         "snow" => (60.0, 110.0, "snow"),

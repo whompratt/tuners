@@ -13,6 +13,9 @@
   );
   let stale = $derived(app.live?.ageMs == null || app.live.ageMs > STALE_MS);
   let f = $derived(app.live?.frame ?? null);
+  // Cold/hot coloring follows the session compound's working band (the same
+  // band the advice engine judges pressures against); slick band if no project.
+  let band = $derived(app.session?.tempBandF ?? [160, 210]);
 
   // Confidence card: dimmed in menus/idle, full opacity as soon as the car
   // is on a recorded track (out lap included; it shows "–" until a flying
@@ -105,8 +108,8 @@
           <div class="label">Tires {tempLabel()}</div>
           <div class="temps">
             {#each f ? f.tireTempF : [null, null, null, null] as t, i (i)}
-              <!-- thresholds in canonical °F -->
-              <div class={t == null ? "dim" : t < 160 ? "cold" : t > 240 ? "hot" : ""}>
+              <!-- thresholds in canonical °F, from the session compound's working band -->
+              <div class={t == null ? "dim" : t < band[0] ? "cold" : t > band[1] ? "hot" : ""}>
                 {t == null ? "–" : tempDisp(t).toFixed(0)}
               </div>
             {/each}
