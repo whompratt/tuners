@@ -266,9 +266,36 @@ pub(super) fn pair_thin(stints: &[CampaignStint], i: usize, j: usize) -> bool {
         || !splice_trusted(&stints[j].profile)
 }
 
+/// A single STATE profile is thin on the same grounds.
+pub(super) fn state_thin(p: &analysis::profile::StintProfile) -> bool {
+    p.laps.len() < 2 || !splice_trusted(p)
+}
+
 /// WEAK adds the driver's own suspect verdict on either side.
 pub(super) fn pair_weak(stints: &[CampaignStint], i: usize, j: usize) -> bool {
     pair_thin(stints, i, j) || stints[i].suspect || stints[j].suspect
+}
+
+/// Consecutive same-setup group id per stint (the group head's index). A
+/// new group starts whenever the bound setup changes, either side is
+/// unbound, or the standing-start character differs (their laps are not
+/// poolable).
+pub(super) fn consecutive_groups(
+    standing: &[bool],
+    setups: &[Option<&crate::advice::tuning::Revision>],
+) -> Vec<usize> {
+    let n = standing.len();
+    let mut groups = vec![0usize; n];
+    for k in 1..n {
+        let same = match (setups[k - 1], setups[k]) {
+            (Some(a), Some(b)) => {
+                crate::advice::tuning::diff_keys(a, b).is_empty() && standing[k - 1] == standing[k]
+            }
+            _ => false,
+        };
+        groups[k] = if same { groups[k - 1] } else { k };
+    }
+    groups
 }
 
 /// A stint pair's behavioural movement: per-stint field deltas plus the
@@ -301,6 +328,15 @@ pub(crate) struct Campaign<'s> {
     /// immediately abandoned auto-cuts a tiny recording): skipped, any note
     /// merged into the next step.
     pub no_laps: Vec<String>,
+    /// Consecutive same-setup group per stint (the group head's index): a
+    /// repeat run is CORROBORATION of the same state, not an experiment.
+    /// Non-consecutive returns to a setup stay separate groups (drift and
+    /// A-B-A depend on stint identity).
+    pub groups: Vec<usize>,
+    /// Pooled profile per group head, for groups with 2+ members: all
+    /// members' laps in one profile. State comparisons (anchors, direct
+    /// A/Bs) use these; per-stint rows and the drift floor never do.
+    pub pooled: std::collections::HashMap<usize, analysis::profile::StintProfile>,
     /// (same-setup pair count, largest |ideal delta| across them): the
     /// campaign's own outcome noise floor.
     pub drift_floor: Option<(usize, f32)>,
@@ -310,12 +346,41 @@ pub(crate) struct Campaign<'s> {
 }
 
 impl Campaign<'_> {
+    /// The profile representing stint `k`'s SETUP STATE: the pooled
+    /// consecutive same-setup group when one exists, else the stint's own.
+    pub fn state_profile(&self, k: usize) -> &analysis::profile::StintProfile {
+        self.pooled
+            .get(&self.groups[k])
+            .unwrap_or(&self.stints[k].profile)
+    }
+
+    /// Last member index of `k`'s group.
+    fn group_end(&self, k: usize) -> usize {
+        let g = self.groups[k];
+        (g..self.groups.len())
+            .take_while(|&m| self.groups[m] == g)
+            .last()
+            .unwrap_or(k)
+    }
+
+    /// "runs 8-9" label when `k`'s state pools 2+ runs; None for singletons.
+    pub fn pooled_runs(&self, k: usize) -> Option<String> {
+        let (g, e) = (self.groups[k], self.group_end(k));
+        (g != e).then(|| format!("runs {}-{}", g + 1, e + 1))
+    }
+
+    fn group_suspect(&self, k: usize) -> bool {
+        (self.groups[k]..=self.group_end(k)).any(|m| self.stints[m].suspect)
+    }
+
+    /// State-aware thinness: judged on the pooled profiles, so a
+    /// corroboration re-run lifts a single-lap side out of weakness.
     pub fn thin(&self, i: usize, j: usize) -> bool {
-        pair_thin(&self.stints, i, j)
+        state_thin(self.state_profile(i)) || state_thin(self.state_profile(j))
     }
 
     pub fn weak_pair(&self, i: usize, j: usize) -> bool {
-        pair_weak(&self.stints, i, j)
+        self.thin(i, j) || self.group_suspect(i) || self.group_suspect(j)
     }
 
     /// Latest evidence per family: newest endpoint wins; a direct setup A/B
@@ -500,6 +565,60 @@ pub(crate) fn load_campaign<'s>(
         })
         .collect();
 
+    // Consecutive same-setup stints form one STATE: repeats are
+    // corroboration runs, so state comparisons pool their laps. The drift
+    // floor below deliberately keeps RAW stint pairs (it measures per-stint
+    // spread), and A-B-A stays per-stint too.
+    let standing: Vec<bool> = stints
+        .iter()
+        .map(|s| s.profile.standing_start_only)
+        .collect();
+    let groups = consecutive_groups(&standing, &setups);
+    let mut last_member: Vec<usize> = (0..n).collect();
+    for k in (0..n.saturating_sub(1)).rev() {
+        if groups[k + 1] == groups[k] {
+            last_member[k] = last_member[k + 1];
+        }
+    }
+    let mut pooled: std::collections::HashMap<usize, analysis::profile::StintProfile> =
+        std::collections::HashMap::new();
+    for g in 0..n {
+        if groups[g] != g || last_member[g] == g {
+            continue; // not a group head, or a singleton
+        }
+        let laps: Vec<analysis::profile::LapProfile> = (g..=last_member[g])
+            .flat_map(|k| stints[k].profile.laps.iter().cloned())
+            .collect();
+        let Some(shared) = laps.iter().map(|l| l.bins.len()).min() else {
+            continue;
+        };
+        pooled.insert(
+            g,
+            analysis::profile::StintProfile {
+                composite: analysis::profile::build_composite(&laps, shared),
+                shared_bins: shared,
+                best_lap_time_s: laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min),
+                standing_start_only: stints[g].profile.standing_start_only,
+                car_ordinal: stints[g].profile.car_ordinal,
+                laps,
+            },
+        );
+    }
+    let state_profile = |k: usize| -> &analysis::profile::StintProfile {
+        pooled.get(&groups[k]).unwrap_or(&stints[k].profile)
+    };
+    let group_suspect = |k: usize| (groups[k]..=last_member[k]).any(|m: usize| stints[m].suspect);
+    let state_weak = |i: usize, j: usize| {
+        state_thin(state_profile(i))
+            || state_thin(state_profile(j))
+            || group_suspect(i)
+            || group_suspect(j)
+    };
+    let pooled_runs = |k: usize| -> Option<String> {
+        (groups[k] != last_member[k])
+            .then(|| format!("runs {}-{}", groups[k] + 1, last_member[k] + 1))
+    };
+
     // The campaign's own noise floor: |ideal delta| across SAME-setup stint
     // pairs is pure driver/track drift. Verdicts with margins below the
     // worst observed drift are provisional, and advice must say so.
@@ -538,6 +657,13 @@ pub(crate) fn load_campaign<'s>(
     let mut measurements: Vec<Measurement> = Vec::new();
     for j in 1..n {
         for i in 0..j {
+            // One measurement per STATE pair: each consecutive same-setup
+            // group is represented by its LAST member (latest-wins keys on
+            // j, so a fresh corroboration run refreshes the measurement)
+            // and compared through its pooled profile.
+            if i != last_member[i] || j != last_member[j] {
+                continue;
+            }
             let (Some(si), Some(sj)) = (setups[i], setups[j]) else {
                 continue;
             };
@@ -551,10 +677,11 @@ pub(crate) fn load_campaign<'s>(
             let Some(family) = journal::family_for_area(area) else {
                 continue;
             };
-            let Ok(cmp) = analysis::compare::compare(&stints[i].profile, &stints[j].profile) else {
+            let (pi, pj) = (state_profile(i), state_profile(j));
+            let Ok(cmp) = analysis::compare::compare(pi, pj) else {
                 continue;
             };
-            let mattr = analysis::attribution::split_delta(&stints[i].profile, &cmp.bin_delta_s);
+            let mattr = analysis::attribution::split_delta(pi, &cmp.bin_delta_s);
             let vals: Vec<f32> = keys
                 .iter()
                 .filter_map(|k| {
@@ -564,6 +691,19 @@ pub(crate) fn load_campaign<'s>(
                     )
                 })
                 .collect();
+            let mut desc = format!(
+                "{} (steps {}→{})",
+                crate::advice::tuning::diff_note(si, sj),
+                i + 1,
+                j + 1
+            );
+            let pools: Vec<String> = [pooled_runs(i), pooled_runs(j)]
+                .into_iter()
+                .flatten()
+                .collect();
+            if !pools.is_empty() {
+                desc.push_str(&format!(" [{} pooled]", pools.join(" + ")));
+            }
             measurements.push(Measurement {
                 change: journal::Change {
                     family,
@@ -571,14 +711,9 @@ pub(crate) fn load_campaign<'s>(
                     magnitude: (vals.len() == 1).then(|| vals[0]),
                 },
                 outcome: journal::judge(cmp.verdict_delta_s),
-                desc: format!(
-                    "{} (steps {}→{})",
-                    crate::advice::tuning::diff_note(si, sj),
-                    i + 1,
-                    j + 1
-                ),
+                desc,
                 attributed: None,
-                weak: pair_weak(&stints, i, j),
+                weak: state_weak(i, j),
                 i,
                 j,
                 direct: true,
@@ -589,6 +724,8 @@ pub(crate) fn load_campaign<'s>(
                     mattr.straight_delta_s,
                 )),
                 clean: true,
+                // Behavioural fingerprint from the latest expression of each
+                // state (metrics are per-stint; laps pool, frames do not).
                 effects: pair_effects(&stints[i], &stints[j]),
             });
         }
@@ -683,6 +820,8 @@ pub(crate) fn load_campaign<'s>(
         in_progress,
         missing,
         no_laps,
+        groups,
+        pooled,
         drift_floor,
         effect_floor,
         measurements,

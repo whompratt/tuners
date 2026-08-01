@@ -95,6 +95,9 @@ pub struct AnchorView {
     pub reconciled: bool,
     /// Where the time moved vs the anchor: (entry, exit, straights).
     pub split: (f32, f32, f32),
+    /// Same-setup corroboration runs pooled into a side, when any
+    /// ("runs 8-9", or "runs 3-4 + runs 8-9" for both sides).
+    pub pooled: Option<String>,
     /// Behavioural movement anchor → last stint (effect deltas).
     pub effects: effects::Effects,
 }

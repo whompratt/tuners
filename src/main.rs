@@ -290,8 +290,15 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             }
             match &step.outcome {
                 Some(Ok((word, delta, unequal))) => {
-                    line.push_str(&format!("  → {word} ({delta:+.2}s)"));
-                    if let Some((id, bd, md)) = step.currencies
+                    if *word == "drift" {
+                        line.push_str(&format!(
+                            "  → same setup, corroboration run ({delta:+.2}s = drift)"
+                        ));
+                    } else {
+                        line.push_str(&format!("  → {word} ({delta:+.2}s)"));
+                    }
+                    if *word != "drift"
+                        && let Some((id, bd, md)) = step.currencies
                         && currencies_conflict(*delta, id)
                     {
                         line.push_str(&format!(
@@ -364,6 +371,11 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                         "  [multi-area, informational]"
                     },
                 );
+                if let Some(p) = &a.pooled {
+                    println!(
+                        "    {p} pooled: same-setup corroboration runs strengthen this comparison"
+                    );
+                }
                 if currencies_conflict(a.delta_s, a.currencies.0) {
                     println!(
                         "    currencies: ideal {:+.2}s overruled by best {:+.2}s + \

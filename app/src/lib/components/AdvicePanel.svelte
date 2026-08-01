@@ -158,6 +158,11 @@
                     {@const o = st.outcome}
                     {#if "error" in o}
                       <span style="color:var(--muted)">not comparable: {o.error}</span>
+                    {:else if o.word === "drift"}
+                      <span
+                        style="color:var(--muted)"
+                        title="same setup as the previous run: a corroboration run, its delta is pure driver/track drift"
+                        >same setup · drift {sgn(o.deltaS)}</span>
                     {:else}
                       <span
                         style="color:{OUTCOME_COLOR[o.word] || 'inherit'}"
@@ -244,6 +249,10 @@
             <span title="where the time moved: corner entry / corner exit / straights">
               entry {sgn(a.anchor.split[0])} / exit {sgn(a.anchor.split[1])} / straights {sgn(a.anchor.split[2])}
             </span>{a.anchor.weak ? " (single-lap side)" : ""}{a.anchor.reconciled ? "" : " (multi-area, informational)"}
+            {#if a.anchor.pooled}
+              <span title="consecutive same-setup runs pool their laps into one side of the comparison">
+                · {a.anchor.pooled} pooled</span>
+            {/if}
             {#if overruled(a.anchor.deltaS, a.anchor.currencies)}
               <br />
               currencies: ideal {sgn(a.anchor.currencies[0])} overruled by best {sgn(a.anchor.currencies[1])} + median lap

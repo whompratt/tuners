@@ -34,6 +34,11 @@
     }
     const d = Math.abs(st.outcome.deltaS ?? 0).toFixed(2);
     const word = st.outcome.word;
+    if (word === "drift")
+      return {
+        tone: "meh",
+        text: `Run ${runN}: same setup as run ${runN - 1}, corroboration run (${d}s is drift, not a change effect)`,
+      };
     if (word === "improved")
       return { tone: "ok", text: `Run ${runN}: ${d}s faster than run ${runN - 1}. Your last change worked` };
     if (word === "WORSE")
@@ -46,6 +51,7 @@
   // the Analysis screen.
   let voteNote = $derived.by(() => {
     const st = lastStep;
+    if (st?.outcome && !("error" in st.outcome) && st.outcome.word === "drift") return null;
     const v = st?.outcome && !("error" in st.outcome) ? st.outcome.deltaS : null;
     const ideal = st?.currencies?.[0];
     if (v == null || ideal == null) return null;

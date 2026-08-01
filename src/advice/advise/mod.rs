@@ -362,8 +362,16 @@ pub fn advise(
                     pv.attr.straight_delta_s,
                 ));
                 currencies = Some((pv.ideal_s, pv.best_s, pv.median_lap_s));
+                // A consecutive same-setup repeat is a corroboration run,
+                // not an experiment: its delta is pure drift, and judging it
+                // would read as a failed change.
+                let word = if c.groups[i] == c.groups[i - 1] {
+                    "drift"
+                } else {
+                    journal::judge(pv.verdict_s).word()
+                };
                 Some(Ok((
-                    journal::judge(pv.verdict_s).word(),
+                    word,
                     pv.verdict_s,
                     c.stints[i - 1].profile.laps.len() != cs.profile.laps.len(),
                 )))
@@ -426,7 +434,7 @@ pub fn advise(
         if i == j - 1 {
             continue;
         }
-        let Ok(cmp) = analysis::compare::compare(&c.stints[i].profile, &c.stints[j].profile) else {
+        let Ok(cmp) = analysis::compare::compare(c.state_profile(i), c.state_profile(j)) else {
             continue;
         };
         step.anchor = Some(RowAnchor {
@@ -441,15 +449,19 @@ pub fn advise(
     // The honest comparison for the last stint is the prior stint whose SETUP
     // differs least (ties -> most recent). Chained experiments ("revert X;
     // try Y") make the chronological neighbor a compound comparison while the
-    // shared baseline is a clean single-area A/B.
+    // shared baseline is a clean single-area A/B. The last stint's own
+    // consecutive same-setup group is excluded from the search (those are
+    // corroboration runs pooled into ITS side, not comparison partners) and
+    // both sides compare through their pooled state profiles.
     let mut anchor = None;
     let mut anchor_change: Option<(journal::Change, journal::Outcome, String, bool)> = None;
+    let last_group_start = c.groups.last().copied().unwrap_or(0);
     if let Some(Some(last_setup)) = c.setups.last()
-        && n >= 2
-        && let Some((i, keys)) = min_diff_ancestor(&c.setups[..n - 1], last_setup)
-        && let Ok(cmp) = analysis::compare::compare(&c.stints[i].profile, &c.stints[n - 1].profile)
+        && last_group_start >= 1
+        && let Some((i, keys)) = min_diff_ancestor(&c.setups[..last_group_start], last_setup)
+        && let Ok(cmp) = analysis::compare::compare(c.state_profile(i), c.state_profile(n - 1))
     {
-        let attr = analysis::attribution::split_delta(&c.stints[i].profile, &cmp.bin_delta_s);
+        let attr = analysis::attribution::split_delta(c.state_profile(i), &cmp.bin_delta_s);
         let areas = area_list(&keys);
         let changes = crate::advice::tuning::diff_note(c.setups[i].unwrap(), last_setup);
         let weak = c.weak_pair(i, n - 1);
@@ -473,6 +485,10 @@ pub fn advise(
             };
             anchor_change = Some((change, outcome, changes.clone(), weak));
         }
+        let pools: Vec<String> = [c.pooled_runs(i), c.pooled_runs(n - 1)]
+            .into_iter()
+            .flatten()
+            .collect();
         anchor = Some(AnchorView {
             vs_step: i + 1,
             areas: areas.join(", "),
@@ -487,6 +503,7 @@ pub fn advise(
             weak,
             reconciled: anchor_change.is_some(),
             split: (attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s),
+            pooled: (!pools.is_empty()).then(|| pools.join(" + ")),
             effects: pair_effects(&c.stints[i], &c.stints[n - 1]),
         });
     }

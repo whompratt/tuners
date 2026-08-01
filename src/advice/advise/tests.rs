@@ -612,3 +612,31 @@ fn fd_scale_respects_direction_ownership_and_limits() {
         recs[0].suggestion
     );
 }
+
+/// Consecutive same-setup stints group into one state; a setup change, an
+/// unbound side, or a standing-start mismatch starts a new group, and a
+/// non-consecutive return to an old setup stays separate (A-B-A identity).
+#[test]
+fn consecutive_same_setup_stints_group() {
+    use super::campaign::consecutive_groups;
+    let rev = |stamp: &str, arb: &str| Revision {
+        stamp: stamp.into(),
+        values: [("arb_front".to_string(), arb.to_string())].into(),
+    };
+    let a = rev("20260801-000000", "30");
+    let b = rev("20260801-010000", "25");
+    // setups: A A B B A A A None ; standing flips inside the trailing A run
+    let setups: Vec<Option<&Revision>> = vec![
+        Some(&a),
+        Some(&a),
+        Some(&b),
+        Some(&b),
+        Some(&a),
+        Some(&a),
+        Some(&a),
+        None,
+    ];
+    let standing = vec![false, false, false, false, false, true, true, false];
+    let groups = consecutive_groups(&standing, &setups);
+    assert_eq!(groups, vec![0, 0, 2, 2, 4, 5, 5, 7]);
+}

@@ -100,6 +100,8 @@ export type AnchorView = {
 	weak: boolean,
 	reconciled: boolean,
 	split: [number | null, number | null, number | null],
+	/**  Same-setup corroboration runs pooled into a side ("runs 8-9"), if any. */
+	pooled: string | null,
 	effects: { [key in string]: number | null },
 };
 

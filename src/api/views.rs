@@ -214,6 +214,8 @@ pub struct AnchorView {
     pub weak: bool,
     pub reconciled: bool,
     pub split: (f32, f32, f32),
+    /// Same-setup corroboration runs pooled into a side ("runs 8-9"), if any.
+    pub pooled: Option<String>,
     pub effects: BTreeMap<String, f32>,
 }
 
@@ -357,6 +359,7 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
             weak: a.weak,
             reconciled: a.reconciled,
             split: a.split,
+            pooled: a.pooled.clone(),
             effects: effects_map(&a.effects),
         }),
         aba: v.aba.as_ref().map(|a| AbaView {
