@@ -230,7 +230,7 @@ pre { white-space: pre-wrap; font: 14px/1.45 var(--font-mono); }
 
 /* --- navigation rail (phase 3) --- */
 .rail {
-  width: 92px; flex: none; border-right: 1px solid var(--border);
+  width: max-content; min-width: 92px; flex: none; border-right: 1px solid var(--border);
   padding: 16px 10px; display: flex; flex-direction: column; gap: 4px;
 }
 .rail-brand {
