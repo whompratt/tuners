@@ -139,6 +139,16 @@
     }
   }
 
+  /** Most cars share front/rear slider ranges for springs and ride height
+   * (aero almost never does): entering one axle's range prefills the other
+   * axle when it is still empty; anything already typed or saved is kept. */
+  const LIMIT_MIRROR: Record<string, string> = {
+    springs_f: "springs_r",
+    springs_r: "springs_f",
+    ride_height_f: "ride_height_r",
+    ride_height_r: "ride_height_f",
+  };
+
   async function commitLimit(k: string) {
     const mn = String(limDraft[k]?.min ?? "").trim();
     const mx = String(limDraft[k]?.max ?? "").trim();
@@ -152,6 +162,18 @@
     const cur = app.session?.facts[`limit_${k}`] ?? "";
     if (canon === cur) return;
     await commands.updateSession(false, null, [[`limit_${k}`, canon]]);
+    const partner = LIMIT_MIRROR[k];
+    if (
+      canon !== "" &&
+      partner &&
+      !(app.session?.facts[`limit_${partner}`] ?? "") &&
+      String(limDraft[partner]?.min ?? "").trim() === "" &&
+      String(limDraft[partner]?.max ?? "").trim() === ""
+    ) {
+      // Same dimension both axles, so k's canonical range is the partner's too.
+      limDraft[partner] = { min: mn, max: mx };
+      await commands.updateSession(false, null, [[`limit_${partner}`, canon]]);
+    }
     await loadSession();
   }
 
