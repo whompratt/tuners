@@ -162,6 +162,17 @@ impl Composite {
 /// each other lap may replace spans between equal-speed crossovers, judged on the
 /// span's total time.
 pub fn build_composite(laps: &[LapProfile], shared: usize) -> Composite {
+    build_composite_with_tolerance(laps, shared, SPLICE_SPEED_TOLERANCE_MPS)
+}
+
+/// `build_composite` with the seam speed tolerance as a parameter, for
+/// sensitivity probes of the splice-bonus mechanism. Production always uses
+/// `SPLICE_SPEED_TOLERANCE_MPS`.
+pub fn build_composite_with_tolerance(
+    laps: &[LapProfile],
+    shared: usize,
+    tolerance_mps: f32,
+) -> Composite {
     let base = laps
         .iter()
         .enumerate()
@@ -190,7 +201,7 @@ pub fn build_composite(laps: &[LapProfile], shared: usize) -> Composite {
         bounds.extend((0..shared).filter(|b| {
             !comp_corner[*b]
                 && !cand_corner[*b]
-                && (bins[*b].speed_avg - lap.bins[*b].speed_avg).abs() <= SPLICE_SPEED_TOLERANCE_MPS
+                && (bins[*b].speed_avg - lap.bins[*b].speed_avg).abs() <= tolerance_mps
         }));
         bounds.push(shared);
         bounds.dedup();
