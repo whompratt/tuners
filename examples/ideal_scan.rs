@@ -9,7 +9,7 @@ use tuners::analysis::{self, profile};
 
 fn main() {
     println!(
-        "file\tcar\tn_laps\tbest_s\tmean_s\tsd_s\tbin_sd_s\tideal_s\tbonus_s\tspans\tdonors\tseams\tsum_abs_dv\tmax_abs_dv\tcorr\tbonus_t15\tbonus_t10\tbonus_t05"
+        "file\tcar\tn_laps\tbest_s\tmean_s\tsd_s\tbin_sd_s\tideal_s\tbonus_s\tspans\tdonors\tseams\tsum_abs_dv\tmax_abs_dv\tcorr\tgraded\tgraded_adopted\tadopted_bins\tbonus_t15\tbonus_t10\tbonus_t05"
     );
     for path in std::env::args().skip(1) {
         let stint = match analysis::Stint::load(Path::new(&path)) {
@@ -71,6 +71,54 @@ fn main() {
             max_dv = max_dv.max(dv);
         }
 
+        // GRADED corroboration prototype: instead of the binary
+        // within-2.5-m/s flag, each non-source lap contributes agreement
+        // weight 1 - |dv|/2.5 (linear falloff, 0 beyond tolerance), and
+        // multiple laps combine with diminishing returns
+        // (1 - prod(1 - w)); hole bins contribute nothing, as in
+        // production corroboration. Reported for all bins and for the
+        // HARVESTED bins only (source != base lap), where the binary
+        // score saturates.
+        let med: Vec<f32> = (0..p.shared_bins)
+            .map(|b| {
+                let mut ts: Vec<f32> = p.laps.iter().map(|l| l.bins[b].time_s).collect();
+                ts.sort_by(f32::total_cmp);
+                ts[ts.len() / 2]
+            })
+            .collect();
+        let base = p
+            .laps
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.time_s.total_cmp(&b.1.time_s))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let (mut g_num, mut g_den) = (0.0f32, 0.0f32);
+        let (mut a_num, mut a_den) = (0.0f32, 0.0f32);
+        let mut adopted_bins = 0usize;
+        for (b, med_b) in med.iter().enumerate() {
+            let cb = &p.composite.bins[b];
+            let src = p.composite.source[b];
+            let mut miss = 1.0f32;
+            for (li, lap) in p.laps.iter().enumerate() {
+                if li == src || lap.bins[b].time_s < 0.5 * med_b {
+                    continue;
+                }
+                let w = (1.0 - (lap.bins[b].speed_avg - cb.speed_avg).abs() / 2.5).max(0.0);
+                miss *= 1.0 - w;
+            }
+            let support = 1.0 - miss;
+            g_num += support * cb.time_s;
+            g_den += cb.time_s;
+            if src != base {
+                adopted_bins += 1;
+                a_num += support * cb.time_s;
+                a_den += cb.time_s;
+            }
+        }
+        let graded = if g_den > 0.0 { g_num / g_den } else { 0.0 };
+        let graded_adopted = if a_den > 0.0 { a_num / a_den } else { 1.0 };
+
         // Tolerance sensitivity: the composite rebuilt with tighter seam
         // speed tolerances (production is 2.5 m/s).
         let tol_bonus: Vec<f32> = [1.5f32, 1.0, 0.5]
@@ -82,7 +130,7 @@ fn main() {
             .collect();
 
         println!(
-            "{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{}\t{}\t{}\t{:.2}\t{:.2}\t{:.3}\t{:.3}\t{:.3}\t{:.3}",
+            "{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{}\t{}\t{}\t{:.2}\t{:.2}\t{:.3}\t{:.3}\t{:.3}\t{}\t{:.3}\t{:.3}\t{:.3}",
             Path::new(&path).file_stem().unwrap().to_string_lossy(),
             p.car_ordinal,
             p.laps.len(),
@@ -98,6 +146,9 @@ fn main() {
             sum_dv,
             max_dv,
             p.corroboration().score,
+            graded,
+            graded_adopted,
+            adopted_bins,
             tol_bonus[0],
             tol_bonus[1],
             tol_bonus[2],
