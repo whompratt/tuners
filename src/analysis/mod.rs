@@ -126,7 +126,9 @@ pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
 }
 
 /// What a race-off gap in the stream turned out to be, judged by the race clock
-/// on resume: unchanged = pause, moved backwards = rewind, near zero = restart.
+/// on resume: unchanged = pause, moved backwards = rewind, near zero = restart,
+/// jumped forward = the game kept the clock running through the block (post-race
+/// results screen), so the missing time is not driving.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GapKind {
     Pause,
@@ -135,6 +137,9 @@ pub enum GapKind {
         race_t_after: f32,
     },
     Restart,
+    ClockRan {
+        skipped_s: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -150,22 +155,46 @@ pub struct SessionGap {
 const RESTART_RACE_T_S: f32 = 5.0;
 /// Race clock must step back at least this far to call a gap a rewind.
 const REWIND_MIN_STEP_S: f32 = 0.25;
+/// Race clock advancing more than this across a race-off gap means the game
+/// kept the clock running through the block (post-race results screen keeps
+/// racing time; real pauses resume within hundredths): not a pause.
+const PAUSE_MAX_CLOCK_ADVANCE_S: f32 = 5.0;
 
 /// Classify every race-off gap in a session. Rewound laps are already excluded
 /// from profiling structurally (the gap splits the stint and the resumed slice
 /// starts mid-lap); this exists so reports can say so honestly.
+///
+/// Race-on runs where the car never moves are menu flicker (pre-race menus can
+/// flash race-on frames carrying the previous event's clock): they neither end
+/// nor anchor a gap, so the surrounding gap is judged driving-run to
+/// driving-run and a flicker before the first real drive reports nothing.
 pub fn classify_gaps(frames: &[TimedFrame]) -> Vec<SessionGap> {
-    let mut gaps = Vec::new();
-    let mut last_on: Option<f32> = None;
-    let mut in_gap = false;
+    let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut start = None;
     for (i, tf) in frames.iter().enumerate() {
-        let f = &tf.frame;
-        if !f.is_race_on {
-            in_gap = last_on.is_some();
-            continue;
+        match (tf.frame.is_race_on, start) {
+            (true, None) => start = Some(i),
+            (false, Some(s)) => {
+                runs.push(s..i);
+                start = None;
+            }
+            _ => {}
         }
-        if in_gap {
-            let race_t_before = last_on.unwrap();
+    }
+    if let Some(s) = start {
+        runs.push(s..frames.len());
+    }
+    runs.retain(|r| {
+        frames[r.clone()]
+            .iter()
+            .any(|f| f.frame.speed > MIN_DRIVING_SPEED_MPS)
+    });
+
+    runs.windows(2)
+        .map(|pair| {
+            let race_t_before = frames[pair[0].end - 1].frame.current_race_time;
+            let resume_frame = pair[1].start;
+            let f = &frames[resume_frame].frame;
             let kind = if f.current_race_time < RESTART_RACE_T_S {
                 GapKind::Restart
             } else if f.current_race_time < race_t_before - REWIND_MIN_STEP_S {
@@ -173,19 +202,20 @@ pub fn classify_gaps(frames: &[TimedFrame]) -> Vec<SessionGap> {
                     race_t_before,
                     race_t_after: f.current_race_time,
                 }
+            } else if f.current_race_time > race_t_before + PAUSE_MAX_CLOCK_ADVANCE_S {
+                GapKind::ClockRan {
+                    skipped_s: f.current_race_time - race_t_before,
+                }
             } else {
                 GapKind::Pause
             };
-            gaps.push(SessionGap {
-                resume_frame: i,
+            SessionGap {
+                resume_frame,
                 resume_lap: f.lap_number,
                 kind,
-            });
-            in_gap = false;
-        }
-        last_on = Some(f.current_race_time);
-    }
-    gaps
+            }
+        })
+        .collect()
 }
 
 /// In-game duration of a frame slice, measured on the race clock (which runs in
@@ -203,7 +233,9 @@ pub fn stint_seconds(frames: &[TimedFrame]) -> f32 {
 /// re-drive: the game is doing equal-state splicing. For tune evaluation the kept
 /// retry is the data that matters (leaderboard validity is irrelevant), so frames
 /// superseded by a rewind (race clock >= the resume point) are dropped and the
-/// retry is spliced on. Pauses are stitched over; restarts start a new segment.
+/// retry is spliced on. Pauses are stitched over; restarts start a new segment,
+/// as does a gap the race clock ran through (post-race results screen): the
+/// frames on either side of it are not continuous driving.
 /// Segments shorter than `min_seconds` on the race clock are dropped, as are
 /// segments where the car never moves (sitting on track before ducking into the
 /// setup menu produces a race-on stint of pure zeroes).
@@ -230,6 +262,9 @@ pub fn driving_segments(frames: &[TimedFrame], min_seconds: f32) -> Vec<Vec<Time
                 {
                     current.pop();
                 }
+            } else if last_t.is_some_and(|t| race_t - t > PAUSE_MAX_CLOCK_ADVANCE_S) {
+                // The clock ran through the race-off block: not a pause.
+                segments.push(std::mem::take(&mut current));
             }
             // Pause: the race clock didn't move; just keep appending.
         }
@@ -554,6 +589,75 @@ mod tests {
             times.windows(2).all(|w| w[1] > w[0]),
             "kept timeline must be monotonic on the race clock: {times:?}"
         );
+    }
+
+    /// FH6 keeps the race clock running through the post-race results screen
+    /// (a race-off block): the resume must split the stint, not stitch a
+    /// ghost span onto it (real case: a 275s block read as a 278s "lap").
+    #[test]
+    fn results_screen_clock_run_splits_and_is_reported() {
+        let mut frames: Vec<TimedFrame> = (0..100)
+            .map(|i| racing(100.0 + i as f32 * 0.1, 3))
+            .collect();
+        frames.push(gap_frame());
+        // clock ran 275s while race-off; driving resumes far ahead
+        frames.extend((0..100).map(|i| racing(385.0 + i as f32 * 0.1, 3)));
+
+        let segments = driving_segments(&frames, 0.0);
+        assert_eq!(segments.len(), 2, "clock-run gap must split the stint");
+        assert!((stint_seconds(&segments[0]) - 9.9).abs() < 0.01);
+        assert!((stint_seconds(&segments[1]) - 9.9).abs() < 0.01);
+
+        let gaps = classify_gaps(&frames);
+        assert_eq!(gaps.len(), 1);
+        assert!(
+            matches!(gaps[0].kind, GapKind::ClockRan { skipped_s } if (skipped_s - 275.1).abs() < 0.2),
+            "{:?}",
+            gaps[0].kind
+        );
+    }
+
+    /// Pre-race menus flicker race-on frames carrying the PREVIOUS event's
+    /// clock (stationary, distance 0). The drop from that clock to the real
+    /// race's zero must not read as a session restart.
+    #[test]
+    fn prerace_menu_flicker_reports_no_gap() {
+        let mut frames: Vec<TimedFrame> = (0..20)
+            .map(|i| {
+                let mut tf = racing(395.0 + i as f32 * 0.1, 0);
+                tf.frame.speed = 0.0;
+                tf
+            })
+            .collect();
+        frames.push(gap_frame());
+        frames.extend((0..50).map(|i| racing(0.5 + i as f32 * 0.1, 0)));
+
+        assert!(
+            classify_gaps(&frames).is_empty(),
+            "flicker before the first drive must report nothing"
+        );
+        assert_eq!(driving_segments(&frames, 0.0).len(), 1);
+    }
+
+    /// A flicker BETWEEN two drives merges into the gap: the gap is judged
+    /// driving-run to driving-run, so a new event after a finished one still
+    /// reads as a restart (and never as a flicker-anchored clock run).
+    #[test]
+    fn flicker_between_drives_merges_into_the_gap() {
+        let mut frames: Vec<TimedFrame> =
+            (0..50).map(|i| racing(240.0 + i as f32 * 0.1, 3)).collect();
+        frames.push(gap_frame());
+        frames.extend((0..10).map(|i| {
+            let mut tf = racing(395.0 + i as f32 * 0.1, 0);
+            tf.frame.speed = 0.0;
+            tf
+        }));
+        frames.push(gap_frame());
+        frames.extend((0..50).map(|i| racing(0.5 + i as f32 * 0.1, 0)));
+
+        let gaps = classify_gaps(&frames);
+        assert_eq!(gaps.len(), 1, "one gap, drive to drive");
+        assert_eq!(gaps[0].kind, GapKind::Restart);
     }
 
     #[test]

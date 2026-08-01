@@ -119,7 +119,15 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   `LapNumber` all step back. Rewinding over the finish line replays the lap
   transition identically (same race_t, same distance).
 - Gap classification by race clock on resume: **unchanged = pause, stepped back =
-  rewind, near zero = restart**.
+  rewind, near zero = restart, jumped forward = the clock ran through the block**.
+  The post-race results screen is race-off but **keeps the race clock running**
+  (measured 2026-07-31, CRX rivals event: a 275.8s wall-clock block resumed with
+  the race clock +275.01s), so a forward jump means the frames on either side are
+  not continuous driving; real pauses resume within hundredths.
+- Pre-race menus can **flicker race-on frames carrying the previous event's race
+  clock** (stationary, `DistanceTraveled` 0): a race-on run in which the car never
+  moves is menu noise, not driving, and must not anchor gap classification (the
+  flicker's clock dropping to the new race's zero otherwise fakes a restart).
 - **`CurrentRaceTime` is the canonical time axis**: it runs in free roam too, freezes
   during pauses, and steps back coherently at rewinds. All durations, distance
   integration, and profile bin times use it (not `TimestampMS`, which keeps running

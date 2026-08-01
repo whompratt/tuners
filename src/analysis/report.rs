@@ -44,6 +44,12 @@ pub fn full_session_report(path: &Path) -> Result<String, String> {
             )
             .unwrap(),
             GapKind::Restart => writeln!(out, "note: session restart detected").unwrap(),
+            GapKind::ClockRan { skipped_s } => writeln!(
+                out,
+                "note: race clock ran {skipped_s:.0}s through a race-off block \
+                 (results screen or similar); the stint is split there",
+            )
+            .unwrap(),
             GapKind::Pause => {}
         }
     }
