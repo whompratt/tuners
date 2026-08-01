@@ -4,7 +4,8 @@
 
 use super::journal::{Change, Family};
 use crate::analysis::grip::CurveSource;
-use crate::analysis::metrics::StintMetrics;
+use crate::analysis::metrics::{HIGH_SPEED_MPS, StintMetrics};
+use crate::util::{speed_unit, speed_val, temp_delta_val, temp_unit, temp_val};
 
 /// Balance index magnitudes: mild tendency vs clear problem. Since plan 015
 /// the index gates only dirt balance and tarmac net-OVERSTEER means: on
@@ -519,9 +520,10 @@ fn balance_rule(
     let (front_t, rear_t) = axle_temps(overall);
     if (front_t - rear_t).abs() >= 5.0 {
         evidence.push(format!(
-            "{} tires run {:.0}°F hotter",
+            "{} tires run {:.0}{} hotter",
             if front_t > rear_t { "front" } else { "rear" },
-            (front_t - rear_t).abs(),
+            temp_delta_val((front_t - rear_t).abs()),
+            temp_unit(),
         ));
     }
     let front_slip = (overall.slip_frac.fl + overall.slip_frac.fr) / 2.0;
@@ -540,13 +542,14 @@ fn balance_rule(
     if let (Some(lo), Some(hi)) =
         supported_pair(&overall.balance_low_speed, &overall.balance_high_speed)
     {
+        let band = format!("{:.0} {}", speed_val(HIGH_SPEED_MPS), speed_unit());
         evidence.push(if (lo - hi) * dir >= AERO_BAND_GAP / 2.0 {
             format!(
-                "concentrated at low speed ({lo:+.2} below 85 mph vs {hi:+.2} above): \
+                "concentrated at low speed ({lo:+.2} below {band} vs {hi:+.2} above): \
                  mechanical grip, so bars/springs over aero"
             )
         } else {
-            format!("by speed: {lo:+.2} below 85 mph, {hi:+.2} above")
+            format!("by speed: {lo:+.2} below {band}, {hi:+.2} above")
         });
     }
     if let Some(c) = &overall.corners
@@ -677,10 +680,11 @@ fn stability_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommen
 
     let at_speed = os.high_speed_frac >= os.on_power_frac;
     let aero = at_speed && ctx.aero_tunable != Some(false);
+    let band = format!("{:.0} {}", speed_val(HIGH_SPEED_MPS), speed_unit());
     let mut evidence = vec![format!(
         "momentary oversteer with the average reading {}: {:.1}% of \
          cornering flashes clear oversteer ({:.1}% on power, {:.1}% at \
-         >=85 mph), counter-steer {:.1}%; healthy tarmac reads <=3.9% \
+         >={band}), counter-steer {:.1}%; healthy tarmac reads <=3.9% \
          on-power, deliberate oversteer exemplars 15-23% flashes",
         overall
             .understeer_index
@@ -856,12 +860,13 @@ fn aero_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendatio
              lever"
         }
     };
+    let band = format!("{:.0} {}", speed_val(HIGH_SPEED_MPS), speed_unit());
     recs.push(Recommendation {
         apply: Vec::new(),
         area: "aero",
         advice: advice.into(),
         evidence: vec![format!(
-            "{} at speed only: index {hi:+.2} above 85 mph vs {lo:+.2} below \
+            "{} at speed only: index {hi:+.2} above {band} vs {lo:+.2} below \
              (neutral); a bars change would upset the low-speed balance that is \
              currently fine",
             if understeer {
@@ -982,8 +987,12 @@ fn tire_pressure_rule(
         } else {
             continue;
         };
+        let u = temp_unit();
         let mut evidence = vec![format!(
-            "{axle} avg temp {avg:.0}°F vs {low:.0}-{high:.0}°F {band_label}"
+            "{axle} avg temp {:.0}{u} vs {:.0}-{:.0}{u} {band_label}",
+            temp_val(avg),
+            temp_val(low),
+            temp_val(high),
         )];
         let mut confidence = if margin >= TEMP_CLEAR_MARGIN_F {
             Confidence::Medium
@@ -1248,14 +1257,17 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                  traded for acceleration everywhere"
                     .into()
             },
-            evidence: vec![format!(
-                "drag model: longest flat-out run reaches ~{:.0} mph, rev cut \
-                 arrives at {:.0} mph (gear {}): ideal final drive ≈ current × {:.2}",
-                d.vmax_track * crate::util::MPS_TO_MPH,
-                d.redline_speed(g.effective_redline) * crate::util::MPS_TO_MPH,
-                d.top_gear,
-                scale,
-            )],
+            evidence: vec![{
+                let u = speed_unit();
+                format!(
+                    "drag model: longest flat-out run reaches ~{:.0} {u}, rev cut \
+                     arrives at {:.0} {u} (gear {}): ideal final drive ≈ current × {:.2}",
+                    speed_val(d.vmax_track),
+                    speed_val(d.redline_speed(g.effective_redline)),
+                    d.top_gear,
+                    scale,
+                )
+            }],
             confidence: Confidence::Low,
             suggestion: None,
             implied: Some(Change {
@@ -2090,6 +2102,40 @@ mod tests {
             stab.evidence[0].contains("counter-steers")
                 || recs.iter().any(|r| r.area == "balance"
                     && r.evidence.iter().any(|e| e.contains("counter-steers")))
+        );
+    }
+
+    /// Evidence strings render in the display units set from session prefs
+    /// (thread-local, so this can't pollute other tests): 250°F slicks read
+    /// hot either way, but a metric user sees the °C numbers.
+    #[test]
+    fn evidence_follows_display_units() {
+        crate::util::set_display_units(crate::util::DisplayUnits {
+            temp_c: true,
+            speed_kmh: false,
+        });
+        let mut overall = base_metrics();
+        for t in [
+            &mut overall.tire_temp.fl,
+            &mut overall.tire_temp.fr,
+            &mut overall.tire_temp.rl,
+            &mut overall.tire_temp.rr,
+        ] {
+            t.avg = 250.0;
+        }
+        let recs = recommend(
+            &overall,
+            &[],
+            &Context {
+                compound: Some("slick"),
+                ..Default::default()
+            },
+        );
+        let tires = recs.iter().find(|r| r.area == "tires").unwrap();
+        assert!(
+            tires.evidence[0].contains("121°C") && tires.evidence[0].contains("71-99°C"),
+            "{}",
+            tires.evidence[0]
         );
     }
 

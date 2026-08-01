@@ -32,6 +32,16 @@ pub enum ErrorKind {
     Internal,
 }
 
+/// Rust-formatted text (advice evidence, run reports) renders in the active
+/// project's display units, like the CLI's --units default; storage stays
+/// canonical. Call before building any view that bakes units into strings.
+pub(crate) fn set_display_units_from_session(session: &crate::advice::tuning::TuningSession) {
+    crate::util::set_display_units(crate::util::DisplayUnits {
+        temp_c: session.facts.get("unit_temp").map(String::as_str) == Some("c"),
+        speed_kmh: session.facts.get("unit_speed").map(String::as_str) == Some("kmh"),
+    });
+}
+
 impl ApiError {
     fn bad(msg: impl Into<String>) -> Self {
         ApiError {

@@ -124,6 +124,9 @@ pub fn compare_view(a: &str, b: &str) -> Result<CompareView, ApiError> {
 /// Full text report for one stint (the per-run report view).
 pub fn report_text(file: &str) -> Result<String, ApiError> {
     let path = checked_session_path(file)?;
+    super::set_display_units_from_session(&crate::advice::tuning::TuningSession::load(
+        &crate::util::data_path("tune-session.txt"),
+    ));
     crate::analysis::report::full_session_report(path).map_err(ApiError::internal)
 }
 
@@ -393,6 +396,7 @@ pub fn advise_active(
     sessions_dir: &str,
 ) -> Result<AdviseView, ApiError> {
     let session = crate::advice::tuning::TuningSession::load(Path::new(session_file));
+    super::set_display_units_from_session(&session);
     let journal = crate::advice::tuning::journal_path_for(session.car, journal_base);
     crate::advice::advise::advise(&journal, Path::new(session_file), sessions_dir)
         .map(|v| advise_view(&v))

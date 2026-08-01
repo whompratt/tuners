@@ -65,6 +65,15 @@ pub fn temp_val(f: f32) -> f32 {
     }
 }
 
+/// Canonical °F difference -> display difference (scale only, no offset).
+pub fn temp_delta_val(f: f32) -> f32 {
+    if DISPLAY_UNITS.with(|c| c.get()).temp_c {
+        f / 1.8
+    } else {
+        f
+    }
+}
+
 pub fn temp_unit() -> &'static str {
     if DISPLAY_UNITS.with(|c| c.get()).temp_c {
         "°C"
