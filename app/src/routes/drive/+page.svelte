@@ -15,7 +15,7 @@
   let f = $derived(app.live?.frame ?? null);
   // Cold/hot coloring follows the session compound's working band (the same
   // band the advice engine judges pressures against); slick band if no project.
-  let band = $derived(app.session?.tempBandF ?? [160, 210]);
+  let band = $derived([app.session?.tempBandF?.[0] ?? 160, app.session?.tempBandF?.[1] ?? 210]);
 
   // Confidence card: dimmed in menus/idle, full opacity as soon as the car
   // is on a recorded track (out lap included; it shows "–" until a flying
