@@ -4,6 +4,8 @@
 # GitHub release with auto-generated notes. The release is created as a draft and published
 # automatically only after BOTH platform builds succeed: the updater feed
 # reads releases/latest, which must never see a half-uploaded release.
+# Publishing also checksums every asset (SHA256SUMS.txt + a SHA-256 column
+# in the downloads table) so users can verify what they downloaded.
 # Signing needs the TAURI_SIGNING_PRIVATE_KEY secret (keypair at
 # ~/.tauri/tuners.key on the dev machine; losing it orphans shipped installs).
 name: release
@@ -225,6 +227,7 @@ jobs:
       - uses: actions/github-script@v9
         with:
           script: |
+            const crypto = require('crypto');
             const tag = context.ref.replace('refs/tags/', '');
             const { data } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
@@ -235,10 +238,82 @@ jobs:
               .filter(r => r.tag_name === tag)
               .sort((a, b) => b.created_at.localeCompare(a.created_at));
             if (!same.length) throw new Error(`no release found for ${tag}`);
+            const rel = same[0];
+
+            // Checksum every asset before publishing so users can verify
+            // the exact bytes the release serves (draft assets are only
+            // reachable through the API, hence the octet-stream fetch).
+            const sums = 'SHA256SUMS.txt';
+            const { data: assets } = await github.rest.repos.listReleaseAssets({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: rel.id,
+              per_page: 100,
+            });
+            const hashes = {};
+            for (const a of assets.filter(a => a.name !== sums)) {
+              const res = await github.request(
+                'GET /repos/{owner}/{repo}/releases/assets/{asset_id}',
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: a.id,
+                  headers: { accept: 'application/octet-stream' },
+                }
+              );
+              hashes[a.name] = crypto
+                .createHash('sha256')
+                .update(Buffer.from(res.data))
+                .digest('hex');
+            }
+            // A re-run of publish leaves an old sums file behind; replace
+            // it by name.
+            const stale = assets.find(a => a.name === sums);
+            if (stale) {
+              await github.rest.repos.deleteReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                asset_id: stale.id,
+              });
+            }
+            const names = Object.keys(hashes).sort();
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: rel.id,
+              name: sums,
+              data: Buffer.from(
+                names.map(n => `${hashes[n]}  ${n}`).join('\n') + '\n'
+              ),
+            });
+
+            // Widen the downloads table with each file's hash. Skipped when
+            // a re-run already patched the body.
+            let body = rel.body || '';
+            if (!body.includes('| SHA-256 |')) {
+              body = body
+                .split('\n')
+                .map(line => {
+                  if (line === '| Platform | File |') {
+                    return '| Platform | File | SHA-256 |';
+                  }
+                  if (line === '| --- | --- |') {
+                    return '| --- | --- | --- |';
+                  }
+                  const m = line.match(/^\| (.+) \| \[(.+?)\]\((.+?)\) \|$/);
+                  if (m && hashes[m[2]]) {
+                    return `| ${m[1]} | [${m[2]}](${m[3]}) | \`${hashes[m[2]]}\` |`;
+                  }
+                  return line;
+                })
+                .join('\n');
+            }
+
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: same[0].id,
+              release_id: rel.id,
+              body,
               draft: false,
             });
             // Stale drafts for the same tag (delete-and-retag leftovers)

@@ -16,7 +16,9 @@ breakage (dependency downgrades, contract drift) is caught early.
 | `ubuntu-22.04` | AppImage, `.deb`, `.rpm`, `.sig` updater files |
 | flatpak job | `.flatpak` bundle repackaged from the deb |
 
-Plus `latest.json` — the signed updater feed the installed apps poll.
+Plus `latest.json` — the signed updater feed the installed apps poll — and
+`SHA256SUMS.txt`, generated at publish time over every attached asset; the
+downloads table gets a SHA-256 column from the same pass.
 
 ## Cutting a release
 
@@ -36,9 +38,13 @@ Plus `latest.json` — the signed updater feed the installed apps poll.
    ```
 
 4. Watch the `release` workflow under the repo's Actions tab. When all
-   jobs finish the release publishes itself with a downloads table.
+   jobs finish the release publishes itself with a downloads table
+   (including per-file SHA-256) and a `SHA256SUMS.txt` asset.
    Smoke-test the Windows installer on a real machine when the change
-   warrants it.
+   warrants it. Running the installer through VirusTotal before
+   announcing a release catches new antivirus false positives before
+   users do (v0.1.6 was flagged by Defender's ML heuristic and reported
+   to Microsoft as a false positive, 2026-08-03).
 
 A bad build costs nothing while still drafted: delete the draft and the
 tag (`git push origin :refs/tags/v0.2.0`), fix, re-tag. After publication
