@@ -414,12 +414,12 @@ pub fn reconcile(
             (true, Outcome::Worsened(d)) => {
                 r.advice = format!(
                     "step back halfway: the optimum is between the last two \
-                     setups. The last change (\"{note}\") cost lap time while \
-                     the behaviour still points the same way"
+                     setups. The last change (\"{note}\") cost time, but the \
+                     behaviour still points the same way."
                 );
                 if let Some(m) = change.magnitude {
                     r.advice
-                        .push_str(&format!(" (go {:+.1} slider units from here)", -m / 2.0));
+                        .push_str(&format!(" Go {:+.1} slider units from here.", -m / 2.0));
                 }
                 r.evidence.push(format!(
                     "last step in this direction lost {d:.2}s of ideal lap"
@@ -456,8 +456,7 @@ pub fn reconcile(
                 r.advice = format!(
                     "hold: the optimum is likely bracketed. The last change \
                      (\"{note}\") moved against this advice and still gained \
-                     {:.2}s. The remaining behaviour may simply be what the \
-                     fast setup feels like",
+                     {:.2}s.",
                     -d,
                 );
                 r.confidence = Confidence::Medium;
@@ -587,9 +586,9 @@ pub fn history_revert(
             apply: Vec::new(),
             area: family_area(change.family),
             advice: format!(
-                "corroborate: re-run this setup for more laps before reacting. \
-                 The last change (\"{note}\") measured worse, but a \
-                 single-flying-lap comparison is not trustworthy"
+                "corroborate: re-run this setup for more laps. The last change \
+                 (\"{note}\") measured worse, but a single-lap comparison isn't \
+                 trustworthy."
             ),
             evidence,
             confidence: Confidence::Low,
@@ -610,7 +609,7 @@ pub fn history_revert(
     Some(Recommendation {
         apply: Vec::new(),
         area: family_area(change.family),
-        advice: format!("revert: the last change (\"{note}\") measurably cost lap time"),
+        advice: format!("revert: the last change (\"{note}\") measurably cost lap time."),
         evidence,
         confidence,
         suggestion: None,
@@ -811,7 +810,7 @@ mod tests {
             false,
         );
         assert!(
-            recs[0].advice.contains("go +1.0 slider units from here"),
+            recs[0].advice.contains("Go +1.0 slider units from here"),
             "{}",
             recs[0].advice
         );

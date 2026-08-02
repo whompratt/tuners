@@ -136,9 +136,8 @@ pub(crate) fn composition_proposal(
             (b.key.to_string(), b.to_raw.clone()),
         ],
         advice: format!(
-            "combine \"{}\" and \"{}\": measured separately, one gained corner \
-             entry and the other corner exit — complementary phases, untested \
-             together",
+            "combine \"{}\" and \"{}\". Measured separately, one gained corner \
+             entry and the other corner exit. Untested together.",
             dnote(&a.m.desc),
             dnote(&b.m.desc)
         ),

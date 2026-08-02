@@ -362,69 +362,62 @@ fn balance_rule(
     let (advice, family, softer): (String, _, _) = match (understeer, lean) {
         (true, PhaseLean::Entry) => {
             let mut advice = String::from(
-                "reduce front roll stiffness (soften the front anti-roll bar \
-                 or springs): the push concentrates at corner entry",
+                "reduce front roll stiffness: soften front ARB or springs. \
+                 The push concentrates at corner entry.",
             );
             if brake_bound {
                 advice.push_str(
-                    "; the braking band implicates bias too — shift brake \
-                     balance rearward next",
+                    " The braking band implicates bias too; shift brake \
+                     balance rearward next.",
                 );
             } else if decel_locked {
                 advice.push_str(
-                    "; the decel-locked rear diff is resisting turn-in — \
-                     reduce rear diff decel next",
+                    " The decel-locked rear diff resists turn-in; reduce \
+                     rear diff decel next.",
                 );
             }
             (advice, Family::FrontRoll, true)
         }
         (true, PhaseLean::Exit) if on_power && front_driven => (
-            "reduce front diff accel lock: the front washes out under power on \
-             corner exit, so softening the front end would dull turn-in without \
-             fixing the power-on push. Stiffening the rear (springs/arb) is \
-             the second lever"
+            "reduce front diff accel lock: the front washes out under power \
+             on corner exit. Softening the front would dull turn-in without \
+             fixing it. Second lever: stiffen the rear."
                 .into(),
             Family::DiffAccel,
             true,
         ),
         (true, PhaseLean::Exit) if on_power => (
-            "stiffen the rear (anti-roll bar or springs) to shift grip \
-             forward: the push appears under power on corner exit, not at \
-             turn-in; softening the front would dull entry without fixing it"
+            "stiffen the rear ARB or springs to shift grip forward: the push \
+             appears under power on corner exit, not at turn-in."
                 .into(),
             Family::RearRoll,
             false,
         ),
         (false, PhaseLean::Entry) => (
             "increase rear diff decel lock: the rear steps out into corners \
-             (braking / lift-off), and decel lock stabilises entry. Softening \
-             the rear arb or springs is the second lever, brake balance \
-             forward the third"
+             on braking or lift-off. Second lever: soften rear ARB or \
+             springs; third: brake balance forward."
                 .into(),
             Family::DiffDecel,
             false,
         ),
         (false, PhaseLean::Exit) if on_power => (
-            "reduce rear roll stiffness: soften the rear anti-roll bar first \
-             (springs second). The slide concentrates on corner exit under \
-             throttle; if softer rear roll doesn't clear it, reduce rear \
-             diff accel next"
+            "reduce rear roll stiffness: soften rear ARB first, springs \
+             second. The slide concentrates on corner exit under throttle. \
+             If that doesn't clear it, reduce rear diff accel next."
                 .into(),
             Family::RearRoll,
             true,
         ),
         (true, _) => (
-            "reduce front roll stiffness: soften the front anti-roll bar or \
-             springs (which of the two is not separable from this data yet: \
-             bars move roll only, springs also jounce and pitch)"
+            "reduce front roll stiffness: soften front ARB or springs. Which \
+             of the two isn't separable from this data yet."
                 .into(),
             Family::FrontRoll,
             true,
         ),
         (false, _) => (
-            "reduce rear roll stiffness: soften the rear anti-roll bar or \
-             springs"
-                .into(),
+            "reduce rear roll stiffness: soften rear ARB or springs.".into(),
             Family::RearRoll,
             true,
         ),
@@ -626,7 +619,7 @@ fn balance_rule(
             apply: Vec::new(),
             area: "brakes",
             advice: "shift brake balance rearward a step: the front spends its \
-                     grip on braking while still turning in"
+                     grip on braking while still turning in."
                 .into(),
             evidence: vec![format!(
                 "braking-band balance {brake:+.2} vs {BRAKE_PUSH:+.2} threshold \
@@ -714,19 +707,18 @@ fn stability_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommen
         apply: Vec::new(),
         area: "stability",
         advice: if aero {
-            "add rear aero: the oversteer flashes concentrate at high speed, \
-             where the rear runs out of downforce before the front runs out \
-             of grip"
+            "increase rear aero: the oversteer flashes concentrate at high \
+             speed. The rear runs out of downforce before the front runs out \
+             of grip."
                 .into()
         } else if at_speed {
-            "soften the rear a step (arb or springs) or lower rear ride \
-             height: the oversteer flashes concentrate at high speed and \
-             no aero is fitted, so mechanical rear grip is the lever"
+            "soften rear ARB or springs a step, or lower rear ride height: \
+             the oversteer flashes concentrate at high speed and no aero is \
+             fitted."
                 .into()
         } else {
-            "reduce rear diff accel lock (or soften the rear a step): the \
-             oversteer flashes ride the throttle; the rear breaks away \
-             under power"
+            "reduce rear diff accel lock, or soften the rear a step: the \
+             oversteer flashes ride the throttle."
                 .into()
         },
         evidence,
@@ -794,8 +786,8 @@ fn brake_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     recs.push(Recommendation {
         apply: Vec::new(),
         area: "brakes",
-        advice: "shift brake balance forward: the car rotates while braking — \
-                 the rears are doing the stopping and letting go first"
+        advice: "shift brake balance forward: the car rotates while braking. \
+                 The rears are doing the stopping and letting go first."
             .into(),
         evidence,
         confidence: Confidence::Medium,
@@ -850,22 +842,20 @@ fn aero_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendatio
     let no_aero = ctx.aero_tunable == Some(false);
     let advice = match (understeer, no_aero) {
         (true, false) => {
-            "add front aero (or reduce rear aero): the car only pushes at high \
-             speed, where downforce balance outweighs the bars"
+            "increase front aero, or reduce rear aero: the car only pushes at \
+             high speed, where downforce outweighs the bars."
         }
         (false, false) => {
-            "add rear aero: the car is only loose at high speed, where downforce \
-             balance outweighs the bars"
+            "increase rear aero: the car is only loose at high speed, where \
+             downforce outweighs the bars."
         }
         (true, true) => {
-            "lower front ride height (or raise rear) to tip the rake forward: \
-             the car only pushes at high speed and no aero is fitted, so ride \
-             height is the closest lever"
+            "lower front ride height, or raise rear, to tip the rake forward: \
+             the car only pushes at high speed and no aero is fitted."
         }
         (false, true) => {
-            "lower rear ride height (or raise front): the car is only loose at \
-             high speed and no aero is fitted, so ride height is the closest \
-             lever"
+            "lower rear ride height, or raise front: the car is only loose at \
+             high speed and no aero is fitted."
         }
     };
     let band = format!("{:.0} {}", speed_val(HIGH_SPEED_MPS), speed_unit());
@@ -925,14 +915,14 @@ fn power_balance_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     let (advice, index_evt, alt) = if shift <= -POWER_SHIFT && on <= -index_gate && rear_drive {
         (
             "reduce rear differential acceleration lock: the rear breaks away \
-             specifically under power",
+             specifically under power.",
             "oversteer",
             awd.then_some("alternative (AWD): shift center torque forward"),
         )
     } else if shift >= POWER_SHIFT && on >= index_gate && front_drive {
         (
             "reduce front differential acceleration lock: the front washes out \
-             specifically under power",
+             specifically under power.",
             "understeer",
             awd.then_some("alternative (AWD): shift center torque rearward"),
         )
@@ -986,12 +976,12 @@ fn tire_pressure_rule(
     ] {
         let (advice, margin) = if avg > high {
             (
-                format!("raise {axle} tire pressures a step: {axle} tires run hot"),
+                format!("raise {axle} tire pressures a step: {axle} tires run hot."),
                 avg - high,
             )
         } else if avg < low {
             (
-                format!("lower {axle} tire pressures a step to build temperature"),
+                format!("lower {axle} tire pressures a step to build temperature."),
                 low - avg,
             )
         } else {
@@ -1086,9 +1076,9 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 apply: Vec::new(),
                 area: "traction",
                 advice: format!(
-                    "improve {drive_axle}-axle traction: reduce differential \
-                     acceleration lock — both rears break away together, the \
-                     locked-diff signature"
+                    "improve {drive_axle}-axle traction: reduce diff accel \
+                     lock. Both rears break away together, the locked-diff \
+                     signature."
                 ),
                 evidence,
                 confidence,
@@ -1104,9 +1094,9 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             recs.push(Recommendation {
                 apply: Vec::new(),
                 area: "traction",
-                advice: "add rear diff accel lock: the unloaded inside rear spins \
-                         alone while the outside grips — an open diff dumps the \
-                         torque there; more lock drives both wheels together"
+                advice: "increase rear diff accel lock: the unloaded inside \
+                         rear spins alone while the outside grips. More lock \
+                         drives both wheels together."
                     .into(),
                 evidence: vec![symmetry, spin_evidence],
                 confidence: confidence.min(Confidence::Medium),
@@ -1126,8 +1116,8 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 area: "traction",
                 advice: format!(
                     "improve {drive_axle}-axle traction: softer {drive_axle} \
-                     springs/dampers help put power down; the rear spin pattern \
-                     doesn't implicate the diff in either direction"
+                     springs or dampers help put power down. The spin pattern \
+                     doesn't implicate the diff either way."
                 ),
                 evidence: vec![symmetry, spin_evidence],
                 confidence: Confidence::Low,
@@ -1142,9 +1132,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     recs.push(Recommendation {
         apply: Vec::new(),
         area: "traction",
-        advice: format!(
-            "improve {drive_axle}-axle traction: reduce differential acceleration lock"
-        ),
+        advice: format!("improve {drive_axle}-axle traction: reduce diff accel lock."),
         evidence: vec![
             format!("alternative: softer {drive_axle} springs/dampers also help put power down"),
             spin_evidence,
@@ -1187,8 +1175,9 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         recs.push(Recommendation {
             apply: Vec::new(),
             area: "gearing",
-            advice: "lengthen the final drive (or the gears that hit the limiter) so the \
-                     engine stays below redline at the route's top speeds"
+            advice: "lengthen the final drive, or the gears that hit the \
+                     limiter, so the engine stays below redline at the route's \
+                     top speeds."
                 .into(),
             evidence,
             confidence: Confidence::Medium,
@@ -1216,9 +1205,9 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         recs.push(Recommendation {
             apply: Vec::new(),
             area: "gearing",
-            advice: "shorten the final drive: the car lives in top gear but the top of \
-                     the rev range goes unused; shorter gearing gives more acceleration \
-                     everywhere at no real top-speed cost"
+            advice: "shorten the final drive: the car lives in top gear but \
+                     the top of the rev range goes unused. Shorter gearing \
+                     gives more acceleration at no real top-speed cost."
                 .into(),
             evidence: vec![
                 format!(
@@ -1264,14 +1253,13 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             apply: Vec::new(),
             area: "gearing",
             advice: if short {
-                "lengthen the final drive to match this aero: the fitted drag \
-                 model says the longest run reaches past the current rev-cut \
-                 speed; the engine runs out before the car does"
+                "lengthen the final drive to match this aero: the longest run \
+                 reaches past the current rev-cut speed. The engine runs out \
+                 before the car does."
                     .into()
             } else {
                 "shorten the final drive to match this aero: the rev cut sits \
-                 well past what the longest run can reach; unused top end \
-                 traded for acceleration everywhere"
+                 well past what the longest run can reach."
                     .into()
             },
             evidence: vec![{
@@ -1316,8 +1304,8 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 apply: Vec::new(),
                 area: "suspension",
                 advice: format!(
-                    "{axle} suspension bottoms out: stiffen {axle} springs or raise \
-                     {axle} ride height"
+                    "{axle} suspension bottoms out: stiffen {axle} springs or \
+                     raise {axle} ride height."
                 ),
                 evidence: vec![format!(
                     "{axle} at full compression {:.1}% of the stint",
@@ -1334,9 +1322,9 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 apply: Vec::new(),
                 area: "suspension",
                 advice: format!(
-                    "{axle} suspension spends long at full extension: if the route is \
-                     smooth this can mean over-stiff {axle} springs or too much rebound; \
-                     over crests and jumps it is normal"
+                    "{axle} suspension spends long at full extension. On a \
+                     smooth route this suggests over-stiff {axle} springs or \
+                     too much rebound; over crests and jumps it's normal."
                 ),
                 evidence: vec![format!(
                     "{axle} at full extension {:.1}% of the stint",
@@ -1389,8 +1377,8 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 apply: Vec::new(),
                 area: "damping",
                 advice: format!(
-                    "reduce {axle} damping (rebound first): the {axle} wheels are \
-                     held off the surface instead of following it"
+                    "reduce {axle} damping, rebound first: the {axle} wheels \
+                     are held off the surface instead of following it."
                 ),
                 evidence,
                 confidence: Confidence::High,
@@ -1403,9 +1391,9 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 apply: Vec::new(),
                 area: "damping",
                 advice: format!(
-                    "increase {axle} damping (rebound especially): the {axle} wheels \
-                     oscillate and spend long stretches at full extension; bouncing \
-                     off the surface costs grip everywhere"
+                    "increase {axle} damping, rebound especially: the {axle} \
+                     wheels oscillate and spend long stretches at full \
+                     extension. Bouncing off the surface costs grip everywhere."
                 ),
                 evidence: vec![
                     format!(
@@ -1436,9 +1424,9 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 area: "damping",
                 suggestion: None,
                 advice: format!(
-                    "reduce {axle} bump damping: articulation is suppressed and \
-                     the {axle} wheels spend long stretches at full extension; \
-                     the compression stroke is fighting the surface"
+                    "reduce {axle} bump damping: articulation is suppressed \
+                     and the {axle} wheels spend long stretches at full \
+                     extension. The compression stroke is fighting the surface."
                 ),
                 evidence: vec![
                     format!(
@@ -1465,9 +1453,9 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 apply: Vec::new(),
                 area: "damping",
                 advice: format!(
-                    "consider softer {axle} damping: the {axle} suspension barely \
-                     articulates. On smooth tarmac this costs little; on bumpy or \
-                     off-road surfaces it will cost real grip"
+                    "consider softer {axle} damping: the {axle} suspension \
+                     barely articulates. Costs little on smooth tarmac; real \
+                     grip on bumpy or off-road surfaces."
                 ),
                 evidence: vec![format!(
                     "{axle} suspension reverses direction only {rev:.1}x/s (healthy \
@@ -1500,9 +1488,9 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 apply: Vec::new(),
                 area: "damping",
                 advice: format!(
-                    "reduce {axle} rebound: the {axle} dampers extend far slower \
-                     than they compress, holding the wheels down after every \
-                     bump and body movement"
+                    "reduce {axle} rebound: the {axle} dampers extend far \
+                     slower than they compress, holding the wheels down after \
+                     every bump."
                 ),
                 evidence: vec![format!(
                     "{axle} extension speed {v:.2}x compression (healthy tarmac \
@@ -1636,11 +1624,7 @@ mod tests {
         let recs = recommend(&overall, &laps, &Default::default());
         let balance = recs.iter().find(|r| r.area == "balance").unwrap();
         assert_eq!(balance.confidence, Confidence::High);
-        assert!(
-            balance.advice.contains("front anti-roll bar"),
-            "{}",
-            balance.advice
-        );
+        assert!(balance.advice.contains("front ARB"), "{}", balance.advice);
         assert!(
             balance
                 .evidence
@@ -1771,11 +1755,7 @@ mod tests {
         let recs = recommend(&overall, &laps, &Default::default());
         let balance = recs.iter().find(|r| r.area == "balance").unwrap();
         assert_eq!(balance.confidence, Confidence::Medium);
-        assert!(
-            balance.advice.contains("rear anti-roll bar"),
-            "{}",
-            balance.advice
-        );
+        assert!(balance.advice.contains("rear ARB"), "{}", balance.advice);
     }
 
     #[test]
@@ -2016,7 +1996,7 @@ mod tests {
         overall.corners = corners(-0.15, -0.14);
         let recs = recommend(&overall, &[], &Default::default());
         let bal = recs.iter().find(|r| r.area == "balance").unwrap();
-        assert!(bal.advice.contains("rear anti-roll bar"), "{}", bal.advice);
+        assert!(bal.advice.contains("rear ARB"), "{}", bal.advice);
         assert_eq!(bal.implied.unwrap().family, Family::RearRoll);
     }
 
@@ -2265,7 +2245,11 @@ mod tests {
         overall.balance_high_speed = band(2000, 0.14);
         let recs = recommend(&overall, &[], &Default::default());
         let aero = recs.iter().find(|r| r.area == "aero").unwrap();
-        assert!(aero.advice.contains("add front aero"), "{}", aero.advice);
+        assert!(
+            aero.advice.contains("increase front aero"),
+            "{}",
+            aero.advice
+        );
         assert_eq!(aero.confidence, Confidence::Medium);
         assert_eq!(aero.implied.unwrap().family, Family::FrontAero);
         assert!(recs.iter().all(|r| r.area != "balance"));
@@ -2278,7 +2262,11 @@ mod tests {
         overall.balance_high_speed = band(2000, -0.13);
         let recs = recommend(&overall, &[], &Default::default());
         let aero = recs.iter().find(|r| r.area == "aero").unwrap();
-        assert!(aero.advice.contains("add rear aero"), "{}", aero.advice);
+        assert!(
+            aero.advice.contains("increase rear aero"),
+            "{}",
+            aero.advice
+        );
         assert_eq!(aero.implied.unwrap().family, Family::RearAero);
 
         // No aero fitted: same signal, but the advice must not name a slider
@@ -2416,7 +2404,7 @@ mod tests {
         let recs = recommend(&overall, &[], &Default::default());
         let traction = recs.iter().find(|r| r.area == "traction").unwrap();
         assert!(
-            traction.advice.contains("add rear diff accel"),
+            traction.advice.contains("increase rear diff accel"),
             "{}",
             traction.advice
         );

@@ -33,7 +33,7 @@ pub(super) fn exhausted_flip(
     let (partner, text): (F, &str) = match (family, softer) {
         (F::FrontRoll, true) => (
             F::RearRoll,
-            "front roll sliders are at minimum; stiffen the rear instead (rear anti-roll bar first)",
+            "front roll sliders are at minimum; stiffen the rear instead",
         ),
         (F::FrontRoll, false) => (
             F::RearRoll,
@@ -41,7 +41,7 @@ pub(super) fn exhausted_flip(
         ),
         (F::RearRoll, true) => (
             F::FrontRoll,
-            "rear roll sliders are at minimum; stiffen the front instead (front anti-roll bar first)",
+            "rear roll sliders are at minimum; stiffen the front instead",
         ),
         (F::RearRoll, false) => (
             F::FrontRoll,
@@ -53,7 +53,7 @@ pub(super) fn exhausted_flip(
         ),
         (F::FrontAero, true) => (
             F::RearAero,
-            "front aero is at minimum; add rear aero instead",
+            "front aero is at minimum; increase rear aero instead",
         ),
         (F::RearAero, false) => (
             F::FrontAero,
@@ -61,7 +61,7 @@ pub(super) fn exhausted_flip(
         ),
         (F::RearAero, true) => (
             F::FrontAero,
-            "rear aero is at minimum; add front aero instead",
+            "rear aero is at minimum; increase front aero instead",
         ),
         _ => return None,
     };
@@ -74,14 +74,14 @@ pub(super) fn exhausted_flip(
 fn flip_action(partner: journal::Family, softer: bool) -> &'static str {
     use journal::Family as F;
     match (partner, softer) {
-        (F::FrontRoll, true) => "soften the front (anti-roll bar or springs) instead",
-        (F::FrontRoll, false) => "stiffen the front (anti-roll bar or springs) instead",
-        (F::RearRoll, true) => "soften the rear (anti-roll bar or springs) instead",
-        (F::RearRoll, false) => "stiffen the rear (anti-roll bar or springs) instead",
+        (F::FrontRoll, true) => "soften front ARB or springs instead",
+        (F::FrontRoll, false) => "stiffen front ARB or springs instead",
+        (F::RearRoll, true) => "soften rear ARB or springs instead",
+        (F::RearRoll, false) => "stiffen the rear ARB or springs instead",
         (F::FrontAero, true) => "reduce front aero instead",
-        (F::FrontAero, false) => "add front aero instead",
+        (F::FrontAero, false) => "increase front aero instead",
         (F::RearAero, true) => "reduce rear aero instead",
-        (F::RearAero, false) => "add rear aero instead",
+        (F::RearAero, false) => "increase rear aero instead",
         _ => "work the other end of the car instead",
     }
 }
@@ -297,7 +297,7 @@ pub(super) fn apply_fd_scale(
             continue;
         }
         r.suggestion = Some(format!(
-            "final drive {cur} → {target} (drag-model estimate — rough; a \
+            "final drive {cur} → {target} (drag-model estimate is rough; a \
              driven step will refine it)"
         ));
         r.apply = vec![("final_drive".to_string(), target.to_string())];
@@ -370,11 +370,7 @@ pub(super) fn map_prior(
                 if t.r > 0.0 { "down" } else { "up" },
                 t.r,
                 t.n,
-                if t.history {
-                    " across your other cars"
-                } else {
-                    ""
-                },
+                if t.history { " across other cars" } else { "" },
             )
         })
         .collect();
@@ -395,9 +391,8 @@ pub(super) fn map_prior(
         area: journal::family_area(family),
         suggestion: None,
         advice: format!(
-            "untried this campaign: on similar builds, {phrase} moved the \
-             behaviours your pace has tracked; worth one probing step \
-             (map prior, not a measurement)",
+            "untried so far. Similar builds found {phrase} moved pace in \
+            your favour. Worth a probe to explore."
         ),
         evidence: {
             let mut ev = vec![
@@ -506,9 +501,8 @@ pub(super) fn setup_lints(
                 apply: Vec::new(),
                 area: "damping",
                 suggestion: None,
-                advice: "bump/rebound split sits outside the commonly run band: \
-                         bump is commonly 40-70% of rebound per end (about \
-                         two-thirds); worth re-splitting unless deliberate"
+                advice: "bump/rebound split is outside typical band. Bump is commonly \
+                         40-70% of rebound. Worth trying, unless this is deliberate."
                     .into(),
                 evidence: off
                     .into_iter()
@@ -550,10 +544,10 @@ pub(super) fn setup_lints(
                 area: "damping",
                 suggestion: None,
                 advice: format!(
-                    "the {stiff} end carries the stiffer springs but the \
-                     {soft} end carries the stiffer dampers: damper stiffness \
-                     commonly scales with spring rate, so the damper split \
-                     mirrors the spring split; worth aligning unless deliberate"
+                    "the {stiff} end has the stiffer springs but the {soft} \
+                     end has the stiffer dampers. The damper split commonly \
+                     mirrors the spring split. Worth aligning, unless \
+                     deliberate."
                 ),
                 evidence: vec![format!(
                     "front holds {:.0}% of spring rate but {:.0}% of damper \
@@ -604,7 +598,7 @@ pub(super) fn setup_lints(
         if !headroom.is_empty() {
             let mut evidence = headroom;
             evidence.push(
-                "no bottoming measured this stint (landing impacts excluded); \
+                "no non-landing bottoming out measured this stint; \
                  convention, not a measurement"
                     .into(),
             );
@@ -612,10 +606,9 @@ pub(super) fn setup_lints(
                 apply: Vec::new(),
                 area: "ride height",
                 suggestion: None,
-                advice: "ride height sits above the slider minimum with no \
-                         bottoming measured: center of mass is free speed, so \
-                         tarmac setups commonly run at minimum, raising only \
-                         to cure bottoming (or for deliberate rake)"
+                advice: "ride height is above minimum, but the car isn't bottoming \
+                         out. Lowering centre of mass is typically free speed. Try \
+                         lowering, unless deliberate."
                     .into(),
                 evidence,
                 confidence: recommend::Confidence::Low,

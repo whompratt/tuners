@@ -829,11 +829,9 @@ pub fn advise(
                         r.suggestion = Some(format!("{phrase}: hold {disp}"));
                         r.advice = format!(
                             "no change asked: the current setting is the \
-                             estimated optimum (bracketed; further narrowing \
-                             is expected to gain less than the ±{floor:.2}s \
-                             noise floor, which is not proof of convergence). \
-                             Any stint driven here tightens the estimate for \
-                             free"
+                             bracketed optimum estimate. Further narrowing is \
+                             expected to gain less than the ±{floor:.2}s noise \
+                             floor. Any run here tightens the estimate for free."
                         );
                         r.probe = false;
                         r.implied = None;
@@ -846,19 +844,11 @@ pub fn advise(
                         r.probe = matches!(gain, Some(g) if g < floor);
                         r.advice = match gain {
                             Some(g) if g < floor => format!(
-                                "the fit puts the estimated optimum here but \
-                                 expects only {g:.2}s for the move, within the \
-                                 ±{floor:.2}s noise floor, so holding the \
-                                 current value is equally defensible and a \
-                                 stint at {disp} mainly tightens the map. \
-                                 Everything else unchanged; set {phrase} to \
-                                 {disp}"
+                                "estimated optimum, but minimal predicted gain: \
+                                {g:.2}s, which is within the ±{floor:.2}s noise floor. \
+                                Set {phrase} to {disp}."
                             ),
-                            _ => format!(
-                                "set and drive one stint: this is the estimated \
-                                 optimum of the mapped response. Everything else \
-                                 unchanged; set {phrase} to {disp}"
-                            ),
+                            _ => format!("estimated optimum. Set {phrase} to {disp}."),
                         };
                         r.implied = Some(journal::Change {
                             family,
@@ -902,9 +892,7 @@ pub fn advise(
                 r.apply = vec![(key.to_string(), best.0.to_string())];
                 r.advice = format!(
                     "return to the best measured setting: {phrase} {bdisp} beat \
-                     the current value by {gap:.2}s. An interior optimum may \
-                     exist between the two; a midpoint stint is the exploratory \
-                     alternative",
+                     the current value by {gap:.2}s."
                 );
                 r.confidence = recommend::Confidence::Medium;
                 r.probe = false;
@@ -918,6 +906,11 @@ pub fn advise(
                      lower = faster)",
                     nodes_summary(&disp_nodes),
                 ));
+                r.evidence.push(
+                    "an optimum may sit between the two; a midpoint run is the \
+                     exploratory alternative"
+                        .into(),
+                );
             }
         }
 
@@ -941,10 +934,8 @@ pub fn advise(
                 area: "probe",
                 suggestion: Some(format!("{phrase}: {vdisp}")),
                 advice: format!(
-                    "one stint here extends the map where it still \
-                     improves. Set {phrase} to {vdisp} with everything else \
-                     unchanged; probes are one at a time, two unexplored \
-                     changes in one stint cannot be separated"
+                    "mapping unfinished. Set {phrase} to {vdisp} to \
+                    progress exploration."
                 ),
                 evidence: vec![format!(
                     "mapped so far: {} (cumulative verdict delta; lower = faster)",
@@ -1104,7 +1095,7 @@ pub fn advise(
         // blind-mode reconciliation becomes redundant.
         r.advice = r
             .advice
-            .replace(&format!(" (go {delta:+.1} slider units from here)"), "");
+            .replace(&format!(" Go {delta:+.1} slider units from here."), "");
         r.suggestion = match base.and_then(|b| b.values.get(key)?.parse::<f32>().ok()) {
             Some(cur) => {
                 let mut target = cur + delta;
