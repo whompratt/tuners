@@ -410,7 +410,8 @@ fn composition_proposes_untested_phase_complements() {
         Some(&diff),
         Some(&base),
     ];
-    let rec = composition_proposal(&[&m1, &m2], &setups).expect("complementary pair");
+    let rec = composition_proposal(&[&m1, &m2], &setups, &Default::default())
+        .expect("complementary pair");
     assert_eq!(rec.area, "experiment");
     assert!(rec.apply.contains(&("arb_f".into(), "18".into())));
     assert!(rec.apply.contains(&("diff_accel_r".into(), "45".into())));
@@ -430,7 +431,7 @@ fn composition_proposes_untested_phase_complements() {
         Some(&combo),
         Some(&base),
     ];
-    assert!(composition_proposal(&[&m1, &m2], &tested).is_none());
+    assert!(composition_proposal(&[&m1, &m2], &tested, &Default::default()).is_none());
 
     // Same-phase gains do not compose.
     let m3 = m(
@@ -441,7 +442,7 @@ fn composition_proposes_untested_phase_complements() {
         -0.3,
         (-0.28, 0.02, 0.0),
     );
-    assert!(composition_proposal(&[&m1, &m3], &setups).is_none());
+    assert!(composition_proposal(&[&m1, &m3], &setups, &Default::default()).is_none());
 
     // Current setup off a measurement's from-state: not transferable.
     let moved = rev(&[("arb_f", "19"), ("diff_accel_r", "60")]);
@@ -452,7 +453,7 @@ fn composition_proposes_untested_phase_complements() {
         Some(&diff),
         Some(&moved),
     ];
-    assert!(composition_proposal(&[&m1, &m2], &off).is_none());
+    assert!(composition_proposal(&[&m1, &m2], &off, &Default::default()).is_none());
 }
 
 /// The pause-menu auto-cut shape: race-on frames, ordinal present, but

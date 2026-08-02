@@ -222,24 +222,24 @@ pub fn canonical_unit(key: &str) -> Option<&'static str> {
     }
 }
 
-/// Format a canonical value in the session's display units (unit_* facts):
-/// "11591.4436" (lb/in) becomes "207.0 kgf/mm" for a kgfmm session. Fields
-/// without units (or unparseable values) pass through unchanged.
-pub fn display_value(key: &str, canon: &str, facts: &BTreeMap<String, String>) -> String {
+/// Display conversion for a unit-bearing field under the session's unit_*
+/// facts: (canonical->display factor, decimals, label). None for unitless
+/// sliders, degrees, percentages, and ratios.
+pub fn display_spec(
+    key: &str,
+    facts: &BTreeMap<String, String>,
+) -> Option<(f32, usize, &'static str)> {
     let dim = match key {
         "tire_pressure_f" | "tire_pressure_r" => "pressure",
         "springs_f" | "springs_r" => "springs",
         "ride_height_f" | "ride_height_r" => "length",
         "aero_f" | "aero_r" => "force",
         "weight" => "mass",
-        _ => return canon.to_string(),
-    };
-    let Ok(v) = canon.parse::<f32>() else {
-        return canon.to_string();
+        _ => return None,
     };
     let pref = facts.get(&format!("unit_{dim}")).map(String::as_str);
     // (factor canonical -> display, decimals, label); default = canonical unit.
-    let (k, dp, label) = match (dim, pref) {
+    Some(match (dim, pref) {
         ("pressure", Some("bar")) => (0.0689476, 2, "bar"),
         ("pressure", _) => (1.0, 1, "psi"),
         ("springs", Some("kgfmm")) => (0.0178580, 1, "kgf/mm"),
@@ -251,8 +251,72 @@ pub fn display_value(key: &str, canon: &str, facts: &BTreeMap<String, String>) -
         ("mass", Some("kg")) => (0.453592, 0, "kg"),
         ("mass", _) => (1.0, 0, "lb"),
         _ => (1.0, 2, ""),
+    })
+}
+
+/// Format a canonical value in the session's display units (unit_* facts):
+/// "11591.4436" (lb/in) becomes "207.0 kgf/mm" for a kgfmm session. Fields
+/// without units (or unparseable values) pass through unchanged.
+pub fn display_value(key: &str, canon: &str, facts: &BTreeMap<String, String>) -> String {
+    let Some((k, dp, label)) = display_spec(key, facts) else {
+        return canon.to_string();
+    };
+    let Ok(v) = canon.parse::<f32>() else {
+        return canon.to_string();
     };
     format!("{:.dp$} {label}", v * k, dp = dp)
+}
+
+/// A journal note re-rendered in the session's display units: each clause
+/// matching the diff_note grammar ("front springs -28 lb/in", "front tire
+/// pressure = 28.5") gets its value converted ("front springs -0.5 kgf/mm");
+/// anything else (prose, "old -> new" forms, unitless fields) passes through
+/// untouched. Display-only: journals, measurements, and the effect map stay
+/// canonical.
+pub fn display_note(note: &str, facts: &BTreeMap<String, String>) -> String {
+    note.split(';')
+        .map(|c| display_clause(c.trim(), facts))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn display_clause(clause: &str, facts: &BTreeMap<String, String>) -> String {
+    let Some((key, phrase)) = FIELDS
+        .iter()
+        .filter(|(_, p)| clause.starts_with(p))
+        .max_by_key(|(_, p)| p.len())
+        .map(|(k, p)| (*k, *p))
+    else {
+        return clause.to_string();
+    };
+    if display_spec(key, facts).is_none() {
+        return clause.to_string(); // unitless: canonical IS display
+    }
+    let rest = clause[phrase.len()..].trim();
+    let (eq, val_str) = match rest.strip_prefix('=') {
+        Some(r) => (true, r.trim()),
+        None => (false, rest),
+    };
+    let Some(tok) = val_str.split_whitespace().next() else {
+        return clause.to_string();
+    };
+    // Whatever follows the number must be the canonical unit suffix (or
+    // nothing): anything else is not a plain value clause.
+    let tail = val_str[tok.len()..].trim();
+    if !tail.is_empty() && Some(tail) != canonical_unit(key) {
+        return clause.to_string();
+    }
+    let Ok(v) = tok.parse::<f32>() else {
+        return clause.to_string();
+    };
+    let disp = display_value(key, tok.trim_start_matches('+'), facts);
+    if eq {
+        format!("{phrase} = {disp}")
+    } else if v >= 0.0 {
+        format!("{phrase} +{disp}")
+    } else {
+        format!("{phrase} {disp}")
+    }
 }
 
 /// Smallest delta worth journaling, per field, in canonical units: half a

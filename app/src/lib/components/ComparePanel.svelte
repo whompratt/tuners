@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app, baseName, errMsg } from "$lib/app.svelte";
   import { commands, type CompareView } from "$lib/bindings";
-  import { SPD, fmtLap } from "$lib/units";
+  import { DIST, SPD, fmtLap } from "$lib/units";
   import {
     A_COLOR, B_COLOR, SEG_BINS, type Cmp,
     compareBinAt, compareLayout, drawCompare,
@@ -80,10 +80,11 @@
   let draw = $derived.by(() => {
     const data = cmpData;
     const spd = (app.unitsTick, SPD());
+    const dist = DIST();
     const hover = hoverBin;
     return (ctx: CanvasRenderingContext2D, cssW: number) => {
       if (!data) return;
-      drawCompare(ctx, compareLayout(data, spd.k, cssW), data, spd, palette(), hover);
+      drawCompare(ctx, compareLayout(data, spd.k, cssW), data, spd, dist, palette(), hover);
     };
   });
 
@@ -105,7 +106,7 @@
         .reduce((x, y) => x + y, 0) ?? 0;
     const gap = cmpData.delta.slice(0, bin + 1).reduce((x, y) => x + y, 0); // negative = B ahead
     return {
-      km: ((bin * cmpData.binMeters) / 1000).toFixed(2),
+      dist: `${(bin * cmpData.binMeters * DIST().k).toFixed(2)} ${DIST().l}`,
       a: (cmpData.speedsA[bin] ?? 0) * SPD().k,
       b: (cmpData.speedsB[bin] ?? 0) * SPD().k,
       seg,
@@ -163,7 +164,7 @@
       <Chart height={530} {draw} {onmove} onleave={() => (hoverBin = null)}>
         <Tooltip shown={tip != null} x={tipX} y={tipY} wrapWidth={wrapW} flipAt={200}>
           {#if tip}
-            <div class="t-head">{tip.km} km</div>
+            <div class="t-head">{tip.dist}</div>
             <div><span class="chip" style="background:{A_COLOR}"></span>A <span class="num">{tip.a.toFixed(0)} {SPD().l}</span></div>
             <div><span class="chip" style="background:{B_COLOR}"></span>B <span class="num">{tip.b.toFixed(0)} {SPD().l}</span></div>
             <div>this 250 m: <span class="num">{tip.seg < 0 ? "B" : "A"} quicker by {Math.abs(tip.seg).toFixed(2)}s</span></div>

@@ -104,6 +104,9 @@ export const limToCanon = (k: string, v: string): string => {
 
 // telemetry display: speed from m/s, temps from °F
 export const SPD = (): UnitDef => UNITS.speed[unitPrefs.speed] || UNITS.speed.mph;
+// distance follows the speed preference (mph = miles, km/h = km); from meters
+export const DIST = (): UnitDef =>
+  unitPrefs.speed === "kmh" ? { k: 1 / 1000, dp: 2, l: "km" } : { k: 1 / 1609.344, dp: 2, l: "mi" };
 export const tempDisp = (f: number): number => (unitPrefs.temp === "c" ? (f - 32) / 1.8 : f);
 export const tempLabel = (): string => (unitPrefs.temp === "c" ? "°C" : "°F");
 

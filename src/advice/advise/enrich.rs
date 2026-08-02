@@ -321,6 +321,7 @@ pub(super) fn map_prior(
     measurements: &[Measurement],
     recs: &[recommend::Recommendation],
     baseline: Option<&crate::advice::tuning::Revision>,
+    facts: &std::collections::BTreeMap<String, String>,
 ) -> Option<recommend::Recommendation> {
     let cells = crate::advice::effectmap::aggregate(emap);
     let ranked = crate::advice::effectmap::rank(&cells, trends, ctx);
@@ -385,7 +386,7 @@ pub(super) fn map_prior(
             format!(
                 "local evidence exists but is weak (\"{}\", {}); \
                  the prior stands until a trustworthy measurement lands",
-                m.desc,
+                crate::advice::tuning::display_note(&m.desc, facts),
                 m.outcome.word(),
             )
         });

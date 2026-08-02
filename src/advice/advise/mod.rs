@@ -292,7 +292,15 @@ pub fn advise(
                 surface_loose: met.surface_loose,
                 aero: rule_context(&session).aero_tunable,
             };
-            if let Some(rec) = map_prior(&emap, &trends, &ctx, &[], &recs, session.latest()) {
+            if let Some(rec) = map_prior(
+                &emap,
+                &trends,
+                &ctx,
+                &[],
+                &recs,
+                session.latest(),
+                &session.facts,
+            ) {
                 recs.push(rec);
             }
         }
@@ -392,7 +400,11 @@ pub fn advise(
                     m.cornering_rear_slip?,
                 ))
             }),
-            note: cs.entry.note.clone(),
+            note: cs
+                .entry
+                .note
+                .as_deref()
+                .map(|n| crate::advice::tuning::display_note(n, &session.facts)),
             pos: match c.positions[i] {
                 (Some(f), Some(r)) if f != 0.0 || r != 0.0 => Some((f, r)),
                 _ => None,
@@ -492,7 +504,7 @@ pub fn advise(
         anchor = Some(AnchorView {
             vs_step: i + 1,
             areas: areas.join(", "),
-            changes,
+            changes: crate::advice::tuning::display_note(&changes, &session.facts),
             delta_s: cmp.verdict_delta_s,
             currencies: (
                 cmp.ideal_delta_s,
@@ -556,7 +568,7 @@ pub fn advise(
             &mut recs,
             m.change,
             m.outcome,
-            &m.desc,
+            &crate::advice::tuning::display_note(&m.desc, &session.facts),
             m.attributed.as_deref(),
             m.weak,
         ) {
@@ -569,7 +581,13 @@ pub fn advise(
     // to a measured state, not arithmetic.
     if let Some((change, outcome, note, weak)) = &anchor_change
         && !matched_families.contains(&change.family)
-        && let Some(mut rec) = journal::history_revert(*change, *outcome, note, None, *weak)
+        && let Some(mut rec) = journal::history_revert(
+            *change,
+            *outcome,
+            &crate::advice::tuning::display_note(note, &session.facts),
+            None,
+            *weak,
+        )
     {
         if let Some(a) = &anchor
             && let (Some(Some(anchor_setup)), Some(Some(last_setup))) =
@@ -649,7 +667,7 @@ pub fn advise(
             .map(|m| MeasurementView {
                 from_step: m.i + 1,
                 to_step: m.j + 1,
-                desc: m.desc.clone(),
+                desc: crate::advice::tuning::display_note(&m.desc, &session.facts),
                 delta_s: m.outcome.delta_s().unwrap_or(0.0),
                 split: m.split,
                 weak: m.weak,
@@ -714,6 +732,26 @@ pub fn advise(
 
         let pts: Vec<(f32, f32)> = nodes.iter().map(|n| (n.0, n.1)).collect();
         let fit = quad_fit(&pts).map(|(a, b, c)| (a as f32, b as f32, c as f32));
+        // Display-space copy for everything the user SEES (chart nodes,
+        // fitted curve, "mapped so far" listings): unit-bearing sliders
+        // (aero, springs, ride height, pressures) render in the session's
+        // units while every decision below stays canonical.
+        let (dk, ddp) = key
+            .as_deref()
+            .and_then(|k| crate::advice::tuning::display_spec(k, &session.facts))
+            .map_or((1.0, 4u32), |(f, dp, _)| (f, dp as u32));
+        let dround = |v: f32| {
+            let p = 10f32.powi(ddp as i32);
+            (v * dk * p).round() / p
+        };
+        let disp_nodes: Vec<(f32, f32, usize)> =
+            nodes.iter().map(|n| (dround(n.0), n.1, n.2)).collect();
+        let disp_fit = if (dk - 1.0).abs() < 1e-9 {
+            fit
+        } else {
+            let dpts: Vec<(f32, f32)> = disp_nodes.iter().map(|n| (n.0, n.1)).collect();
+            quad_fit(&dpts).map(|(a, b, c)| (a as f32, b as f32, c as f32))
+        };
         let (lo, hi) = nodes.iter().fold((f32::MAX, f32::MIN), |(lo, hi), n| {
             (lo.min(n.1), hi.max(n.1))
         });
@@ -741,7 +779,7 @@ pub fn advise(
                     .flatten()
                     .and_then(|b| b.values.get(key)?.parse::<f32>().ok())
                     .is_some_and(|cur| (cur - vertex).abs() < 0.05);
-                let landscape = nodes_summary(&nodes);
+                let landscape = nodes_summary(&disp_nodes);
                 let disp =
                     crate::advice::tuning::display_value(key, &vertex.to_string(), &session.facts);
                 // A fitted optimum away from the current setting deserves a
@@ -804,14 +842,14 @@ pub fn advise(
                                 "probe the estimated optimum: the fit expects \
                                  only {g:.2}s here, within the ±{floor:.2}s \
                                  noise floor, so holding the current value is \
-                                 equally defensible and a stint at {vertex} \
+                                 equally defensible and a stint at {disp} \
                                  mainly tightens the map. Everything else \
-                                 unchanged; set {phrase} to {vertex}"
+                                 unchanged; set {phrase} to {disp}"
                             ),
                             _ => format!(
                                 "set and drive one stint: this is the estimated \
                                  optimum of the mapped response. Everything else \
-                                 unchanged; set {phrase} to {vertex}"
+                                 unchanged; set {phrase} to {disp}"
                             ),
                         };
                         r.implied = Some(journal::Change {
@@ -846,21 +884,19 @@ pub fn advise(
         {
             let phrase = crate::advice::tuning::field_phrase(key);
             let gap = cur_node.1 - best.1;
+            let bdisp =
+                crate::advice::tuning::display_value(key, &best.0.to_string(), &session.facts);
             for r in recs
                 .iter_mut()
                 .filter(|r| r.implied.is_some_and(|i| i.family == family))
             {
-                r.suggestion = Some(format!(
-                    "{phrase}: {}",
-                    crate::advice::tuning::display_value(key, &best.0.to_string(), &session.facts),
-                ));
+                r.suggestion = Some(format!("{phrase}: {bdisp}"));
                 r.apply = vec![(key.to_string(), best.0.to_string())];
                 r.advice = format!(
-                    "return to the best measured setting: {phrase} {} beat the \
-                     current value by {gap:.2}s. An interior optimum may exist \
-                     between the two; a midpoint stint is the exploratory \
+                    "return to the best measured setting: {phrase} {bdisp} beat \
+                     the current value by {gap:.2}s. An interior optimum may \
+                     exist between the two; a midpoint stint is the exploratory \
                      alternative",
-                    best.0,
                 );
                 r.confidence = recommend::Confidence::Medium;
                 r.implied = Some(journal::Change {
@@ -871,7 +907,7 @@ pub fn advise(
                 r.evidence.push(format!(
                     "measured landscape ({phrase}): {} (cumulative verdict delta; \
                      lower = faster)",
-                    nodes_summary(&nodes),
+                    nodes_summary(&disp_nodes),
                 ));
             }
         }
@@ -890,22 +926,20 @@ pub fn advise(
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|n| n.0)
                 .unwrap_or(v);
+            let vdisp = crate::advice::tuning::display_value(key, &v.to_string(), &session.facts);
             recs.push(recommend::Recommendation {
                 apply: vec![(key.to_string(), v.to_string())],
                 area: "probe",
-                suggestion: Some(format!(
-                    "{phrase}: {}",
-                    crate::advice::tuning::display_value(key, &v.to_string(), &session.facts),
-                )),
+                suggestion: Some(format!("{phrase}: {vdisp}")),
                 advice: format!(
                     "probe: one stint here extends the map where it still \
-                     improves. Set {phrase} to {v} with everything else \
+                     improves. Set {phrase} to {vdisp} with everything else \
                      unchanged; probes are one at a time, two unexplored \
                      changes in one stint cannot be separated"
                 ),
                 evidence: vec![format!(
                     "mapped so far: {} (cumulative verdict delta; lower = faster)",
-                    nodes_summary(&nodes),
+                    nodes_summary(&disp_nodes),
                 )],
                 confidence: recommend::Confidence::Low,
                 implied: Some(journal::Change {
@@ -922,9 +956,9 @@ pub fn advise(
                 .map(|k| crate::advice::tuning::field_phrase(k).to_string())
                 .unwrap_or_else(|| journal::family_area(family).to_string()),
             key,
-            nodes,
-            fit,
-            vertex: vertex_out,
+            nodes: disp_nodes,
+            fit: disp_fit,
+            vertex: vertex_out.map(dround),
             measurements: mviews,
         });
     }
@@ -981,12 +1015,13 @@ pub fn advise(
             &c.measurements,
             &recs,
             session.latest(),
+            &session.facts,
         ) {
             recs.push(rec);
         }
     }
 
-    if let Some(rec) = composition_proposal(&c.latest(), &c.setups) {
+    if let Some(rec) = composition_proposal(&c.latest(), &c.setups, &session.facts) {
         recs.push(rec);
     }
 

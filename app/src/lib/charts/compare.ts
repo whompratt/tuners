@@ -82,6 +82,7 @@ export function drawCompare(
   L: CompareLayout,
   data: Cmp,
   spd: UnitDef,
+  dist: UnitDef,
   pal: Palette,
   hoverBin?: number | null,
 ) {
@@ -164,9 +165,10 @@ export function drawCompare(
   }
 
   ctx.fillStyle = pal.muted; ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const kmMax = (bins * data.binMeters) / 1000;
-  for (let km = 0; km <= kmMax; km += 1) {
-    ctx.fillText(`${km} km`, x((km * 1000) / data.binMeters), L.cssH - pad.b + 6);
+  // Distance marks every whole display unit (mi or km, per the speed pref).
+  const distMax = bins * data.binMeters * dist.k;
+  for (let d = 0; d <= distMax; d += 1) {
+    ctx.fillText(`${d} ${dist.l}`, x(d / dist.k / data.binMeters), L.cssH - pad.b + 6);
   }
 
   if (hoverBin != null) {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app } from "$lib/app.svelte";
-  import { SERIES, SPD, fmtLap } from "$lib/units";
+  import { DIST, SERIES, SPD, fmtLap } from "$lib/units";
   import { drawLaps, lapsBinAt, lapsLayout } from "$lib/charts/laps";
   import { palette } from "$lib/charts/palette";
   import Chart from "$lib/ui/Chart.svelte";
@@ -19,10 +19,11 @@
   let draw = $derived.by(() => {
     const data = app.lapData;
     const spd = (app.unitsTick, SPD());
+    const dist = DIST();
     const hover = hoverBin;
     return (ctx: CanvasRenderingContext2D, cssW: number) => {
       if (!data) return;
-      drawLaps(ctx, lapsLayout(data, spd.k, cssW), data, spd, palette(), hover);
+      drawLaps(ctx, lapsLayout(data, spd.k, cssW), data, spd, dist, palette(), hover);
     };
   });
 
@@ -40,7 +41,7 @@
     const bin = hoverBin;
     const data = app.lapData;
     return {
-      km: ((bin * data.binMeters) / 1000).toFixed(2),
+      dist: `${(bin * data.binMeters * DIST().k).toFixed(2)} ${DIST().l}`,
       laps: data.laps
         .map((lap, i) => ({ lap, i, v: (lap.speeds[bin] ?? 0) * SPD().k }))
         .sort((a, b) => b.v - a.v),
@@ -70,7 +71,7 @@
     <Chart height={320} {draw} {onmove} onleave={() => (hoverBin = null)}>
       <Tooltip shown={tipRows != null} x={tipX} y={tipY} wrapWidth={wrapW} flipAt={170}>
         {#if tipRows}
-          <div class="t-head">{tipRows.km} km</div>
+          <div class="t-head">{tipRows.dist}</div>
           {#each tipRows.laps as r (r.i)}
             <div>
               <span class="chip" style="background:{SERIES[r.i % SERIES.length]}"></span>

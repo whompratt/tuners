@@ -42,6 +42,7 @@ export function drawLaps(
   L: LapsLayout,
   data: Laps,
   spd: UnitDef,
+  dist: UnitDef,
   pal: Palette,
   hoverBin?: number | null,
 ) {
@@ -59,8 +60,10 @@ export function drawLaps(
     ctx.fillText(`${g}`, pad.l - 8, y(g));
   }
   ctx.textAlign = "center"; ctx.textBaseline = "top";
-  for (let km = 0; km <= kmMax; km += 1) {
-    ctx.fillText(`${km} km`, x((km * 1000) / data.binMeters), pad.t + plotH + 8);
+  // Distance marks every whole display unit (mi or km, per the speed pref).
+  const distMax = kmMax * 1000 * dist.k;
+  for (let d = 0; d <= distMax; d += 1) {
+    ctx.fillText(`${d} ${dist.l}`, x(d / dist.k / data.binMeters), pad.t + plotH + 8);
   }
   ctx.save();
   ctx.translate(11, pad.t + plotH / 2); ctx.rotate(-Math.PI / 2);

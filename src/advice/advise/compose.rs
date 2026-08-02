@@ -21,6 +21,7 @@ const COMPOSE_PHASE_MIN_S: f32 = 0.10;
 pub(crate) fn composition_proposal(
     latest: &[&Measurement],
     setups: &[Option<&crate::advice::tuning::Revision>],
+    facts: &std::collections::BTreeMap<String, String>,
 ) -> Option<recommend::Recommendation> {
     let current = setups.last().copied().flatten()?;
     let val = |rev: &crate::advice::tuning::Revision, k: &str| -> Option<f32> {
@@ -119,14 +120,16 @@ pub(crate) fn composition_proposal(
             .map(|(_, l)| (*l).to_string())
             .unwrap_or_else(|| k.to_string())
     };
+    let disp = |k: &str, v: &str| crate::advice::tuning::display_value(k, v, facts);
+    let dnote = |n: &str| crate::advice::tuning::display_note(n, facts);
     Some(recommend::Recommendation {
         area: "experiment",
         suggestion: Some(format!(
             "{} {} + {} {}",
             label(a.key),
-            a.to_raw,
+            disp(a.key, &a.to_raw),
             label(b.key),
-            b.to_raw
+            disp(b.key, &b.to_raw)
         )),
         apply: vec![
             (a.key.to_string(), a.to_raw.clone()),
@@ -136,16 +139,23 @@ pub(crate) fn composition_proposal(
             "combine \"{}\" and \"{}\": measured separately, one gained corner \
              entry and the other corner exit — complementary phases, untested \
              together",
-            a.m.desc, b.m.desc
+            dnote(&a.m.desc),
+            dnote(&b.m.desc)
         ),
         evidence: vec![
             format!(
                 "\"{}\" improved {:+.2}s (entry {:+.2}s / exit {:+.2}s)",
-                a.m.desc, a.d, a.entry, a.exit
+                dnote(&a.m.desc),
+                a.d,
+                a.entry,
+                a.exit
             ),
             format!(
                 "\"{}\" improved {:+.2}s (entry {:+.2}s / exit {:+.2}s)",
-                b.m.desc, b.d, b.entry, b.exit
+                dnote(&b.m.desc),
+                b.d,
+                b.entry,
+                b.exit
             ),
             format!(
                 "linear sum predicts {:+.2}s; the interaction between them is \
