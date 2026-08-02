@@ -912,11 +912,21 @@ pub fn refresh(
     force: bool,
 ) -> Result<(EffectMap, Vec<String>), String> {
     let mut report = Vec::new();
+    // A file whose header differs from the current registry was written by
+    // an older build: its rows would be carried verbatim and stay stale
+    // forever (missing the new columns, and any family re-keying that
+    // shipped alongside). Treat the whole file as stale and rebuild.
+    let current_header = {
+        let field_keys: Vec<&str> = effects::FIELDS.iter().map(|(k, ..)| *k).collect();
+        format!("{}\t{}", PREFIX_COLS.join("\t"), field_keys.join("\t"))
+    };
     let old: Option<EffectMap> = (!force)
         .then(|| {
-            std::fs::read_to_string(out)
-                .ok()
-                .and_then(|t| parse(&t).ok())
+            let text = std::fs::read_to_string(out).ok()?;
+            if text.lines().next() != Some(current_header.as_str()) {
+                return None;
+            }
+            parse(&text).ok()
         })
         .flatten();
     let map_time = old
@@ -1327,8 +1337,19 @@ mod tests {
         assert_eq!(map.floors.len(), 1);
         assert!(report.iter().any(|l| l == "up to date"), "{report:?}");
 
+        // An old-schema file (different header columns) must NOT feed the
+        // cache: its rows would stay stale forever, so refresh treats the
+        // whole file as stale and rebuilds (dropping the unharvestable row).
+        let rendered = render(&old);
+        let (header, rest) = rendered.split_once('\n').unwrap();
+        let old_schema = format!("{}\n{rest}", header.rsplit_once('\t').unwrap().0);
+        std::fs::write(&out, old_schema).unwrap();
+        let (map, report) = refresh(&root, &stints, &out, &scratch, false).unwrap();
+        assert!(map.samples.is_empty(), "{report:?}");
+
         // Forced: the harvest really runs, fails on the missing recording,
         // and the stale rows drop.
+        std::fs::write(&out, render(&old)).unwrap();
         let (map, report) = refresh(&root, &stints, &out, &scratch, true).unwrap();
         assert!(map.samples.is_empty(), "{report:?}");
         assert!(report.iter().any(|l| l.contains("missing")), "{report:?}");
