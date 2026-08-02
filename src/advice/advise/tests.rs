@@ -641,3 +641,108 @@ fn consecutive_same_setup_stints_group() {
     let groups = consecutive_groups(&standing, &setups);
     assert_eq!(groups, vec![0, 0, 2, 2, 4, 5, 5, 7]);
 }
+
+/// The setup-lint tier (plan 016): bump/rebound band, dampers-mirror-springs
+/// inconsistency, and ride-height-above-minimum all fire from tune state,
+/// phrase themselves as convention, and defer to existing evidence on the
+/// same family.
+#[test]
+fn setup_lints_fire_from_tune_state_and_defer() {
+    use crate::advice::tuning::{Revision, TuningSession};
+    let rev = |pairs: &[(&str, &str)]| {
+        let mut r = Revision::default();
+        for (k, v) in pairs {
+            r.values.insert(k.to_string(), v.to_string());
+        }
+        r
+    };
+    let mut session = TuningSession::default();
+    // In-band bump/rebound (0.62), consistent splits: silent.
+    session.revisions.push(rev(&[
+        ("rebound_f", "10.0"),
+        ("rebound_r", "13.0"),
+        ("bump_f", "6.2"),
+        ("bump_r", "8.1"),
+        ("springs_f", "500"),
+        ("springs_r", "600"),
+    ]));
+    assert!(super::enrich::setup_lints(&session, &[], &[], None).is_empty());
+
+    // Bump above 70% of rebound on one end: the ratio lint fires.
+    session.revisions.push(rev(&[
+        ("rebound_f", "10.0"),
+        ("rebound_r", "13.0"),
+        ("bump_f", "9.0"),
+        ("bump_r", "8.1"),
+        ("springs_f", "500"),
+        ("springs_r", "600"),
+    ]));
+    let lints = super::enrich::setup_lints(&session, &[], &[], None);
+    assert_eq!(lints.len(), 1, "{lints:?}");
+    assert!(
+        lints[0].advice.contains("commonly 40-70%"),
+        "{}",
+        lints[0].advice
+    );
+    assert!(lints[0].evidence[0].contains("convention"));
+
+    // Stiffer-sprung rear but stiffer-damped front: the mirror lint fires.
+    session.revisions.push(rev(&[
+        ("rebound_f", "13.0"),
+        ("rebound_r", "10.0"),
+        ("bump_f", "8.1"),
+        ("bump_r", "6.2"),
+        ("springs_f", "500"),
+        ("springs_r", "600"),
+    ]));
+    let lints = super::enrich::setup_lints(&session, &[], &[], None);
+    assert_eq!(lints.len(), 1, "{lints:?}");
+    assert!(
+        lints[0].advice.contains("mirrors the spring split"),
+        "{}",
+        lints[0].advice
+    );
+
+    // An existing damping rec on file silences both damping lints.
+    let existing = recommend::Recommendation {
+        apply: Vec::new(),
+        area: "damping",
+        suggestion: None,
+        advice: "reduce front rebound".into(),
+        evidence: Vec::new(),
+        confidence: recommend::Confidence::Medium,
+        implied: None,
+    };
+    assert!(
+        super::enrich::setup_lints(&session, &[], std::slice::from_ref(&existing), None).is_empty()
+    );
+
+    // Ride height above recorded minimum with a bottoming-free tarmac stint.
+    session
+        .facts
+        .insert("limit_ride_height_f".into(), "4.0..8.0".into());
+    session
+        .facts
+        .insert("limit_ride_height_r".into(), "4.0..8.0".into());
+    session
+        .revisions
+        .push(rev(&[("ride_height_f", "5.5"), ("ride_height_r", "5.5")]));
+    let met = crate::analysis::metrics::StintMetrics::default();
+    let lints = super::enrich::setup_lints(&session, &[], &[], Some(&met));
+    assert_eq!(lints.len(), 1, "{lints:?}");
+    assert!(
+        lints[0].advice.contains("free speed"),
+        "{}",
+        lints[0].advice
+    );
+    assert_eq!(
+        lints[0].implied.unwrap().family,
+        journal::Family::RideHeight
+    );
+    // Dirt: the ride-height lint stays quiet.
+    let dirt = crate::analysis::metrics::StintMetrics {
+        surface_loose: true,
+        ..Default::default()
+    };
+    assert!(super::enrich::setup_lints(&session, &[], &[], Some(&dirt)).is_empty());
+}

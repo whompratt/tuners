@@ -439,3 +439,191 @@ pub(super) fn map_prior(
         }),
     })
 }
+
+/// Setup-lint tier (plan 016): conventions read from the TUNE STATE itself,
+/// phrased as convention ("commonly run..."), never as measurement. Each lint
+/// defers to measured evidence on its family — a non-weak campaign
+/// measurement or an existing recommendation on the family silences it.
+/// Emitted BEFORE enrich_with_tune so the non-tunable gate and current-value
+/// enrichment apply to lints like any other advice.
+pub(super) fn setup_lints(
+    session: &TuningSession,
+    measurements: &[Measurement],
+    recs: &[recommend::Recommendation],
+    met: Option<&crate::analysis::metrics::StintMetrics>,
+) -> Vec<recommend::Recommendation> {
+    // Community consensus (2026-08-01 damping research, plan 016): bump
+    // commonly 40-70% of rebound per end, "about two-thirds".
+    const BUMP_OF_REBOUND_LO: f32 = 0.40;
+    const BUMP_OF_REBOUND_HI: f32 = 0.70;
+    /// Front-share distance from 50/50 both splits must show before the
+    /// mirror lint calls them contradictory (guards ~equal splits).
+    const SPLIT_MARGIN: f32 = 0.02;
+    /// Bottoming below this (per wheel, landing-excluded) counts as "no
+    /// bottoming" for the ride-height lint.
+    const BOTTOM_FREE_FRAC: f32 = 0.005;
+
+    let Some(rev) = session.latest() else {
+        return Vec::new();
+    };
+    let val = |k: &str| rev.values.get(k)?.parse::<f32>().ok();
+    let covered = |fam: journal::Family| {
+        measurements
+            .iter()
+            .any(|m| m.change.family == fam && !m.weak)
+            || recs.iter().any(|r| {
+                r.implied.is_some_and(|i| i.family == fam)
+                    || journal::family_for_area(r.area) == Some(fam)
+                    || r.area == journal::family_area(fam)
+            })
+    };
+    let mut out = Vec::new();
+
+    // 1. Bump/rebound ratio per end.
+    if !covered(journal::Family::Damping) {
+        let mut off = Vec::new();
+        for (end, bump_k, reb_k) in [
+            ("front", "bump_f", "rebound_f"),
+            ("rear", "bump_r", "rebound_r"),
+        ] {
+            let (Some(b), Some(r)) = (val(bump_k), val(reb_k)) else {
+                continue;
+            };
+            if r <= 0.0 {
+                continue;
+            }
+            let ratio = b / r;
+            if !(BUMP_OF_REBOUND_LO..=BUMP_OF_REBOUND_HI).contains(&ratio) {
+                off.push(format!(
+                    "{end} bump {b} is {:.0}% of {end} rebound {r}",
+                    ratio * 100.0
+                ));
+            }
+        }
+        if !off.is_empty() {
+            out.push(recommend::Recommendation {
+                apply: Vec::new(),
+                area: "damping",
+                suggestion: None,
+                advice: "bump/rebound split sits outside the commonly run band: \
+                         bump is commonly 40-70% of rebound per end (about \
+                         two-thirds); worth re-splitting unless deliberate"
+                    .into(),
+                evidence: off
+                    .into_iter()
+                    .map(|s| format!("{s} (convention, not a measurement)"))
+                    .collect(),
+                confidence: recommend::Confidence::Low,
+                implied: None,
+            });
+        }
+    }
+
+    // 2. Dampers mirror springs: fires on INTERNAL inconsistency only (the
+    // stiffer-sprung end carrying the softer dampers), never on degree.
+    if !covered(journal::Family::Damping)
+        && let (Some(sf), Some(sr)) = (val("springs_f"), val("springs_r"))
+        && let (Some(rf), Some(rr), Some(bf), Some(br)) = (
+            val("rebound_f"),
+            val("rebound_r"),
+            val("bump_f"),
+            val("bump_r"),
+        )
+        && sf + sr > 0.0
+        && rf + rr + bf + br > 0.0
+    {
+        let s_share = sf / (sf + sr);
+        let d_share = (rf + bf) / (rf + rr + bf + br);
+        if (s_share - 0.5).abs() > SPLIT_MARGIN
+            && (d_share - 0.5).abs() > SPLIT_MARGIN
+            && (s_share - 0.5).signum() != (d_share - 0.5).signum()
+        {
+            let (stiff, soft) = if s_share > 0.5 {
+                ("front", "rear")
+            } else {
+                ("rear", "front")
+            };
+            out.push(recommend::Recommendation {
+                apply: Vec::new(),
+                area: "damping",
+                suggestion: None,
+                advice: format!(
+                    "the {stiff} end carries the stiffer springs but the \
+                     {soft} end carries the stiffer dampers: damper stiffness \
+                     commonly scales with spring rate, so the damper split \
+                     mirrors the spring split; worth aligning unless deliberate"
+                ),
+                evidence: vec![format!(
+                    "front holds {:.0}% of spring rate but {:.0}% of damper \
+                     stiffness (convention, not a measurement)",
+                    s_share * 100.0,
+                    d_share * 100.0,
+                )],
+                confidence: recommend::Confidence::Low,
+                implied: None,
+            });
+        }
+    }
+
+    // 3. Ride height above minimum with zero measured bottoming (tarmac):
+    // the missing LOWER side of the bottoming rule. Deliberately lint, not a
+    // blind rule — it needs the current values plus limit facts, and a
+    // telemetry-only version would nag on nearly every stint forever. Only
+    // fires with recorded limit facts (ride height has no universal range).
+    if !covered(journal::Family::RideHeight)
+        && let Some(m) = met
+        && !m.surface_loose
+        && [
+            m.suspension.fl.bottomed_frac,
+            m.suspension.fr.bottomed_frac,
+            m.suspension.rl.bottomed_frac,
+            m.suspension.rr.bottomed_frac,
+        ]
+        .iter()
+        .all(|f| *f < BOTTOM_FREE_FRAC)
+    {
+        let mut headroom = Vec::new();
+        for k in ["ride_height_f", "ride_height_r"] {
+            let (Some(v), Some((min, _))) =
+                (val(k), crate::advice::tuning::limit_of(&session.facts, k))
+            else {
+                continue;
+            };
+            if v - min >= 0.05 {
+                headroom.push(format!(
+                    "{} = {} with slider minimum {}",
+                    crate::advice::tuning::field_phrase(k),
+                    crate::advice::tuning::display_value(k, &v.to_string(), &session.facts),
+                    crate::advice::tuning::display_value(k, &min.to_string(), &session.facts),
+                ));
+            }
+        }
+        if !headroom.is_empty() {
+            let mut evidence = headroom;
+            evidence.push(
+                "no bottoming measured this stint (landing impacts excluded); \
+                 convention, not a measurement"
+                    .into(),
+            );
+            out.push(recommend::Recommendation {
+                apply: Vec::new(),
+                area: "ride height",
+                suggestion: None,
+                advice: "ride height sits above the slider minimum with no \
+                         bottoming measured: center of mass is free speed, so \
+                         tarmac setups commonly run at minimum, raising only \
+                         to cure bottoming (or for deliberate rake)"
+                    .into(),
+                evidence,
+                confidence: recommend::Confidence::Low,
+                implied: Some(journal::Change {
+                    family: journal::Family::RideHeight,
+                    softer: true,
+                    magnitude: None,
+                }),
+            });
+        }
+    }
+
+    out
+}

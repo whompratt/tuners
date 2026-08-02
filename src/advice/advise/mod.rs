@@ -24,7 +24,7 @@ pub(crate) use campaign::{
 };
 pub use campaign::{latest_stint_for_car, stints_for_car_newest_first};
 pub(crate) use compose::composition_proposal;
-use enrich::{enrich_with_tune, map_prior};
+use enrich::{enrich_with_tune, map_prior, setup_lints};
 use landscape::{key_from_phrase, probe_value, quad_fit};
 pub use view::*;
 
@@ -304,6 +304,8 @@ pub fn advise(
                 recs.push(rec);
             }
         }
+        let lints = setup_lints(&session, &[], &recs, stint_overall_metrics(&stint).as_ref());
+        recs.extend(lints);
         let current_tune = enrich_with_tune(&mut recs, &session);
         enrich::apply_fd_scale(&mut recs, &session, fd_scale);
         return Ok(AdviseView {
@@ -1058,6 +1060,8 @@ pub fn advise(
     // car's; an explicitly passed foreign journal must not quote this car's
     // sliders as if they were its own.
     let current_tune = if car_of(&last.stint) == session.car {
+        let lints = setup_lints(&session, &c.measurements, &recs, last.met.as_ref());
+        recs.extend(lints);
         let tune = enrich_with_tune(&mut recs, &session);
         enrich::apply_fd_scale(&mut recs, &session, fd_scale);
         tune

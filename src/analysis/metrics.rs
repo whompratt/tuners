@@ -302,7 +302,7 @@ pub struct RollUse {
     pub jounce_mm: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StintMetrics {
     pub samples: usize,
     pub duration_s: f32,
