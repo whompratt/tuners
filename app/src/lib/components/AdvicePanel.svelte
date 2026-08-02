@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app, baseName, errMsg, loadAdvice, loadPending, show } from "$lib/app.svelte";
-  import { isAccepted } from "$lib/advice";
+  import { confTag, isAccepted } from "$lib/advice";
   import { advanced } from "$lib/advanced.svelte";
   import { commands } from "$lib/bindings";
   import { fmtLap } from "$lib/units";
@@ -336,7 +336,7 @@
         {#each a.recommendations as r (r.area + r.advice)}
           <details class="adv-rec" open={advanced.on}>
             <summary style="cursor:pointer">
-              <span class="adv-conf" style="color:{CONF_COLOR[r.confidence]}">[{r.confidence}]</span>
+              <span class="adv-conf" style="color:{CONF_COLOR[r.confidence]}">[{confTag(r)}]</span>
               {#if r.suggestion}<b>{r.suggestion}</b>: {r.advice}{:else}<b>{r.area}</b>: {r.advice}{/if}
               {#if r.apply.length}
                 {#if isAccepted(r.apply as [string, string][], app.session?.latest)}

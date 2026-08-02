@@ -93,9 +93,16 @@ pub fn render_recommendations(recs: &[crate::advice::recommend::Recommendation])
         return out;
     }
     for r in recs {
+        // Probes are data requests, not optimization claims; the tag says so
+        // up front instead of burying it in the advice text.
+        let tag = if r.area == "probe" {
+            format!("probe: {}", r.confidence.label())
+        } else {
+            r.confidence.label().to_string()
+        };
         match &r.suggestion {
-            Some(sg) => writeln!(out, "[{}] {} - {}", r.confidence.label(), sg, r.advice).unwrap(),
-            None => writeln!(out, "[{}] {}: {}", r.confidence.label(), r.area, r.advice).unwrap(),
+            Some(sg) => writeln!(out, "[{tag}] {} - {}", sg, r.advice).unwrap(),
+            None => writeln!(out, "[{tag}] {}: {}", r.area, r.advice).unwrap(),
         }
         for e in &r.evidence {
             writeln!(out, "    · {e}").unwrap();

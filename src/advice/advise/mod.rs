@@ -934,7 +934,7 @@ pub fn advise(
                 area: "probe",
                 suggestion: Some(format!("{phrase}: {vdisp}")),
                 advice: format!(
-                    "probe: one stint here extends the map where it still \
+                    "one stint here extends the map where it still \
                      improves. Set {phrase} to {vdisp} with everything else \
                      unchanged; probes are one at a time, two unexplored \
                      changes in one stint cannot be separated"

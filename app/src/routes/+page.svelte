@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { app, loadAdvice, loadPending } from "$lib/app.svelte";
   import { reopenOnboarding } from "$lib/onboarding.svelte";
-  import { isAccepted, isHold, primaryRec } from "$lib/advice";
+  import { confTag, isAccepted, isHold, primaryRec } from "$lib/advice";
   import { commands } from "$lib/bindings";
   import { FACT_FIELDS, label } from "$lib/fields";
   import { SPD, fmtLap, toDisp, unitLabel } from "$lib/units";
@@ -255,7 +255,7 @@
           </div>
         {:else if primary}
           <div style="font-size:14px">
-            {#if primary.suggestion}<b>{primary.suggestion}</b>: {primary.advice}{:else}<b>{primary.area}</b>: {primary.advice}{/if}
+            {#if primary.area === "probe"}<span style="opacity:.7">[probe]</span> {/if}{#if primary.suggestion}<b>{primary.suggestion}</b>: {primary.advice}{:else}<b>{primary.area}</b>: {primary.advice}{/if}
           </div>
           <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             {#if primary.apply.length && !isAccepted(primary.apply as [string, string][], app.session?.latest)}
@@ -277,7 +277,7 @@
               alternatives, one change at a time:
               {#each others.slice(0, 3) as r (r.area + r.advice)}
                 <div style="padding:3px 0">
-                  <span style="opacity:.7">[{r.confidence}]</span>
+                  <span style="opacity:.7">[{confTag(r)}]</span>
                   {#if r.suggestion}<b style="color:var(--ink-2)">{r.suggestion}</b>: {/if}{r.advice}
                 </div>
               {/each}
