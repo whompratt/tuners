@@ -241,6 +241,23 @@
 
   let hasPending = $derived(!!app.pending);
 
+  // Estimated mechanical balance from the tune itself: front share of each
+  // roll-stiffness term. Springs are the dominant lever and ARBs second, but
+  // without motion ratios the two cannot be summed honestly, so each split
+  // is its own number. Computed from the draft so it tracks while typing;
+  // the saved version's share shows movement across versions.
+  const share = (f: unknown, r: unknown): number | null => {
+    const a = parseFloat(String(f ?? "")), b = parseFloat(String(r ?? ""));
+    return isFinite(a) && isFinite(b) && a > 0 && b > 0 ? (100 * a) / (a + b) : null;
+  };
+  let mechBalance = $derived.by(() => {
+    const springs = share(draft.springs_f, draft.springs_r);
+    const arbs = share(draft.arb_f, draft.arb_r);
+    if (springs == null && arbs == null) return null;
+    const savedSprings = share(latest?.springs_f, latest?.springs_r);
+    return { springs, arbs, savedSprings };
+  });
+
   // Baseline entry shows every card at once: the cards mirror the game's
   // tuning screens in order, so transcription is one tab-through of the
   // whole form (a per-group stepper was tried and felt tedious).
@@ -360,6 +377,20 @@
               </div>
             {/key}
           {/each}
+          {#if group === "Springs" && mechBalance}
+            <div
+              class="fam-sub muted"
+              title="front share of each roll-stiffness term, from the values above. Springs dominate mechanical balance, ARBs are second; equal changes to both ends roughly preserve it"
+            >
+              est. mechanical balance:
+              {#if mechBalance.springs != null}
+                front {mechBalance.springs.toFixed(1)}% of spring rate{#if mechBalance.savedSprings != null && Math.abs(mechBalance.savedSprings - mechBalance.springs) >= 0.05}
+                  <span style="color:var(--accent)"> (saved: {mechBalance.savedSprings.toFixed(1)}%)</span>{/if}{/if}{#if mechBalance.springs != null && mechBalance.arbs != null},{/if}
+              {#if mechBalance.arbs != null}
+                front {mechBalance.arbs.toFixed(1)}% of ARB
+              {/if}
+            </div>
+          {/if}
           {#if !baselineMode && recs.length}
             {#each recs as r (r.area + r.advice)}
               {@const accepted = isAccepted(r.apply as [string, string][], latest)}
