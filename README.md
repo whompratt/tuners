@@ -39,7 +39,11 @@ _tuners_ is in active development. Planned:
 ## Installation
 
 Pre-built Windows and Linux packages can be downloaded from the
-[latest release](https://github.com/whompratt/tuners/releases).
+[latest release](https://github.com/whompratt/tuners/releases). Every
+release is built from source by GitHub Actions, with SHA-256 checksums
+in the release notes. Free code signing is provided by
+[SignPath.io](https://signpath.io), certificate by the
+[SignPath Foundation](https://signpath.org).
 
 Alternatively, build from source. You'll need Rust (stable), Node, and pnpm,
 plus the [Tauri prerequisites](https://tauri.app/start/prerequisites/) on Linux
