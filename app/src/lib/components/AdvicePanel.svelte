@@ -112,12 +112,18 @@
     {:else if error}
       <span class="placeholder">{error}</span>
     {:else if a}
+      <div style="display:flex;flex-wrap:wrap;gap:8px 32px;align-items:flex-start">
+      <div style="flex:2 1 900px;min-width:0">
       {#if a.steps.length}
         <div class="table-scroll">
-        <table class="adv-table">
+        <table class="adv-table adv-compact">
           <thead>
             <tr>
-              <th></th><th>run</th><th>laps</th><th>best</th><th>optimal</th><th>balance</th><th>change</th>
+              <th></th><th>run</th>
+              <th title="lap count; ± is the lap-time scatter (sd of flying laps): shrinking scatter at equal pace means the car got easier to drive">laps ±</th>
+              <th>best</th><th>optimal</th>
+              <th title="cornering balance index (+ = understeer); hover a value for the front/rear grip shares">balance</th>
+              <th>change</th>
               <th>pos F/R</th><th>outcome</th>
               <th title="corner-entry share of the delta">entry</th>
               <th title="corner-exit share of the delta">exit</th>
@@ -128,28 +134,34 @@
             {#each a.steps as st, i (st.path)}
               <tr>
                 <td class="num">{i + 1}</td>
-                <td>
+                <td style="white-space:nowrap">
                   <a
                     href="#top"
                     onclick={(e) => { e.preventDefault(); jump(st.path); }}>{base(st.path)}</a>
                 </td>
                 <td class="num">
-                  {st.laps}{#if st.scatterS != null}<br /><span
+                  {st.laps}{#if st.scatterS != null}
+                    <span
                       style="color:var(--muted);font-size:11px"
                       title="lap-time scatter (sd of flying laps): shrinking scatter at equal pace means the car got easier to drive"
                       >±{N(st.scatterS).toFixed(2)}</span>{/if}
                 </td>
                 <td class="num">{fl(st.bestS)}</td>
                 <td class="num">{fl(st.idealS)}</td>
-                <td>
+                <td class="num">
                   {#if st.balance}
-                    {N(st.balance[0]) > 0 ? "+" : ""}{N(st.balance[0]).toFixed(2)}
-                    <span style="color:var(--muted)">
-                      (F {(N(st.balance[1]) * 100).toFixed(0)}%/R {(N(st.balance[2]) * 100).toFixed(0)}%)
-                    </span>
+                    <span
+                      title={`front ${(N(st.balance[1]) * 100).toFixed(0)}% / rear ${(N(st.balance[2]) * 100).toFixed(0)}% of grip limit`}
+                      >{N(st.balance[0]) > 0 ? "+" : ""}{N(st.balance[0]).toFixed(2)}</span>
                   {:else}–{/if}
                 </td>
-                <td>{st.note || ""}</td>
+                <td>
+                  {#if st.note}
+                    {#each st.note.split("; ") as cl, j (j)}
+                      <div style="white-space:nowrap">{cl}</div>
+                    {/each}
+                  {/if}
+                </td>
                 <td class="num">
                   {st.pos ? `${N(st.pos[0]) > 0 ? "+" : ""}${st.pos[0]} / ${N(st.pos[1]) > 0 ? "+" : ""}${st.pos[1]}` : ""}
                 </td>
@@ -281,49 +293,53 @@
           {sgn(a.aba.driftS ?? 0)}/stint (outcome margins near that drift are noise)
         </div>
       {/if}
+      </div>
       {#if a.landscapes.length}
-        <div style="margin-top:14px;font-size:13px;color:var(--muted)">
-          setup history:
-          <select bind:value={histSel}>
-            {#each a.landscapes as l, i (l.area + l.phrase)}
-              <option value={i}>
-                {l.phrase}{l.vertex != null ? ` (optimum ≈ ${l.vertex})` : ""}, {l.measurements.length}
-                measurement{l.measurements.length === 1 ? "" : "s"}
-              </option>
-            {/each}
-          </select>
-        </div>
-        <div style="max-width:720px;margin-top:6px">
-          <Chart height={170} draw={histDraw} />
-        </div>
-        {#if a.landscapes[histSel]}
-          {@const land = a.landscapes[histSel]}
-          <div style="margin-top:4px" class="table-scroll">
-            <table class="adv-table">
-              <thead>
-                <tr><th>steps</th><th>change</th><th>Δ ideal</th><th>entry</th><th>exit</th><th>straights</th><th></th></tr>
-              </thead>
-              <tbody>
-                {#each land.measurements as m (m.fromStep + "-" + m.toStep + m.desc)}
-                  <tr>
-                    <td class="num">{m.fromStep}→{m.toStep}</td>
-                    <td>{m.desc}</td>
-                    <td class="num" style="color:{dcol(m.deltaS)}">{sgn(m.deltaS)}</td>
-                    {#if m.split}
-                      {#each m.split as v, j (j)}
-                        <td class="num" style="color:{dcol(v)}">{sgn(v)}</td>
-                      {/each}
-                    {:else}
-                      <td></td><td></td><td></td>
-                    {/if}
-                    <td style="color:var(--muted)">{m.direct ? "direct" : "attributed"}{m.weak ? " (single-lap)" : ""}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
+        <div style="flex:1 1 400px;min-width:340px;max-width:720px">
+          <div style="font-size:13px;color:var(--muted)">
+            setup history:
+            <select bind:value={histSel}>
+              {#each a.landscapes as l, i (l.area + l.phrase)}
+                <option value={i}>
+                  {l.phrase}{l.vertex != null ? ` (optimum ≈ ${l.vertex})` : ""}, {l.measurements.length}
+                  measurement{l.measurements.length === 1 ? "" : "s"}
+                </option>
+              {/each}
+            </select>
           </div>
-        {/if}
+          <div style="margin-top:6px">
+            <Chart height={170} draw={histDraw} />
+          </div>
+          {#if a.landscapes[histSel]}
+            {@const land = a.landscapes[histSel]}
+            <div style="margin-top:4px" class="table-scroll">
+              <table class="adv-table adv-compact">
+                <thead>
+                  <tr><th>steps</th><th>change</th><th>Δ ideal</th><th>entry</th><th>exit</th><th>straights</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {#each land.measurements as m (m.fromStep + "-" + m.toStep + m.desc)}
+                    <tr>
+                      <td class="num">{m.fromStep}→{m.toStep}</td>
+                      <td>{m.desc}</td>
+                      <td class="num" style="color:{dcol(m.deltaS)}">{sgn(m.deltaS)}</td>
+                      {#if m.split}
+                        {#each m.split as v, j (j)}
+                          <td class="num" style="color:{dcol(v)}">{sgn(v)}</td>
+                        {/each}
+                      {:else}
+                        <td></td><td></td><td></td>
+                      {/if}
+                      <td style="color:var(--muted)">{m.direct ? "direct" : "attributed"}{m.weak ? " (single-lap)" : ""}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </div>
       {/if}
+      </div>
       <div style="margin-top:12px;font-size:13px;color:var(--muted)">
         advice for {base(a.adviceFor)}:
         {#if asks > 1}
