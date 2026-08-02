@@ -46,6 +46,19 @@ pub const FIELDS: &[(&str, &str, &str)] = &[
     ("topped", "topped-out share", "frac"),
     ("brake_dive", "brake dive", ""),
     ("drag_beta", "drag per mass", "1e-3"),
+    // Plan 015 phase-3 lever channels, registered once the phase-5 rules
+    // became their first consumer. Convergence ratios are only physically
+    // interpretable on rear-driven cars, but the map pools per drivetrain
+    // cell so the fields record everywhere.
+    ("diff_rear_off", "rear wheel-speed split off throttle", ""),
+    ("diff_rear_on", "rear wheel-speed split on throttle", ""),
+    ("conv_off", "off-throttle wheel convergence", ""),
+    ("conv_on", "on-throttle wheel convergence", ""),
+    ("vratio_front", "front damper ext/comp speed ratio", ""),
+    ("vratio_rear", "rear damper ext/comp speed ratio", ""),
+    ("roll_front", "front roll gradient", ""),
+    ("roll_rear", "rear roll gradient", ""),
+    ("jounce", "mean spring compression", "mm"),
 ];
 
 /// Per-field library noise floor: largest same-setup stint-mean movement we
@@ -83,6 +96,18 @@ pub fn noise_floor(key: &str) -> f32 {
         "topped" => 0.01,
         "brake_dive" => 0.02,
         "drag_beta" => 0.08, // displayed x1e3; canonical ~1e-4..1e-3 range
+        // Lever channels (plan 015 phase 3), calibrated 2026-08-02 from the
+        // library's same-setup campaign floors (n=2 campaigns each, thin —
+        // same caveat as the 2026-07-26 originals): floor = 2-3x the max
+        // same-setup spread, checked below the known A/B responses (diff
+        // acid tests ~0.01-0.25, max-rebound vratio 0.17-0.22, big-arb roll
+        // gradients 0.08-0.12, rebound-packing jounce +1.6mm).
+        "diff_rear_off" | "diff_rear_on" => 0.005,
+        "conv_off" => 0.15, // ratio of small splits: same-setup spread 0.14
+        "conv_on" => 0.10,
+        "vratio_front" | "vratio_rear" => 0.02,
+        "roll_front" | "roll_rear" => 0.02,
+        "jounce" => 0.5, // mm
         _ => f32::MAX,
     }
 }
@@ -164,6 +189,18 @@ pub fn vector(m: &StintMetrics) -> Effects {
     push("brake_dive", m.brake_dive_front);
     // beta is ~1e-4..1e-3 in SI; scale to a display-friendly magnitude.
     push("drag_beta", m.driveline.as_ref().map(|d| d.beta * 1e3));
+    let dd = &m.diff_drag;
+    push("diff_rear_off", dd.rear_off);
+    push("diff_rear_on", dd.rear_on);
+    push("conv_off", dd.conv_off());
+    push("conv_on", dd.conv_on());
+    let dp = &m.damper_phase;
+    push("vratio_front", dp.vratio_front);
+    push("vratio_rear", dp.vratio_rear);
+    let ru = &m.roll_use;
+    push("roll_front", ru.grad_front);
+    push("roll_rear", ru.grad_rear);
+    push("jounce", (m.samples > 0).then_some(ru.jounce_mm));
     out
 }
 
