@@ -799,6 +799,8 @@ pub fn direction_word(family: &str, softer: bool) -> &'static str {
         ("front aero" | "rear aero", false) => "more",
         ("diff accel" | "diff decel", true) => "less lock",
         ("diff accel" | "diff decel", false) => "more lock",
+        ("center diff", true) => "more front-biased",
+        ("center diff", false) => "more rear-biased",
         ("brakes", true) => "rearward/softer",
         ("brakes", false) => "forward/harder",
         ("tire pressure", true) => "lower",
@@ -807,6 +809,19 @@ pub fn direction_word(family: &str, softer: bool) -> &'static str {
         ("ride height", false) => "higher",
         (_, true) => "softer",
         (_, false) => "stiffer",
+    }
+}
+
+/// Family + direction as a readable phrase. Most families read naturally
+/// as "{family} {direction}"; diff lock does not ("diff accel less lock"),
+/// so those compose around the noun instead.
+pub fn direction_phrase(family: &str, softer: bool) -> String {
+    match family {
+        "diff accel" | "diff decel" => format!(
+            "{} {family} lock",
+            if softer { "reduced" } else { "increased" },
+        ),
+        _ => format!("{family} {}", direction_word(family, softer)),
     }
 }
 
@@ -825,19 +840,17 @@ pub fn summary(cells: &[Cell]) -> String {
                 None => "",
             },
         );
-        let dir = direction_word(&c.family, c.softer);
+        let phrase = direction_phrase(&c.family, c.softer);
         if c.n == 0 {
             out.push_str(&format!(
-                "{} {dir}  [{ctx}]  weak-only ({} sample{})\n",
-                c.family,
+                "{phrase}  [{ctx}]  weak-only ({} sample{})\n",
                 c.weak_n,
                 if c.weak_n == 1 { "" } else { "s" },
             ));
             continue;
         }
         out.push_str(&format!(
-            "{} {dir}  [{ctx}]  n={} ({} direct{}{})  time {:+.2}s ±{:.2}\n",
-            c.family,
+            "{phrase}  [{ctx}]  n={} ({} direct{}{})  time {:+.2}s ±{:.2}\n",
             c.n,
             c.direct_n,
             // Own share only worth calling out once foreign data exists.

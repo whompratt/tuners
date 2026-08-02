@@ -21,6 +21,9 @@ pub enum Family {
     /// Deceleration lock. `softer` = LESS lock. Behaviourally invisible per
     /// the 2026-07-21 A/B (driver masks it), so outcome-led advice only.
     DiffDecel,
+    /// AWD center diff torque split (% sent to the rear axle). `softer` =
+    /// the value decreased = torque biased toward the front.
+    CenterDiff,
     /// Brake balance / pressure. `softer` = the value decreased (balance:
     /// more rearward).
     Brakes,
@@ -44,6 +47,7 @@ pub fn family_for_area(area: &str) -> Option<Family> {
         "rear aero" => Family::RearAero,
         "diff accel" => Family::DiffAccel,
         "diff decel" => Family::DiffDecel,
+        "center diff" => Family::CenterDiff,
         "brakes" => Family::Brakes,
         "damping" => Family::Damping,
         "tire pressure" => Family::TirePressure,
@@ -161,6 +165,15 @@ fn parse_clause(note: &str) -> Option<Change> {
             None
         }
     };
+    if t.contains("center") && t.contains("diff") {
+        let softer = less_more(&t)?;
+        let magnitude = number(&t).map(|(v, _)| if softer { -v.abs() } else { v.abs() });
+        return Some(Change {
+            family: Family::CenterDiff,
+            softer,
+            magnitude,
+        });
+    }
     if t.contains("diff") && (t.contains("accel") || t.contains("decel")) {
         let family = if t.contains("decel") {
             Family::DiffDecel
@@ -524,6 +537,7 @@ pub fn family_key(f: Family) -> &'static str {
         Family::RearAero => "rear aero",
         Family::DiffAccel => "diff accel",
         Family::DiffDecel => "diff decel",
+        Family::CenterDiff => "center diff",
         Family::Brakes => "brakes",
         Family::Damping => "damping",
         Family::TirePressure => "tire pressure",
@@ -537,7 +551,7 @@ pub fn family_area(f: Family) -> &'static str {
         Family::FrontRoll | Family::RearRoll => "balance",
         Family::Gearing => "gearing",
         Family::FrontAero | Family::RearAero => "aero",
-        Family::DiffAccel | Family::DiffDecel => "differential",
+        Family::DiffAccel | Family::DiffDecel | Family::CenterDiff => "differential",
         Family::Brakes => "brakes",
         Family::Damping => "damping",
         Family::TirePressure => "tires",
@@ -647,6 +661,29 @@ mod tests {
         assert_eq!(parse_change("baseline"), None);
         assert_eq!(parse_change("softer springs"), None, "front/rear ambiguous");
         assert_eq!(parse_change("front and rear arb softer"), None);
+    }
+
+    /// The auto-journal phrase for diff_center ("center diff balance -10")
+    /// must land on its own family, never pool into DiffAccel: the landscape
+    /// axis requires one slider per family, and center-vs-accel steps are
+    /// different experiments.
+    #[test]
+    fn center_diff_notes_parse_to_their_own_family() {
+        let c = parse_change("center diff balance -10").unwrap();
+        assert_eq!(
+            (c.family, c.softer, c.magnitude),
+            (Family::CenterDiff, true, Some(-10.0))
+        );
+        let c = parse_change("center diff balance +5").unwrap();
+        assert_eq!((c.family, c.softer), (Family::CenterDiff, false));
+        // Accel/decel notes stay on their families.
+        assert_eq!(
+            parse_change("rear diff accel -20").unwrap().family,
+            Family::DiffAccel
+        );
+        assert_eq!(family_key(Family::CenterDiff), "center diff");
+        assert_eq!(family_for_area("center diff"), Some(Family::CenterDiff));
+        assert_eq!(family_area(Family::CenterDiff), "differential");
     }
 
     #[test]

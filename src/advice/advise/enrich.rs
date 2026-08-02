@@ -10,8 +10,9 @@ pub(super) fn family_keys(family: journal::Family) -> &'static [&'static str] {
         journal::Family::Gearing => &["final_drive"],
         journal::Family::FrontAero => &["aero_f"],
         journal::Family::RearAero => &["aero_r"],
-        journal::Family::DiffAccel => &["diff_accel_f", "diff_accel_r", "diff_center"],
+        journal::Family::DiffAccel => &["diff_accel_f", "diff_accel_r"],
         journal::Family::DiffDecel => &["diff_decel_f", "diff_decel_r"],
+        journal::Family::CenterDiff => &["diff_center"],
         journal::Family::Brakes => &["brake_balance", "brake_pressure"],
         journal::Family::Damping => &["rebound_f", "rebound_r", "bump_f", "bump_r"],
         journal::Family::TirePressure => &["tire_pressure_f", "tire_pressure_r"],
@@ -349,7 +350,7 @@ pub(super) fn map_prior(
         });
         (grounded && tunable && !tried && !advised && score >= 1.0).then_some((cell, family))
     })?;
-    let dir = crate::advice::effectmap::direction_word(&cell.family, cell.softer);
+    let phrase = crate::advice::effectmap::direction_phrase(&cell.family, cell.softer);
     let movers: effects::Effects = cell
         .fields
         .iter()
@@ -393,16 +394,15 @@ pub(super) fn map_prior(
         area: journal::family_area(family),
         suggestion: None,
         advice: format!(
-            "untried this campaign: on similar builds, {} {} moved the \
+            "untried this campaign: on similar builds, {phrase} moved the \
              behaviours your pace has tracked; worth one probing step \
              (map prior, not a measurement)",
-            cell.family, dir,
         ),
         evidence: {
             let mut ev = vec![
                 format!("pace trend: {}", trend_desc.join("; ")),
                 format!(
-                    "effect map ({} {}{}): {} {} over n={} ({} direct{}) read {}; \
+                    "effect map ({} {}{}): {phrase} over n={} ({} direct{}) read {}; \
                      measured {:+.2}s ±{:.2} there",
                     if cell.surface_loose { "dirt" } else { "tarmac" },
                     crate::telemetry::packet::drivetrain_name(cell.drivetrain),
@@ -411,8 +411,6 @@ pub(super) fn map_prior(
                         Some(false) => " no-aero",
                         None => "",
                     },
-                    cell.family,
-                    dir,
                     cell.n,
                     cell.direct_n,
                     if cell.own_n < cell.n {

@@ -557,11 +557,15 @@ pub(crate) fn load_campaign<'s>(
                 return None;
             }
             let stamp = stint_stamp(&cs.entry.path)?;
+            // <= not <: a tune save cuts the stint, so the new stint can carry
+            // the SAME second as the revision that cut it — that revision is
+            // what the stint was driven on (seen live: a center diff step
+            // stamped equal to its stint read as a same-setup drift run).
             session
                 .revisions
                 .iter()
                 .rev()
-                .find(|r| r.stamp.as_str() < stamp)
+                .find(|r| r.stamp.as_str() <= stamp)
         })
         .collect();
 
