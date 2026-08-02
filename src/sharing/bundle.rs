@@ -393,6 +393,9 @@ pub fn export_journal(text: &str, car: i32) -> String {
             Some((p, n)) => (p.trim(), n.trim()),
             None => (line, ""),
         };
+        // Windows recorders journal native separators; normalize so bundles
+        // read the same from every platform.
+        let path = path.replace('\\', "/");
         if path.is_empty()
             || !path
                 .bytes()
@@ -405,7 +408,7 @@ pub fn export_journal(text: &str, car: i32) -> String {
             .filter_map(|c| strict_clause(c.trim()))
             .collect();
         if kept.is_empty() {
-            out.push_str(path);
+            out.push_str(&path);
             out.push('\n');
         } else {
             out.push_str(&format!("{path} | {}\n", kept.join("; ")));
@@ -723,6 +726,25 @@ sessions/stint-20260725-121955.ftel
         // Everything kept still parses on the ingest side.
         let entries = crate::advice::journal::parse_journal(&out);
         assert_eq!(entries.len(), 4);
+    }
+
+    #[test]
+    fn journal_filter_normalizes_windows_paths() {
+        // Windows recorders journal `sessions\stint-...` paths; entry lines
+        // must survive export, not vanish on the separator.
+        let src = "\
+sessions\\stint-20260802-225031.ftel | baseline
+sessions\\stint-20260802-231408.ftel | rear diff accel -1
+";
+        let out = export_journal(src, 255);
+        let expect = "\
+# 1991 Ferrari 512 TR (ordinal 255)
+sessions/stint-20260802-225031.ftel
+sessions/stint-20260802-231408.ftel | rear diff accel -1
+";
+        assert_eq!(out, expect);
+        // Idempotent under re-export: ingest's fixed-point check must pass.
+        assert_eq!(export_journal(&out, 255), out);
     }
 
     #[test]
