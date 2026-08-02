@@ -10,6 +10,13 @@
   let q = $derived(app.quality);
   let qBand = $derived(q ? q.band : "low");
   let qPct = $derived(q ? (q.confidencePct ?? 0) : 0);
+  // Out lap: the recorder is live on lap 0 with no comparable lap yet —
+  // the first lap only sets the reference, so nothing can accrue
+  // confidence until it completes. Say that instead of a vague nudge.
+  let f = $derived(app.live?.frame ?? null);
+  let outLap = $derived(
+    !q && !!f?.raceOn && (f?.lapNumber ?? 1) === 0 && (app.live?.ageMs ?? Infinity) < 5000,
+  );
 </script>
 
 <div class="live-quality {qBand === 'good' ? 'q-good' : qBand === 'ok' ? 'q-ok' : ''}" class:dim>
@@ -24,14 +31,22 @@
     <text class="q-pct" x="50" y="50">{q ? `${Math.round(qPct)}%` : "–"}</text>
   </svg>
   <div class="q-label">
-    confidence: {{ good: "enough for A/B", ok: "nearly there", low: "keep driving" }[qBand] ?? "keep driving"}
+    {#if outLap}
+      out lap: skipping
+    {:else}
+      confidence: {{ good: "enough for A/B", ok: "nearly there", low: "keep driving" }[qBand] ?? "keep driving"}
+    {/if}
   </div>
-  {#if q}
-    <div style="font-size:13px;color:var(--muted)">
+  {#if outLap}
+    <div class="q-note" style="max-width:{width}px">
+      the first lap sets the reference and is not timed as a flying lap; confidence starts on the next crossing
+    </div>
+  {:else if q}
+    <div class="q-sub">
       {q.laps} {q.standingOnly ? "standing run(s)" : "flying lap(s)"} · best {fmtLap(q.bestLapS ?? 0)}
     </div>
     {#if q.note}
-      <div style="font-size:12px;color:var(--muted);max-width:230px">{q.note}</div>
+      <div class="q-note" style="max-width:{width}px">{q.note}</div>
     {/if}
   {/if}
 </div>
