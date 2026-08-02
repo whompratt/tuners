@@ -594,6 +594,7 @@ pub fn history_revert(
             evidence,
             confidence: Confidence::Low,
             suggestion: None,
+            probe: false,
             implied: None,
         });
     }
@@ -613,6 +614,7 @@ pub fn history_revert(
         evidence,
         confidence,
         suggestion: None,
+        probe: false,
         implied: Some(Change {
             family: change.family,
             softer: !change.softer,
@@ -855,6 +857,7 @@ mod tests {
             evidence: vec!["understeer +0.3".into()],
             confidence: Confidence::High,
             suggestion: None,
+            probe: false,
             implied: Some(Change {
                 family: Family::FrontRoll,
                 softer: true,

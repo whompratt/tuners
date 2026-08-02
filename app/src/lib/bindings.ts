@@ -317,6 +317,8 @@ export type RecommendationView = {
 	apply: ([string, string])[],
 	advice: string,
 	evidence: string[],
+	/**  A data request (extend or tighten the map), not an optimization claim. */
+	probe: boolean,
 };
 
 export type RecorderView = {

@@ -164,6 +164,7 @@ pub(crate) fn composition_proposal(
             ),
         ],
         confidence: recommend::Confidence::Low,
+        probe: false,
         implied: None,
     })
 }

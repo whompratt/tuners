@@ -11,6 +11,7 @@ fn balance_rec() -> Recommendation {
         evidence: vec![],
         confidence: Confidence::High,
         suggestion: None,
+        probe: false,
         implied: Some(journal::Change {
             family: journal::Family::FrontRoll,
             softer: true,
@@ -116,6 +117,7 @@ fn untunable_area_without_direction_is_dropped() {
         evidence: vec![],
         confidence: Confidence::High,
         suggestion: None,
+        probe: false,
         implied: None,
     }];
     enrich_with_tune(&mut recs, &session);
@@ -136,6 +138,7 @@ fn exhausted_direction_without_partner_is_dropped() {
         evidence: vec![],
         confidence: Confidence::High,
         suggestion: None,
+        probe: false,
         implied: Some(journal::Change {
             family: journal::Family::DiffAccel,
             softer: true,
@@ -147,6 +150,7 @@ fn exhausted_direction_without_partner_is_dropped() {
 
     // The opposite direction has the whole range: it stands untouched.
     let mut recs = vec![Recommendation {
+        probe: false,
         implied: Some(journal::Change {
             family: journal::Family::DiffAccel,
             softer: false,
@@ -159,6 +163,7 @@ fn exhausted_direction_without_partner_is_dropped() {
             evidence: vec![],
             confidence: Confidence::Medium,
             suggestion: None,
+            probe: false,
             implied: None,
         }
     }];
@@ -554,6 +559,7 @@ fn gearing_rec(softer: bool) -> Recommendation {
         evidence: vec![],
         confidence: Confidence::Medium,
         suggestion: None,
+        probe: false,
         implied: Some(journal::Change {
             family: journal::Family::Gearing,
             softer,
@@ -711,6 +717,7 @@ fn setup_lints_fire_from_tune_state_and_defer() {
         advice: "reduce front rebound".into(),
         evidence: Vec::new(),
         confidence: recommend::Confidence::Medium,
+        probe: false,
         implied: None,
     };
     assert!(

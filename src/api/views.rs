@@ -265,6 +265,8 @@ pub struct RecommendationView {
     pub apply: Vec<(String, String)>,
     pub advice: String,
     pub evidence: Vec<String>,
+    /// A data request (extend or tighten the map), not an optimization claim.
+    pub probe: bool,
 }
 
 #[derive(Serialize, Type, Debug, Clone)]
@@ -400,6 +402,7 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
                 apply: r.apply.clone(),
                 advice: r.advice.clone(),
                 evidence: r.evidence.clone(),
+                probe: r.probe,
             })
             .collect(),
         current_tune: v

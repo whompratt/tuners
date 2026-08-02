@@ -255,7 +255,7 @@
           </div>
         {:else if primary}
           <div style="font-size:14px">
-            {#if primary.area === "probe"}<span style="opacity:.7">[probe]</span> {/if}{#if primary.suggestion}<b>{primary.suggestion}</b>: {primary.advice}{:else}<b>{primary.area}</b>: {primary.advice}{/if}
+            {#if primary.probe}<span style="opacity:.7">[probe]</span> {/if}{#if primary.suggestion}<b>{primary.suggestion}</b>: {primary.advice}{:else}<b>{primary.area}</b>: {primary.advice}{/if}
           </div>
           <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             {#if primary.apply.length && !isAccepted(primary.apply as [string, string][], app.session?.latest)}

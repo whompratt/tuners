@@ -209,6 +209,10 @@ pub struct Recommendation {
     /// The journal-comparable direction this advice implies, when it maps to a
     /// parameter family the journal tracks. Lets history reconcile with advice.
     pub implied: Option<Change>,
+    /// A data request rather than an optimization claim: the ask is a stint to
+    /// extend or tighten the map, not a move expected to gain time. Renderers
+    /// tag these "probe" alongside the confidence.
+    pub probe: bool,
 }
 
 /// What the car's setup tells us beyond telemetry: rules must not suggest
@@ -595,6 +599,7 @@ fn balance_rule(
         evidence,
         confidence,
         suggestion: None,
+        probe: false,
         implied: Some(Change {
             family,
             softer,
@@ -630,6 +635,7 @@ fn balance_rule(
             )],
             confidence: Confidence::Low,
             suggestion: None,
+            probe: false,
             implied: Some(Change {
                 family: Family::Brakes,
                 softer: true,
@@ -730,6 +736,7 @@ fn stability_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommen
             Confidence::Low
         },
         suggestion: None,
+        probe: false,
         implied: Some(Change {
             family: if aero {
                 Family::RearAero
@@ -793,6 +800,7 @@ fn brake_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         evidence,
         confidence: Confidence::Medium,
         suggestion: None,
+        probe: false,
         implied: Some(Change {
             family: Family::Brakes,
             softer: false,
@@ -881,6 +889,7 @@ fn aero_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendatio
             Confidence::Medium
         },
         suggestion: None,
+        probe: false,
         implied: Some(Change {
             family: if no_aero {
                 Family::RideHeight
@@ -949,6 +958,7 @@ fn power_balance_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         evidence,
         confidence: Confidence::Medium,
         suggestion: None,
+        probe: false,
         implied: Some(Change {
             family: Family::DiffAccel,
             softer: true,
@@ -1012,6 +1022,7 @@ fn tire_pressure_rule(
             advice,
             evidence,
             confidence,
+            probe: false,
             implied: None,
         });
     }
@@ -1082,6 +1093,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 evidence,
                 confidence,
                 suggestion: None,
+                probe: false,
                 implied: Some(Change {
                     family: Family::DiffAccel,
                     softer: true,
@@ -1099,6 +1111,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 evidence: vec![symmetry, spin_evidence],
                 confidence: confidence.min(Confidence::Medium),
                 suggestion: None,
+                probe: false,
                 implied: Some(Change {
                     family: Family::DiffAccel,
                     softer: false,
@@ -1119,6 +1132,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 evidence: vec![symmetry, spin_evidence],
                 confidence: Confidence::Low,
                 suggestion: None,
+                probe: false,
                 implied: None,
             });
         }
@@ -1137,6 +1151,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         ],
         confidence,
         suggestion: None,
+        probe: false,
         implied: Some(Change {
             family: Family::DiffAccel,
             softer: true,
@@ -1178,6 +1193,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             evidence,
             confidence: Confidence::Medium,
             suggestion: None,
+            probe: false,
             implied: Some(Change {
                 family: Family::Gearing,
                 softer: true,
@@ -1225,6 +1241,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             ],
             confidence: Confidence::Medium,
             suggestion: None,
+            probe: false,
             implied: Some(Change {
                 family: Family::Gearing,
                 softer: false,
@@ -1270,6 +1287,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             }],
             confidence: Confidence::Low,
             suggestion: None,
+            probe: false,
             implied: Some(Change {
                 family: Family::Gearing,
                 softer: short, // lengthen = lower final drive number
@@ -1307,6 +1325,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 )],
                 confidence: Confidence::Medium,
                 suggestion: None,
+                probe: false,
                 implied: None,
             });
         }
@@ -1325,6 +1344,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 )],
                 confidence: Confidence::Low,
                 suggestion: None,
+                probe: false,
                 implied: None,
             });
         }
@@ -1375,6 +1395,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 evidence,
                 confidence: Confidence::High,
                 suggestion: None,
+                probe: false,
                 implied: None,
             });
         } else if rev >= under_rev && topped >= under_topped {
@@ -1402,6 +1423,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                     Confidence::High
                 },
                 suggestion: None,
+                probe: false,
                 implied: None,
             });
         } else if !loose
@@ -1431,6 +1453,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                         .into(),
                 ],
                 confidence: Confidence::Medium,
+                probe: false,
                 implied: Some(Change {
                     family: Family::Damping,
                     softer: true,
@@ -1452,6 +1475,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 )],
                 confidence: Confidence::Low,
                 suggestion: None,
+                probe: false,
                 implied: None,
             });
         }
@@ -1487,6 +1511,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 )],
                 confidence: Confidence::Medium,
                 suggestion: None,
+                probe: false,
                 implied: Some(Change {
                     family: Family::Damping,
                     softer: true,

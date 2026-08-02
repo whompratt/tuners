@@ -37,12 +37,14 @@ describe("laps layout", () => {
 
 const cmp: Cmp = {
   binMeters: 100,
-  a: { file: "a.ftel", laps: 3, best: 45, ideal: 44.5, standingOnly: false },
-  b: { file: "b.ftel", laps: 3, best: 44.8, ideal: 44.2, standingOnly: false },
+  a: { file: "a.ftel", laps: 3, best: 45, median: 45.4, ideal: 44.5, standingOnly: false },
+  b: { file: "b.ftel", laps: 3, best: 44.8, median: 45.1, ideal: 44.2, standingOnly: false },
   speedsA: Array(60).fill(50),
   speedsB: Array(60).fill(52),
   timesA: Array(60).fill(0.1),
   delta: Array(60).fill(-0.01),
+  verdictDeltaS: -0.3,
+  currencies: [-0.3, -0.2, -0.3],
   unequalLaps: false,
   carMismatch: false,
 };

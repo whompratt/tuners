@@ -21,8 +21,7 @@ export function isAccepted(
 
 /** Bracket tag for a recommendation: probes are data requests, not
  * optimization claims, so the tag carries that instead of the advice text. */
-export const confTag = (r: RecommendationView) =>
-  r.area === "probe" ? `probe: ${r.confidence}` : r.confidence;
+export const confTag = (r: RecommendationView) => (r.probe ? `probe: ${r.confidence}` : r.confidence);
 
 export const isHold = (r: RecommendationView) => {
   const t = `${r.suggestion ?? ""} ${r.advice}`;

@@ -800,6 +800,7 @@ pub fn advise(
                         advice: String::new(),
                         evidence: Vec::new(),
                         confidence: recommend::Confidence::Medium,
+                        probe: false,
                         implied: Some(journal::Change {
                             family,
                             softer: false,
@@ -834,19 +835,24 @@ pub fn advise(
                              Any stint driven here tightens the estimate for \
                              free"
                         );
+                        r.probe = false;
                         r.implied = None;
                         r.apply.clear();
                     } else {
                         r.suggestion = Some(format!("{phrase}: {disp}"));
                         r.apply = vec![(key.to_string(), vertex.to_string())];
+                        // An expected gain under the noise floor is a data
+                        // request, not a move claimed to gain time.
+                        r.probe = matches!(gain, Some(g) if g < floor);
                         r.advice = match gain {
                             Some(g) if g < floor => format!(
-                                "probe the estimated optimum: the fit expects \
-                                 only {g:.2}s here, within the ±{floor:.2}s \
-                                 noise floor, so holding the current value is \
-                                 equally defensible and a stint at {disp} \
-                                 mainly tightens the map. Everything else \
-                                 unchanged; set {phrase} to {disp}"
+                                "the fit puts the estimated optimum here but \
+                                 expects only {g:.2}s for the move, within the \
+                                 ±{floor:.2}s noise floor, so holding the \
+                                 current value is equally defensible and a \
+                                 stint at {disp} mainly tightens the map. \
+                                 Everything else unchanged; set {phrase} to \
+                                 {disp}"
                             ),
                             _ => format!(
                                 "set and drive one stint: this is the estimated \
@@ -901,6 +907,7 @@ pub fn advise(
                      alternative",
                 );
                 r.confidence = recommend::Confidence::Medium;
+                r.probe = false;
                 r.implied = Some(journal::Change {
                     family,
                     softer: best.0 < cur,
@@ -944,6 +951,7 @@ pub fn advise(
                     nodes_summary(&disp_nodes),
                 )],
                 confidence: recommend::Confidence::Low,
+                probe: true,
                 implied: Some(journal::Change {
                     family,
                     softer: v < best,

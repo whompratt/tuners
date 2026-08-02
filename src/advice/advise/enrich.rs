@@ -432,6 +432,7 @@ pub(super) fn map_prior(
             ev
         },
         confidence: recommend::Confidence::Low,
+        probe: false,
         implied: Some(journal::Change {
             family,
             softer: cell.softer,
@@ -514,6 +515,7 @@ pub(super) fn setup_lints(
                     .map(|s| format!("{s} (convention, not a measurement)"))
                     .collect(),
                 confidence: recommend::Confidence::Low,
+                probe: false,
                 implied: None,
             });
         }
@@ -560,6 +562,7 @@ pub(super) fn setup_lints(
                     d_share * 100.0,
                 )],
                 confidence: recommend::Confidence::Low,
+                probe: false,
                 implied: None,
             });
         }
@@ -616,6 +619,7 @@ pub(super) fn setup_lints(
                     .into(),
                 evidence,
                 confidence: recommend::Confidence::Low,
+                probe: false,
                 implied: Some(journal::Change {
                     family: journal::Family::RideHeight,
                     softer: true,

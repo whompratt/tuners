@@ -95,7 +95,7 @@ pub fn render_recommendations(recs: &[crate::advice::recommend::Recommendation])
     for r in recs {
         // Probes are data requests, not optimization claims; the tag says so
         // up front instead of burying it in the advice text.
-        let tag = if r.area == "probe" {
+        let tag = if r.probe {
             format!("probe: {}", r.confidence.label())
         } else {
             r.confidence.label().to_string()
