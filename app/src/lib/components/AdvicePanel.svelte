@@ -116,18 +116,19 @@
       <div style="flex:2 1 900px;min-width:0">
       {#if a.steps.length}
         <div class="table-scroll">
-        <table class="adv-table adv-compact">
+        <table class="adv-table adv-compact zebra">
           <thead>
             <tr>
               <th></th><th>run</th>
-              <th title="lap count; ± is the lap-time scatter (sd of flying laps): shrinking scatter at equal pace means the car got easier to drive">laps ±</th>
+              <th>laps</th>
+              <th title="lap-time scatter (sd of flying laps): shrinking scatter at equal pace means the car got easier to drive">scatter</th>
               <th>best</th><th>optimal</th>
               <th title="cornering balance index (+ = understeer); hover a value for the front/rear grip shares">balance</th>
               <th>change</th>
               <th>pos F/R</th><th>outcome</th>
               <th title="corner-entry share of the delta">entry</th>
               <th title="corner-exit share of the delta">exit</th>
-              <th title="straights share of the delta">straights</th><th></th>
+              <th title="straights share of the delta">straights</th>
             </tr>
           </thead>
           <tbody>
@@ -139,12 +140,14 @@
                     href="#top"
                     onclick={(e) => { e.preventDefault(); jump(st.path); }}>{base(st.path)}</a>
                 </td>
+                <td class="num">{st.laps}</td>
                 <td class="num">
-                  {st.laps}{#if st.scatterS != null}
+                  {#if st.scatterS != null}
                     <span
-                      style="color:var(--muted);font-size:11px"
+                      style="color:var(--muted)"
                       title="lap-time scatter (sd of flying laps): shrinking scatter at equal pace means the car got easier to drive"
-                      >±{N(st.scatterS).toFixed(2)}</span>{/if}
+                      >±{N(st.scatterS).toFixed(2)}s</span>
+                  {/if}
                 </td>
                 <td class="num">{fl(st.bestS)}</td>
                 <td class="num">{fl(st.idealS)}</td>
@@ -185,11 +188,9 @@
                         <br />
                         <span
                           style="color:var(--muted)"
-                          title="the spliced ideal rewards laps that are fast in different places; best and median lap agree against it, so the vote overrules it"
+                          title={`the spliced ideal (${sgn(st.currencies![0])}) rewards laps that are fast in different places; best (${sgn(st.currencies![1])}) and median lap (${sgn(st.currencies![2])}) agree against it, so the vote overrules it`}
                         >
-                          ideal {sgn(st.currencies![0])} overruled by best {sgn(st.currencies![1])} + median {sgn(
-                            st.currencies![2],
-                          )}
+                          ideal {sgn(st.currencies![0])} overruled
                         </span>
                       {/if}
                     {/if}
@@ -220,14 +221,6 @@
                 {:else}
                   <td></td><td></td><td></td>
                 {/if}
-                <td>
-                  {#if st.outcome}
-                    {@const o = st.outcome}
-                    {#if !("error" in o) && o.unequalLaps}
-                      <span style="color:var(--muted)" title="unequal lap counts bias the ideal">unequal laps</span>
-                    {/if}
-                  {/if}
-                </td>
               </tr>
             {/each}
           </tbody>

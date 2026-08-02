@@ -115,6 +115,9 @@ pre { white-space: pre-wrap; font: 14px/1.45 var(--font-mono); }
 .adv-table td { padding: 4px 14px 4px 0; border-top: 1px solid var(--border); }
 .adv-table.adv-compact { font-size: 13px; }
 .adv-table.adv-compact th, .adv-table.adv-compact td { padding: 3px 10px 3px 0; }
+.adv-table.zebra tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
 .adv-table td.num { font-variant-numeric: tabular-nums; }
 .adv-table a { color: var(--ink-2); }
 .adv-table a:hover { color: var(--accent); }
