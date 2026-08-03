@@ -64,6 +64,9 @@ pub struct LapProfile {
     pub lap_number: u16,
     pub time_s: f32,
     pub standing_start: bool,
+    /// Lap clock stayed locked to the race clock: a point-to-point run
+    /// (circuit lap 0 resets the lap clock at the start line). See `LapSlice`.
+    pub point_to_point: bool,
     pub bins: Vec<BinStats>,
 }
 
@@ -134,6 +137,7 @@ pub fn lap_profile(lap: &LapSlice) -> Option<LapProfile> {
         lap_number: first.lap_number,
         time_s,
         standing_start: lap.standing_start,
+        point_to_point: lap.point_to_point,
         bins,
     })
 }
@@ -248,6 +252,10 @@ pub struct StintProfile {
     pub composite: Composite,
     pub best_lap_time_s: f32,
     pub standing_start_only: bool,
+    /// Standing-start-only AND every profiled run kept its lap clock locked to
+    /// the race clock: a point-to-point route (vs restart-per-lap circuit
+    /// driving, whose lap 0 resets the lap clock at the start line).
+    pub point_to_point: bool,
     /// Car identity of the profiled laps, so compare can flag car mismatches.
     pub car_ordinal: i32,
 }
@@ -361,6 +369,7 @@ pub fn stint_profile(frames: &[TimedFrame]) -> Result<StintProfile, String> {
     // Out laps aren't comparable to flying laps; drop them when flying laps exist.
     // On point-to-point routes every run is a standing start, so keep them all.
     let standing_start_only = laps.iter().all(|l| l.standing_start);
+    let point_to_point = standing_start_only && laps.iter().all(|l| l.point_to_point);
     if !standing_start_only {
         laps.retain(|l| !l.standing_start);
     }
@@ -374,6 +383,7 @@ pub fn stint_profile(frames: &[TimedFrame]) -> Result<StintProfile, String> {
         composite,
         best_lap_time_s,
         standing_start_only,
+        point_to_point,
         car_ordinal,
         laps,
     })
@@ -399,6 +409,7 @@ mod tests {
             lap_number,
             time_s: bins.iter().map(|b| b.time_s).sum(),
             standing_start: false,
+            point_to_point: false,
             bins,
         }
     }
@@ -612,6 +623,7 @@ mod tests {
             composite,
             best_lap_time_s: best,
             standing_start_only: false,
+            point_to_point: false,
             car_ordinal: 1,
             laps,
         }

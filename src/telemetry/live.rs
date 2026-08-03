@@ -127,6 +127,9 @@ pub struct Quality {
     /// Profiled comparable laps (flying laps, or standing runs point-to-point).
     pub laps: usize,
     pub standing_only: bool,
+    /// Standing runs with the lap clock locked to the race clock: a
+    /// point-to-point route, not a circuit's out laps.
+    pub point_to_point: bool,
     pub best_lap_s: f32,
     /// (worst − best) / best over profiled laps: driving consistency.
     pub spread_frac: f32,
@@ -179,6 +182,7 @@ pub fn compute_quality(frames: &[TimedFrame]) -> Option<Quality> {
     Some(Quality {
         laps,
         standing_only: profile.standing_start_only,
+        point_to_point: profile.point_to_point,
         best_lap_s: profile.best_lap_time_s,
         spread_frac,
         shared_km: profile.shared_bins as f32 * crate::analysis::profile::BIN_METERS / 1000.0,

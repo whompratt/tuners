@@ -93,17 +93,27 @@ pub fn render(a: &StintProfile, b: &StintProfile, cmp: &Comparison) -> String {
     let mut out = String::new();
 
     for (name, p) in [("A", a), ("B", b)] {
+        // Point-to-point runs are all the game's lap 0: name them by run index
+        // so the source list doesn't read "1,1,1,1".
         let lap_names: Vec<String> = p
             .composite
             .source_laps()
             .into_iter()
-            .map(|i| (p.laps[i].lap_number + 1).to_string())
+            .map(|i| {
+                if p.point_to_point {
+                    (i + 1).to_string()
+                } else {
+                    (p.laps[i].lap_number + 1).to_string()
+                }
+            })
             .collect();
         writeln!(
             out,
             "{name}: {} lap(s){} | best {} | ideal {} ({} span(s) from lap(s) {})",
             p.laps.len(),
-            if p.standing_start_only {
+            if p.point_to_point {
+                " (point-to-point runs)"
+            } else if p.standing_start_only {
                 " (standing starts)"
             } else {
                 ""
@@ -204,6 +214,7 @@ mod tests {
             lap_number: 1,
             time_s: bin_time * n_bins as f32,
             standing_start: false,
+            point_to_point: false,
             bins: vec![
                 BinStats {
                     time_s: bin_time,
@@ -220,6 +231,7 @@ mod tests {
             shared_bins: n_bins,
             best_lap_time_s: laps[0].time_s,
             standing_start_only: false,
+            point_to_point: false,
             car_ordinal: 42,
             laps,
         }
@@ -280,6 +292,7 @@ mod tests {
                 lap_number: i as u16 + 1,
                 time_s: times.iter().sum(),
                 standing_start: false,
+                point_to_point: false,
                 bins: times
                     .iter()
                     .map(|t| BinStats {
@@ -297,6 +310,7 @@ mod tests {
             shared_bins: n,
             best_lap_time_s: laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min),
             standing_start_only: false,
+            point_to_point: false,
             car_ordinal: 42,
             laps,
         }

@@ -130,6 +130,7 @@ pub fn render_laps(laps: &[LapSlice]) -> String {
             None => format!("({:.1}s, incomplete)", m.duration_s),
         };
         let compare = match (lap.time_s, lap.standing_start) {
+            (_, true) if lap.point_to_point => " | point-to-point run".to_string(),
             (_, true) => " | standing start".to_string(),
             (Some(t), false) if t <= best_flying => " | best".to_string(),
             (Some(t), false) => format!(" | +{:.2}s vs best", t - best_flying),

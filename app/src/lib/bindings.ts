@@ -237,6 +237,12 @@ export type LapsView = {
 	binMeters: number | null,
 	bestTime: number | null,
 	/**
+	 *  Every profiled lap is a point-to-point run (lap clock locked to the
+	 *  race clock): the chart treats runs as comparable and drops the
+	 *  standing-start label.
+	 */
+	pointToPoint: boolean,
+	/**
 	 *  Per-bin corroboration of the spliced ideal: true = a second lap
 	 *  reproduces this bin's speed within splice tolerance. Drives the confidence
 	 *  strip under the speed chart.
@@ -300,6 +306,7 @@ export type QualityEvent = QualityView | null;
 export type QualityView = {
 	laps: number,
 	standingOnly: boolean,
+	pointToPoint: boolean,
 	bestLapS: number | null,
 	spreadPct: number | null,
 	sharedKm: number | null,

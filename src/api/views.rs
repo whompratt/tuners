@@ -18,6 +18,10 @@ pub struct LapView {
 pub struct LapsView {
     pub bin_meters: f32,
     pub best_time: f32,
+    /// Every profiled lap is a point-to-point run (lap clock locked to the
+    /// race clock): the chart treats runs as comparable and drops the
+    /// standing-start label.
+    pub point_to_point: bool,
     /// Per-bin corroboration of the spliced ideal: true = a second lap
     /// reproduces this bin's speed within splice tolerance. Drives the confidence
     /// strip under the speed chart.
@@ -30,11 +34,18 @@ pub fn laps_view(file: &str) -> Result<LapsView, ApiError> {
     let data = crate::analysis::products::cached(path)
         .map_err(|e| ApiError::internal(format!("{}: {e}", path.display())))?;
     let profile = data.profile.as_ref().map_err(ApiError::internal)?;
+    // Point-to-point runs are all the game's lap 0: number them sequentially
+    // so chart keys and labels stay unique.
     let laps = profile
         .laps
         .iter()
-        .map(|lap| LapView {
-            lap: lap.lap_number as u32 + 1,
+        .enumerate()
+        .map(|(i, lap)| LapView {
+            lap: if profile.point_to_point {
+                i as u32 + 1
+            } else {
+                lap.lap_number as u32 + 1
+            },
             time: lap.time_s,
             standing: lap.standing_start,
             speeds: lap.bins[..profile.shared_bins]
@@ -46,6 +57,7 @@ pub fn laps_view(file: &str) -> Result<LapsView, ApiError> {
     Ok(LapsView {
         bin_meters: crate::analysis::profile::BIN_METERS,
         best_time: profile.best_lap_time_s,
+        point_to_point: profile.point_to_point,
         corroborated: profile.corroboration().corroborated,
         laps,
     })

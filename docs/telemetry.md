@@ -111,6 +111,21 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   session; never compare it to them). `CurrentLap` resets to 0 at each boundary;
   `LastLap`/`BestLap` update exactly at the boundary, so a finished lap's
   authoritative time is read from the first frames of the *next* lap.
+- **Route kind is detectable from the clocks (measured 2026-08-03, library-wide)**:
+  both clocks tick together from the countdown's GO, and `DistanceTraveled` starts
+  negative (the grid sits behind the start line, distance crosses 0 at the line).
+  On a **circuit**, `CurrentLap` **resets to ~0 at the start-line crossing** while
+  `CurrentRaceTime` keeps running, so for the rest of lap 0 the race clock leads
+  the lap clock by the rollout time (measured 1.86-5.74s over 66 circuit race
+  starts). On a **point-to-point route the lap clock never resets**: the two clocks
+  stay locked for the whole run (|offset| < 0.01s over 20+ runs, three drivers),
+  and the run's official time therefore includes the launch rollout. The
+  race-minus-lap offset at the end of lap 0 separates the kinds with total margin
+  (threshold 1.0s); rewinds only ever inflate the offset (lap clock steps back,
+  race clock does not), so an inflated read can misname a point-to-point run a
+  circuit out lap but never the reverse. Restart-menu flicker can freeze
+  `CurrentLap` (~0.6s) under a running race clock; such runs never complete a lap
+  and are excluded anyway.
 
 ## Rewinds, restarts, collisions (verified 2026-07-19, deliberate-rewind capture)
 

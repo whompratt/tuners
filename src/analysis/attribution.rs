@@ -176,6 +176,7 @@ mod tests {
             lap_number: 1,
             time_s: bins.iter().map(|b| b.time_s).sum(),
             standing_start: false,
+            point_to_point: false,
             bins,
         };
         let shared = lap.bins.len();
@@ -185,6 +186,7 @@ mod tests {
             composite: build_composite(&laps, shared),
             best_lap_time_s: laps[0].time_s,
             standing_start_only: false,
+            point_to_point: false,
             car_ordinal: 1,
             laps,
         }

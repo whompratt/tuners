@@ -635,6 +635,7 @@ pub(crate) fn load_campaign<'s>(
                 shared_bins: shared,
                 best_lap_time_s: laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min),
                 standing_start_only: stints[g].profile().standing_start_only,
+                point_to_point: stints[g].profile().point_to_point,
                 car_ordinal: stints[g].profile().car_ordinal,
                 laps,
             },

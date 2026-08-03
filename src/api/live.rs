@@ -115,6 +115,7 @@ fn file_name(p: Option<&Path>) -> Option<String> {
 pub struct QualityView {
     pub laps: u32,
     pub standing_only: bool,
+    pub point_to_point: bool,
     pub best_lap_s: f32,
     pub spread_pct: f32,
     pub shared_km: f32,
@@ -128,6 +129,7 @@ pub fn quality_view(q: Option<&crate::telemetry::live::Quality>) -> Option<Quali
     q.map(|q| QualityView {
         laps: q.laps as u32,
         standing_only: q.standing_only,
+        point_to_point: q.point_to_point,
         best_lap_s: q.best_lap_s,
         spread_pct: q.spread_frac * 100.0,
         shared_km: q.shared_km,

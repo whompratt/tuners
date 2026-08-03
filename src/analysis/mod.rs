@@ -88,11 +88,23 @@ pub struct LapSlice<'a> {
     /// Its time is not comparable to flying laps. Detected by the race clock and
     /// lap clock having started together, which survives capture starting late.
     pub standing_start: bool,
+    /// True when the lap clock stayed locked to the race clock through the
+    /// slice: a point-to-point run. On circuits the lap clock resets at the
+    /// start-line crossing, so the race clock leads it by the rollout time
+    /// (1.9-5.7s measured) for the rest of lap 0; on point-to-point routes the
+    /// clocks never separate (see telemetry.md). Only meaningful on standing
+    /// starts. Rewinds inflate the offset, so a rewound point-to-point run can
+    /// read false (harmless: it falls back to plain standing-start handling).
+    pub point_to_point: bool,
 }
 
 /// Max seconds the race clock may lead the lap clock on a standing start
 /// (covers the pre-launch countdown offset, ~2s observed).
 const STANDING_START_CLOCK_OFFSET_S: f32 = 5.0;
+/// Max seconds the race clock may lead the lap clock at the END of a lap for
+/// the run to read point-to-point. Measured separation: circuits 1.86-5.74s
+/// (start-line reset), point-to-point < 0.01s (clocks locked).
+const POINT_TO_POINT_CLOCK_OFFSET_S: f32 = 1.0;
 
 /// Split a stint into laps on `LapNumber` transitions. A stint with no transitions
 /// (free roam, where LapNumber stays 0) yields a single slice; callers should only
@@ -115,12 +127,16 @@ pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
                 .map(|next| next.frame.last_lap)
                 .filter(|t| *t > 0.0);
             let first = frames[0].frame;
+            let last = frames[frames.len() - 1].frame;
+            let standing_start =
+                first.current_race_time - first.current_lap < STANDING_START_CLOCK_OFFSET_S;
             LapSlice {
                 number: first.lap_number,
                 frames,
                 time_s,
-                standing_start: first.current_race_time - first.current_lap
-                    < STANDING_START_CLOCK_OFFSET_S,
+                standing_start,
+                point_to_point: standing_start
+                    && last.current_race_time - last.current_lap < POINT_TO_POINT_CLOCK_OFFSET_S,
             }
         })
         .collect()

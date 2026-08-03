@@ -11,8 +11,13 @@
   let tipY = $state(0);
   let wrapW = $state(0);
 
+  // On a point-to-point route every run is a standing start and runs ARE the
+  // comparable unit; on circuits standing laps stay out of the best-lap race.
+  let p2p = $derived(app.lapData?.pointToPoint ?? false);
   let best = $derived(
-    app.lapData ? Math.min(...app.lapData.laps.filter((l) => !l.standing).map((l) => l.time)) : 0,
+    app.lapData
+      ? Math.min(...app.lapData.laps.filter((l) => p2p || !l.standing).map((l) => l.time))
+      : 0,
   );
 
   // Closure identity = redraw trigger: changes with data, units, or hover.
@@ -52,12 +57,13 @@
 
 {#if app.lapData}
   <div class="panel">
-    <h2>Speed by distance, flying laps</h2>
+    <h2>Speed by distance, {p2p ? "runs" : "flying laps"}</h2>
     <div class="legend-row">
       {#each app.lapData.laps as lap, i (lap.lap)}
         <span>
           <span class="chip" style="background:{SERIES[i % SERIES.length]}"></span>
-          lap {lap.lap}: <span class="num">{fmtLap(lap.time)}</span>{lap.standing
+          {p2p ? "run" : "lap"} {lap.lap}: <span class="num">{fmtLap(lap.time)}</span>{lap.standing &&
+          !p2p
             ? " (standing start)"
             : lap.time === best
               ? " (best)"
