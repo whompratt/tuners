@@ -150,18 +150,31 @@ pub fn compute_quality(frames: &[TimedFrame]) -> Option<Quality> {
     let corr = profile.corroboration();
     let confidence = corr.score;
     let band = Band::from_score(confidence);
+    // Point-to-point sessions (and restart-per-run circuit driving) have no
+    // flying laps: every kept lap is a standing run, so the nudges say "run".
+    let standing = profile.standing_start_only;
     let note = match band {
         Band::Good => None,
-        _ if laps < 2 => {
-            Some("one comparable lap: nothing can confirm it yet — more laps build confidence")
-        }
-        _ if laps == 2 => Some(
-            "two laps: every stretch rests on a single confirmation — more laps build confidence",
-        ),
-        _ if corr.harvest_support.is_some_and(|s| s < 0.5) => Some(
-            "the optimal lap uses stretches no other lap reproduced — more consistent laps build confidence",
-        ),
-        _ => Some("laps vary lap-to-lap — more consistent laps build confidence"),
+        _ if laps < 2 => Some(if standing {
+            "one run: nothing can confirm it yet — more runs build confidence"
+        } else {
+            "one comparable lap: nothing can confirm it yet — more laps build confidence"
+        }),
+        _ if laps == 2 => Some(if standing {
+            "two runs: every stretch rests on a single confirmation — more runs build confidence"
+        } else {
+            "two laps: every stretch rests on a single confirmation — more laps build confidence"
+        }),
+        _ if corr.harvest_support.is_some_and(|s| s < 0.5) => Some(if standing {
+            "the optimal run uses stretches no other run reproduced — more consistent runs build confidence"
+        } else {
+            "the optimal lap uses stretches no other lap reproduced — more consistent laps build confidence"
+        }),
+        _ => Some(if standing {
+            "runs vary run-to-run — more consistent runs build confidence"
+        } else {
+            "laps vary lap-to-lap — more consistent laps build confidence"
+        }),
     };
     Some(Quality {
         laps,

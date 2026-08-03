@@ -10,11 +10,13 @@
   let q = $derived(app.quality);
   let qBand = $derived(q ? q.band : "low");
   let qPct = $derived(q ? (q.confidencePct ?? 0) : 0);
-  // Out lap: the recorder is live on lap 0 with no comparable lap yet —
-  // the first lap only sets the reference, so nothing can accrue
-  // confidence until it completes. Say that instead of a vague nudge.
+  // First run: the recorder is live on lap 0 with no comparable lap yet.
+  // Nothing can accrue confidence until the same road is driven twice, and
+  // at this point the route kind is unknowable (a circuit's out lap only
+  // sets the reference; a point-to-point run counts in full once a second
+  // run corroborates it), so the copy must not claim the lap is skipped.
   let f = $derived(app.live?.frame ?? null);
-  let outLap = $derived(
+  let firstRun = $derived(
     !q && !!f?.raceOn && (f?.lapNumber ?? 1) === 0 && (app.live?.ageMs ?? Infinity) < 5000,
   );
 </script>
@@ -31,15 +33,15 @@
     <text class="q-pct" x="50" y="50">{q ? `${Math.round(qPct)}%` : "–"}</text>
   </svg>
   <div class="q-label">
-    {#if outLap}
-      out lap: skipping
+    {#if firstRun}
+      first run: setting the reference
     {:else}
       confidence: {{ good: "enough for A/B", ok: "nearly there", low: "keep driving" }[qBand] ?? "keep driving"}
     {/if}
   </div>
-  {#if outLap}
+  {#if firstRun}
     <div class="q-note" style="max-width:{width}px">
-      the first lap sets the reference and is not timed as a flying lap; confidence starts on the next crossing
+      confidence needs the same road driven twice; it starts with the next lap, or the next run on a point-to-point
     </div>
   {:else if q}
     <div class="q-sub">
