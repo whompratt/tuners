@@ -28,14 +28,17 @@ use enrich::{enrich_with_tune, map_prior, setup_lints};
 use landscape::{key_from_phrase, probe_value, quad_fit};
 pub use view::*;
 
-/// A composite ideal dramatically faster than the stint's own best flying
+/// A composite ideal dramatically faster than the stint's own best complete
 /// lap is an UNCORROBORATED splice: rewinds, drafting in a race, or route
 /// anomalies stitched segments that never co-occurred in one lap. Such a
-/// stint's comparisons cannot be trusted.
+/// stint's comparisons cannot be trusted. The anchor is the best kept lap of
+/// either kind: on point-to-point routes (and restart-per-run circuit
+/// driving) every kept lap is a standing run and the composite is stitched
+/// from those same runs, so the run anchors it exactly as a flying lap
+/// would (standing-only recordings measure 0.996-0.999 of best, bonuses
+/// 0.16-0.47s on ~130s runs — the flying-lap range).
 fn splice_trusted(p: &analysis::profile::StintProfile) -> bool {
-    !p.standing_start_only
-        && p.best_lap_time_s.is_finite()
-        && p.composite.time_s >= 0.95 * p.best_lap_time_s
+    p.best_lap_time_s.is_finite() && p.composite.time_s >= 0.95 * p.best_lap_time_s
 }
 
 /// The prior stint whose SETUP differs least from `target` (ties -> most
