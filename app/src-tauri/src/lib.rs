@@ -36,7 +36,8 @@ pub struct LiveStateEvent(pub api::LiveStateView);
 pub struct QualityEvent(pub Option<api::QualityView>);
 
 /// A recording closed (the run auto-cut or the recorder stopped): refresh
-/// verdicts.
+/// verdicts. In external mode (another capture owns the socket) the close is
+/// inferred from the tailed newest file: rotation, or the tail going stale.
 #[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct RunFinishedEvent {
     pub file: String,
@@ -358,19 +359,81 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         ])
 }
 
+/// Tail age at which an externally captured run is assumed cut: the cutter
+/// closes 5s after race-off. A race-on gap (pause) can fire this early with
+/// the run still open, which advise already tolerates as in-progress; the
+/// latch re-arms when data resumes, so the true close notifies again.
+const EXTERNAL_STALE_MS: u32 = 10_000;
+
+/// Edge detection for run boundaries, one `observe` per emitter poll.
+///
+/// When the in-process recorder is the writer, its recording-file edge is the
+/// exact close signal. In external mode nothing is ever "recording"
+/// in-process, so a close is inferred from the tailed newest file instead:
+/// rotation (a new newest means the previous one was cut) or the tail going
+/// stale (run over, next not started). The latch keeps the two inferences
+/// from notifying the same file twice.
+#[derive(Default)]
+struct RunEdges {
+    prev_recording: Option<String>,
+    prev_newest: Option<String>,
+    stale_notified: bool,
+}
+
+impl RunEdges {
+    /// Returns (run that finished, whether the newest file rotated).
+    fn observe(
+        &mut self,
+        mode: &str,
+        recorder_file: Option<&str>,
+        newest: Option<&str>,
+        age_ms: Option<u32>,
+    ) -> (Option<String>, bool) {
+        let mut finished = None;
+        let recording = (mode == "recording")
+            .then(|| recorder_file.map(str::to_string))
+            .flatten();
+        if let Some(prev) = self.prev_recording.take()
+            && recording.as_deref() != Some(prev.as_str())
+        {
+            finished = Some(prev);
+        }
+        self.prev_recording = recording;
+        let mut rotated = false;
+        if newest != self.prev_newest.as_deref() {
+            rotated = true;
+            if mode == "external"
+                && !self.stale_notified
+                && let Some(prev) = self.prev_newest.clone()
+            {
+                finished = Some(prev);
+            }
+            self.stale_notified = false;
+            self.prev_newest = newest.map(str::to_string);
+        } else if mode == "external"
+            && let (Some(age), Some(f)) = (age_ms, newest)
+        {
+            if age < EXTERNAL_STALE_MS {
+                self.stale_notified = false;
+            } else if !self.stale_notified {
+                self.stale_notified = true;
+                finished = Some(f.to_string());
+            }
+        }
+        (finished, rotated)
+    }
+}
+
 /// Emits live-state/quality/run-finished/runs-changed by polling the shared
 /// state the tailer and recorder threads maintain: the typed replacement
-/// for the SSE loop, plus edge detection for run boundaries. Polling covers
-/// external capture (view-only mode) for free: rotation shows up in the
-/// tailer's newest-file either way.
+/// for the SSE loop, plus edge detection for run boundaries (RunEdges).
 fn run_emitter(
     app: tauri::AppHandle,
     live: tuners::telemetry::live::SharedLive,
     recorder: tuners::telemetry::record::SharedRecorder,
 ) {
     let mut sent_quality_seq = u64::MAX;
-    let mut prev_recording: Option<String> = None;
-    let mut prev_newest: Option<String> = None;
+    let mut edges = RunEdges::default();
     loop {
         let (state_view, quality) = {
             let s = live.lock().unwrap();
@@ -379,17 +442,16 @@ fn run_emitter(
                 .then(|| (s.quality_seq, api::quality_view(s.quality.as_ref())));
             (api::live_state_view(&s, &r), quality)
         };
-        let recording = (state_view.recorder.mode == "recording")
-            .then(|| state_view.recorder.file.clone())
-            .flatten();
-        if let Some(prev) = prev_recording.take()
-            && recording.as_deref() != Some(prev.as_str())
-        {
-            let _ = RunFinishedEvent { file: prev }.emit(&app);
+        let (finished, rotated) = edges.observe(
+            &state_view.recorder.mode,
+            state_view.recorder.file.as_deref(),
+            state_view.file.as_deref(),
+            state_view.age_ms,
+        );
+        if let Some(file) = finished {
+            let _ = RunFinishedEvent { file }.emit(&app);
         }
-        prev_recording = recording;
-        if state_view.file != prev_newest {
-            prev_newest = state_view.file.clone();
+        if rotated {
             let _ = RunsChangedEvent {
                 file: state_view.file.clone(),
             }
@@ -555,6 +617,83 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use super::{EXTERNAL_STALE_MS, RunEdges};
+
+    #[test]
+    fn recorder_close_finishes_run() {
+        let mut e = RunEdges::default();
+        assert_eq!(
+            e.observe("recording", Some("a.ftel"), Some("a.ftel"), Some(0)),
+            (None, true)
+        );
+        // run closed: recorder idles, newest unchanged
+        let (fin, _) = e.observe("waiting", None, Some("a.ftel"), Some(500));
+        assert_eq!(fin.as_deref(), Some("a.ftel"));
+        // idle polls stay quiet; recorder-owned modes never use the stale path
+        assert_eq!(
+            e.observe("waiting", None, Some("a.ftel"), Some(EXTERNAL_STALE_MS * 2)),
+            (None, false)
+        );
+    }
+
+    #[test]
+    fn external_rotation_finishes_previous() {
+        let mut e = RunEdges::default();
+        // boot: first newest is a rotation but nothing closed
+        assert_eq!(
+            e.observe("external", None, Some("a.ftel"), Some(100)),
+            (None, true)
+        );
+        let (fin, rot) = e.observe("external", None, Some("b.ftel"), Some(100));
+        assert_eq!(fin.as_deref(), Some("a.ftel"));
+        assert!(rot);
+    }
+
+    #[test]
+    fn external_stale_tail_finishes_once_and_rearms() {
+        let mut e = RunEdges::default();
+        e.observe("external", None, Some("a.ftel"), Some(100));
+        let (fin, _) = e.observe("external", None, Some("a.ftel"), Some(EXTERNAL_STALE_MS));
+        assert_eq!(fin.as_deref(), Some("a.ftel"), "stale tail = run over");
+        // latched: staying stale must not re-notify
+        assert_eq!(
+            e.observe(
+                "external",
+                None,
+                Some("a.ftel"),
+                Some(EXTERNAL_STALE_MS * 3)
+            ),
+            (None, false)
+        );
+        // data resumes (paused race came back), then goes stale again
+        e.observe("external", None, Some("a.ftel"), Some(200));
+        let (fin, _) = e.observe("external", None, Some("a.ftel"), Some(EXTERNAL_STALE_MS));
+        assert_eq!(fin.as_deref(), Some("a.ftel"), "re-armed after fresh data");
+    }
+
+    #[test]
+    fn external_rotation_after_stale_does_not_double_notify() {
+        let mut e = RunEdges::default();
+        e.observe("external", None, Some("a.ftel"), Some(100));
+        e.observe("external", None, Some("a.ftel"), Some(EXTERNAL_STALE_MS));
+        // next run starts: a.ftel already notified, only the rotation fires
+        assert_eq!(
+            e.observe("external", None, Some("b.ftel"), Some(100)),
+            (None, true)
+        );
+    }
+
+    #[test]
+    fn recording_rotation_defers_to_recorder_edge() {
+        let mut e = RunEdges::default();
+        e.observe("recording", Some("a.ftel"), Some("a.ftel"), Some(0));
+        // recorder cut a and immediately opened b: exactly one finish, from
+        // the recorder edge, alongside the rotation
+        let (fin, rot) = e.observe("recording", Some("b.ftel"), Some("b.ftel"), Some(0));
+        assert_eq!(fin.as_deref(), Some("a.ftel"));
+        assert!(rot);
+    }
+
     /// The full command/event surface exports TS bindings: the compile-time
     /// contract check that replaces the old JSON-shape tests' role at the
     /// transport layer.

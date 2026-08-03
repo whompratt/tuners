@@ -348,7 +348,8 @@ export type RowAnchorView = {
 
 /**
  *  A recording closed (the run auto-cut or the recorder stopped): refresh
- *  verdicts.
+ *  verdicts. In external mode (another capture owns the socket) the close is
+ *  inferred from the tailed newest file: rotation, or the tail going stale.
  */
 export type RunFinishedEvent = {
 	file: string,
