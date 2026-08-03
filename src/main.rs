@@ -193,8 +193,9 @@ fn cmd_recommend(args: &[String]) -> Result<(), String> {
             .unwrap_or_else(|| std::path::Path::new("."))
             .to_string_lossy()
             .into_owned();
+        let samples = analysis::grip::cornering_samples(stint);
         overall.grip_saturation = tuners::advice::advise::car_pool_saturation(
-            stint,
+            &samples,
             path,
             &dir,
             stint.first().map(|f| f.frame.car_ordinal),

@@ -50,26 +50,31 @@ pub struct RunsChangedEvent {
 }
 
 // ----------------------------------------------------------------- commands
+//
+// Plain #[tauri::command] runs on the MAIN thread: a slow body freezes the
+// whole window (Windows "Not Responding"). Anything that reads recordings
+// is marked (async) so it executes on the runtime pool instead; the wire
+// signature is identical either way.
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn stints(state: S) -> Vec<api::StintRow> {
     api::stint_rows(&state.sessions_dir)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn laps(file: String) -> Result<api::LapsView, api::ApiError> {
     api::laps_view(&file)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn compare(a: String, b: String) -> Result<api::CompareView, api::ApiError> {
     api::compare_view(&a, &b)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn report(file: String) -> Result<String, api::ApiError> {
     api::report_text(&file)
@@ -161,7 +166,7 @@ fn duplicate_session(
     Ok(out)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn advise(state: S) -> Result<api::AdviseView, api::ApiError> {
     api::advise_active(
@@ -212,13 +217,13 @@ fn set_sharing(
     api::set_sharing(&state.config, &state.outbox, enabled, endpoint, discard)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn sharing_history_plan(state: S) -> api::HistoryPlanView {
     api::history_plan_view(&state.root, &state.sessions_dir, &state.outbox)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn share_history(state: S) -> Result<u32, api::ApiError> {
     api::share_history(
@@ -275,7 +280,7 @@ fn record_split(state: S, note: Option<String>) {
 
 /// Build the stint's bundle and write it to `dest` (picked via the native
 /// save dialog frontend-side). Returns the bundle's canonical name.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn export_stint(state: S, file: String, dest: String) -> Result<String, api::ApiError> {
     let (name, bytes) = api::export_bundle(

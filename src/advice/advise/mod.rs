@@ -38,15 +38,6 @@ fn splice_trusted(p: &analysis::profile::StintProfile) -> bool {
         && p.composite.time_s >= 0.95 * p.best_lap_time_s
 }
 
-/// The car driven in a stint: first frame with a car ordinal set.
-pub(crate) fn car_of(stint: &analysis::Stint) -> Option<i32> {
-    stint
-        .frames
-        .iter()
-        .find(|t| t.frame.car_ordinal != 0)
-        .map(|t| t.frame.car_ordinal)
-}
-
 /// The prior stint whose SETUP differs least from `target` (ties -> most
 /// recent): the honest comparison partner for a step. Searches the given
 /// prefix of the per-step setups.
@@ -104,14 +95,6 @@ fn lap_scatter(profile: &analysis::profile::StintProfile) -> Option<f32> {
     )
 }
 
-/// Metrics of a stint's longest driving segment: the basis for both the
-/// step balance display and the effect vector.
-fn stint_overall_metrics(stint: &analysis::Stint) -> Option<analysis::metrics::StintMetrics> {
-    let segments = analysis::driving_segments(&stint.frames, 5.0);
-    let longest = segments.iter().max_by_key(|s| s.len())?;
-    Some(analysis::metrics::stint_metrics(longest))
-}
-
 /// Rule context from the session: tire compound fact + whether the build has
 /// aero fitted (absent aero fields in the latest revision = the upgrade isn't
 /// there; no revisions = unknown).
@@ -131,7 +114,7 @@ fn rule_context(session: &TuningSession) -> recommend::Context<'_> {
 /// detection ignores (single-recording fits measured push 0.1-19.6% on
 /// known-healthy stints, 2026-07-31 — display-only noise).
 pub fn car_pool_saturation(
-    longest: &[analysis::TimedFrame],
+    target: &[analysis::grip::GripSample],
     stint_path: &str,
     stints_dir: &str,
     car: Option<i32>,
@@ -146,8 +129,7 @@ pub fn car_pool_saturation(
                 n.checked_mul(10)?.checked_add((b - b'0') as u64)
             })
     }
-    let target = grip::cornering_samples(longest);
-    let mut pooled = target.clone();
+    let mut pooled = target.to_vec();
     let mut source = grip::CurveSource::SelfFit;
     // Nearest-in-time siblings first: grip curves move with setup changes
     // (aero, pressures, compound), so the pool must be era-local to the
@@ -171,60 +153,48 @@ pub fn car_pool_saturation(
         if sibling_samples >= grip::CAR_POOL_SIBLINGS || files >= 12 {
             break;
         }
-        let Ok(sibling) = analysis::Stint::load(path.as_ref()) else {
+        let Ok(sib) = analysis::products::cached(path.as_ref()) else {
             continue;
         };
-        let segments = analysis::driving_segments(&sibling.frames, 5.0);
-        let Some(seg) = segments.iter().max_by_key(|s| s.len()) else {
-            continue;
-        };
-        let samples = grip::cornering_samples(seg);
-        if samples.is_empty() || analysis::metrics::stint_metrics(seg).surface_loose {
+        if sib.samples.is_empty() || sib.met.as_ref().is_none_or(|m| m.surface_loose) {
             continue;
         }
-        sibling_samples += samples.len();
+        sibling_samples += sib.samples.len();
         files += 1;
-        pooled.extend(samples);
+        pooled.extend(sib.samples.iter().copied());
         source = grip::CurveSource::CarPool;
     }
     let curves = grip::fit_curves(&pooled)?;
-    grip::occupancy(&target, &curves, source)
+    grip::occupancy(target, &curves, source)
 }
 
 /// Returns the recommendations plus the drag model's final-drive scale (the
 /// "ideal ≈ current × N" estimate), which enrichment resolves into a concrete
 /// caveated target once the current tune is known.
 fn blind_recommendations(
-    stint: &analysis::Stint,
+    data: &analysis::products::StintData,
     path: &str,
     ctx: &recommend::Context,
     sat: Option<analysis::grip::GripSaturation>,
     stints_dir: Option<&str>,
 ) -> Result<(Vec<recommend::Recommendation>, Option<f32>), String> {
-    let segments = analysis::driving_segments(&stint.frames, 5.0);
-    let longest = segments
-        .iter()
-        .max_by_key(|s| s.len())
+    let mut overall = data
+        .met
+        .clone()
         .ok_or_else(|| format!("{path}: no driving stints of 5s or longer"))?;
-    let mut overall = analysis::metrics::stint_metrics(longest);
     // The balance rule's understeer detection is saturation-led (plan 015)
     // and needs a POOLED curve: campaign-pooled when the caller has one,
     // else pooled across the car's recordings (blind mode; tarmac only).
     if !overall.surface_loose {
         overall.grip_saturation = sat.or_else(|| {
-            stints_dir.and_then(|dir| car_pool_saturation(longest, path, dir, car_of(stint)))
+            stints_dir.and_then(|dir| car_pool_saturation(&data.samples, path, dir, data.car))
         });
     }
-    let per_lap: Vec<_> = analysis::split_laps(longest)
-        .iter()
-        .filter(|l| l.time_s.is_some() && !l.standing_start)
-        .map(|l| analysis::metrics::stint_metrics(l.frames))
-        .collect();
     let fd_scale = overall
         .driveline
         .as_ref()
         .and_then(|d| d.final_drive_scale(overall.gears.effective_redline));
-    Ok((recommend::recommend(&overall, &per_lap, ctx), fd_scale))
+    Ok((recommend::recommend(&overall, &data.per_lap, ctx), fd_scale))
 }
 
 /// Full advise: journal trajectory when one exists, blind fallback otherwise.
@@ -248,16 +218,16 @@ pub fn advise(
         let mut first_err: Option<String> = None;
         let mut picked = None;
         for path in stints_for_car_newest_first(stints_dir, session.car) {
-            match analysis::Stint::load(path.as_ref()) {
-                Ok(stint) => match blind_recommendations(
-                    &stint,
+            match analysis::products::cached(path.as_ref()) {
+                Ok(data) => match blind_recommendations(
+                    &data,
                     &path,
                     &rule_context(&session),
                     None,
                     Some(stints_dir),
                 ) {
                     Ok((recs, fd_scale)) => {
-                        picked = Some((path, stint, recs, fd_scale));
+                        picked = Some((path, data, recs, fd_scale));
                         break;
                     }
                     Err(e) => {
@@ -269,7 +239,7 @@ pub fn advise(
                 }
             }
         }
-        let Some((path, stint, mut recs, fd_scale)) = picked else {
+        let Some((path, data, mut recs, fd_scale)) = picked else {
             return Err(first_err.unwrap_or_else(|| "no stints recorded yet; drive first".into()));
         };
         // Cold start: no journal means no local trends, but the driver's
@@ -278,9 +248,9 @@ pub fn advise(
         // campaign (plan 007).
         if let Ok(text) = std::fs::read_to_string(crate::util::data_path("effect-map.tsv"))
             && let Ok(emap) = crate::advice::effectmap::parse(&text)
-            && let Some(met) = stint_overall_metrics(&stint)
+            && let Some(met) = data.met.as_ref()
         {
-            let trends = crate::advice::effectmap::driver_trends(&emap, "local", car_of(&stint));
+            let trends = crate::advice::effectmap::driver_trends(&emap, "local", data.car);
             if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
                 eprintln!("map-prior trace (blind): trends:");
                 for t in &trends {
@@ -304,7 +274,7 @@ pub fn advise(
                 recs.push(rec);
             }
         }
-        let lints = setup_lints(&session, &[], &recs, stint_overall_metrics(&stint).as_ref());
+        let lints = setup_lints(&session, &[], &recs, data.met.as_ref());
         recs.extend(lints);
         let current_tune = enrich_with_tune(&mut recs, &session);
         enrich::apply_fd_scale(&mut recs, &session, fd_scale);
@@ -333,9 +303,9 @@ pub fn advise(
     // scheme use) wins over the legacy per-car derivation, which cannot see
     // stamped archives.
     if let Some(first) = entries.first()
-        && let Ok(stint) = analysis::Stint::load(first.path.as_ref())
+        && let Ok(data) = analysis::products::cached(first.path.as_ref())
     {
-        let journal_car = car_of(&stint);
+        let journal_car = data.car;
         if journal_car.is_some() && journal_car != session.car {
             let sibling = journal_path.replace("tune-journal", "tune-session");
             let candidates = [
@@ -387,17 +357,17 @@ pub fn advise(
                 Some(Ok((
                     word,
                     pv.verdict_s,
-                    c.stints[i - 1].profile.laps.len() != cs.profile.laps.len(),
+                    c.stints[i - 1].profile().laps.len() != cs.profile().laps.len(),
                 )))
             }
             (_, Some(Err(e))) => Some(Err(e.clone())),
         };
         steps.push(StepView {
             path: cs.entry.path.clone(),
-            laps: cs.profile.laps.len(),
-            best_s: cs.profile.best_lap_time_s,
-            ideal_s: cs.profile.composite.time_s,
-            scatter_s: lap_scatter(&cs.profile),
+            laps: cs.profile().laps.len(),
+            best_s: cs.profile().best_lap_time_s,
+            ideal_s: cs.profile().composite.time_s,
+            scatter_s: lap_scatter(cs.profile()),
             currencies,
             balance: cs.met.as_ref().and_then(|m| {
                 Some((
@@ -539,7 +509,9 @@ pub fn advise(
     let aba = (n >= 3)
         .then(|| {
             let (exc, rev) = (&c.stints[n - 2].changes, &c.stints[n - 1].changes);
-            let laps_ok = c.stints[n - 3..].iter().all(|s| s.profile.laps.len() >= 2);
+            let laps_ok = c.stints[n - 3..]
+                .iter()
+                .all(|s| s.profile().laps.len() >= 2);
             if !laps_ok || !journal::is_reverse(exc, rev) {
                 return None;
             }
@@ -562,7 +534,7 @@ pub fn advise(
 
     let last = c.stints.last().unwrap();
     let (mut recs, fd_scale) = blind_recommendations(
-        &last.stint,
+        &last.data,
         &last.entry.path,
         &rule_context(&session),
         last.met.as_ref().and_then(|m| m.grip_saturation),
@@ -995,7 +967,7 @@ pub fn advise(
         // campaign's own trend always wins per field; the current car is
         // excluded from history wholesale (its campaigns would double-count,
         // and other builds of it are invalidated by upgrades anyway).
-        let car = c.stints.last().and_then(|s| car_of(&s.stint));
+        let car = c.stints.last().and_then(|s| s.car());
         for t in crate::advice::effectmap::driver_trends(&emap, "local", car) {
             if !trends.iter().any(|c| c.key == t.key) {
                 trends.push(t);
@@ -1067,7 +1039,7 @@ pub fn advise(
     // Cite tune absolutes only when the journal's stints are the session
     // car's; an explicitly passed foreign journal must not quote this car's
     // sliders as if they were its own.
-    let current_tune = if car_of(&last.stint) == session.car {
+    let current_tune = if last.car() == session.car {
         let lints = setup_lints(&session, &c.measurements, &recs, last.met.as_ref());
         recs.extend(lints);
         let tune = enrich_with_tune(&mut recs, &session);

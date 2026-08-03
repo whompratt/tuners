@@ -85,7 +85,7 @@ pub(crate) fn harvest_campaign(
         let Some(delta_s) = m.outcome.delta_s() else {
             continue;
         };
-        let Some(car) = crate::advice::advise::car_of(&sj.stint) else {
+        let Some(car) = sj.car() else {
             continue;
         };
         samples.push(Sample {

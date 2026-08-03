@@ -117,37 +117,35 @@ pub fn latest_stint_for_car(dir: &str, car: Option<i32>) -> Option<String> {
 /// regime, deferred).
 pub(crate) fn attach_saturation(stints: &mut [CampaignStint], stints_dir: &str) {
     use crate::analysis::grip;
-    let per: Vec<Option<Vec<grip::GripSample>>> = stints
+    // A stint contributes its cached cornering samples unless dirt (its
+    // curves are a separate regime) or too short for metrics.
+    let contributes = |cs: &CampaignStint| {
+        cs.met.as_ref().is_some_and(|m| !m.surface_loose) && !cs.data.samples.is_empty()
+    };
+    let mut pooled: Vec<grip::GripSample> = stints
         .iter()
-        .map(|cs| {
-            let m = cs.met.as_ref()?;
-            if m.surface_loose {
-                return None;
-            }
-            let segments = analysis::driving_segments(&cs.stint.frames, 5.0);
-            let longest = segments.iter().max_by_key(|s| s.len())?;
-            Some(grip::cornering_samples(longest))
-        })
+        .filter(|cs| contributes(cs))
+        .flat_map(|cs| cs.data.samples.iter().copied())
         .collect();
-    let mut pooled: Vec<grip::GripSample> = per.iter().flatten().flatten().copied().collect();
     // Cross-recording stability is the point of pooling: a single-stint
     // campaign is no better than a self-fit (measured push 0.1-19.6% on
     // healthy stints), so at least two recordings must contribute before
     // the pool carries a detection-grade label.
-    let contributing = per
-        .iter()
-        .filter(|s| s.as_ref().is_some_and(|v| !v.is_empty()))
-        .count();
+    let contributing = stints.iter().filter(|cs| contributes(cs)).count();
     let mut source = if contributing >= 2 {
         grip::CurveSource::Campaign
     } else {
         grip::CurveSource::SelfFit
     };
     if pooled.len() < grip::POOL_TARGET || contributing < 2 {
-        let campaign_car = stints.iter().find_map(|cs| car_of(&cs.stint));
-        let have: Vec<Option<&std::ffi::OsStr>> = stints
+        let campaign_car = stints.iter().find_map(|cs| cs.car());
+        let have: Vec<Option<std::ffi::OsString>> = stints
             .iter()
-            .map(|cs| Path::new(cs.entry.path.as_str()).file_name())
+            .map(|cs| {
+                Path::new(cs.entry.path.as_str())
+                    .file_name()
+                    .map(Into::into)
+            })
             .collect();
         let mut recordings = contributing;
         for path in stints_for_car_newest_first(stints_dir, campaign_car) {
@@ -157,31 +155,30 @@ pub(crate) fn attach_saturation(stints: &mut [CampaignStint], stints_dir: &str) 
                 break;
             }
             // Separator-safe exclusion of the campaign's own recordings.
-            if have.contains(&Path::new(&path).file_name()) {
+            if have.contains(&Path::new(&path).file_name().map(Into::into)) {
                 continue;
             }
-            let Ok(stint) = analysis::Stint::load(path.as_ref()) else {
+            let Ok(sib) = analysis::products::cached(path.as_ref()) else {
                 continue;
             };
-            let segments = analysis::driving_segments(&stint.frames, 5.0);
-            let Some(longest) = segments.iter().max_by_key(|s| s.len()) else {
-                continue;
-            };
-            let samples = grip::cornering_samples(longest);
-            if samples.is_empty() || analysis::metrics::stint_metrics(longest).surface_loose {
+            if sib.samples.is_empty() || sib.met.as_ref().is_none_or(|m| m.surface_loose) {
                 continue;
             }
             recordings += 1;
-            pooled.extend(samples);
+            pooled.extend(sib.samples.iter().copied());
             source = grip::CurveSource::CarPool;
         }
     }
     let Some(curves) = grip::fit_curves(&pooled) else {
         return;
     };
-    for (cs, samples) in stints.iter_mut().zip(&per) {
-        if let (Some(m), Some(samples)) = (cs.met.as_mut(), samples) {
-            m.grip_saturation = grip::occupancy(samples, &curves, source);
+    for cs in stints.iter_mut() {
+        if !contributes(cs) {
+            continue;
+        }
+        let occ = grip::occupancy(&cs.data.samples, &curves, source);
+        if let Some(m) = cs.met.as_mut() {
+            m.grip_saturation = occ;
         }
     }
 }
@@ -218,16 +215,17 @@ pub(crate) struct Measurement {
     pub effects: effects::Effects,
 }
 
-/// One journaled stint, loaded and profiled, with its per-stint analysis
-/// products and the comparison against its chronological neighbor.
+/// One journaled stint's cached analysis products, with the per-campaign
+/// comparison against its chronological neighbor. Frames are never held:
+/// `data` is the compact distillation (plan 018 — a campaign of raw
+/// recordings in RAM was the analysis-freeze memory hazard).
 pub(crate) struct CampaignStint {
     pub entry: journal::Entry,
-    pub stint: analysis::Stint,
-    pub profile: analysis::profile::StintProfile,
+    pub data: std::sync::Arc<analysis::products::StintData>,
     /// Overall metrics of the longest driving segment (None when too short).
+    /// Cloned out of `data`: the campaign stamps its own pooled
+    /// grip-saturation into it, which must not leak into the shared cache.
     pub met: Option<analysis::metrics::StintMetrics>,
-    /// Effect vector from `met` (empty when metrics are absent).
-    pub fx: effects::Effects,
     /// Parsed clauses of the journal note.
     pub changes: Vec<journal::Change>,
     /// "suspect" in the note is the driver's own verdict on the stint
@@ -237,6 +235,25 @@ pub(crate) struct CampaignStint {
     /// Comparison vs the previous stint, or why it isn't comparable. None
     /// for the first stint.
     pub vs_prev: Option<Result<PairVerdict, String>>,
+}
+
+impl CampaignStint {
+    /// Campaign stints are only constructed from profiled recordings.
+    pub fn profile(&self) -> &analysis::profile::StintProfile {
+        self.data
+            .profile
+            .as_ref()
+            .expect("campaign stints are profiled")
+    }
+
+    /// Effect vector from the stint's metrics.
+    pub fn fx(&self) -> &effects::Effects {
+        &self.data.fx
+    }
+
+    pub fn car(&self) -> Option<i32> {
+        self.data.car
+    }
 }
 
 /// Outcome of comparing a stint against its predecessor: the 2-of-3 vote
@@ -257,13 +274,13 @@ pub(crate) struct PairVerdict {
 /// (no corroboration) or failed the splice-trust gate.
 pub(super) fn pair_thin(stints: &[CampaignStint], i: usize, j: usize) -> bool {
     stints[i]
-        .profile
+        .profile()
         .laps
         .len()
-        .min(stints[j].profile.laps.len())
+        .min(stints[j].profile().laps.len())
         < 2
-        || !splice_trusted(&stints[i].profile)
-        || !splice_trusted(&stints[j].profile)
+        || !splice_trusted(stints[i].profile())
+        || !splice_trusted(stints[j].profile())
 }
 
 /// A single STATE profile is thin on the same grounds.
@@ -302,8 +319,8 @@ pub(super) fn consecutive_groups(
 /// pair-level corner-matched apex speed (position-matched corner runs on the
 /// earlier stint's route — computable because campaign stints share one).
 pub(super) fn pair_effects(from: &CampaignStint, to: &CampaignStint) -> effects::Effects {
-    let mut d = effects::delta(&from.fx, &to.fx);
-    if let Some(v) = analysis::attribution::apex_speed_delta(&from.profile, &to.profile) {
+    let mut d = effects::delta(from.fx(), to.fx());
+    if let Some(v) = analysis::attribution::apex_speed_delta(from.profile(), to.profile()) {
         d.push(("apex_speed", v));
     }
     d
@@ -351,7 +368,7 @@ impl Campaign<'_> {
     pub fn state_profile(&self, k: usize) -> &analysis::profile::StintProfile {
         self.pooled
             .get(&self.groups[k])
-            .unwrap_or(&self.stints[k].profile)
+            .unwrap_or_else(|| self.stints[k].profile())
     }
 
     /// Last member index of `k`'s group.
@@ -476,12 +493,7 @@ pub(crate) fn load_campaign<'s>(
     use std::time::{Duration, Instant};
     let trace = std::env::var_os("TUNERS_ADVISE_TRACE").is_some();
     let t0 = Instant::now();
-    let (mut t_load, mut t_profile, mut t_met, mut t_cmp) = (
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-        Duration::ZERO,
-    );
+    let (mut t_load, mut t_cmp) = (Duration::ZERO, Duration::ZERO);
 
     let mut stints: Vec<CampaignStint> = Vec::new();
     let mut in_progress = None;
@@ -498,31 +510,23 @@ pub(crate) fn load_campaign<'s>(
             });
         }
         let t = Instant::now();
-        let stint = analysis::Stint::load(entry.path.as_ref())
+        let data = analysis::products::cached(entry.path.as_ref())
             .map_err(|e| format!("{}: {e}", entry.path))?;
         t_load += t.elapsed();
-        let t = Instant::now();
-        let profile = match analysis::profile::stint_profile(&stint.frames) {
-            Ok(profile) => profile,
-            Err(_) if i == last => {
+        if data.profile.is_err() {
+            if i == last {
                 in_progress = Some(entry.path.clone());
-                continue;
-            }
-            Err(_) => {
+            } else {
                 // A lap-less middle stint (an event entered and abandoned in
                 // the pause menu auto-cuts into a tiny recording) is a menu
                 // artifact, not data trouble: skip it. Anything unreadable
-                // still fails hard at Stint::load above.
+                // still fails hard at the load above.
                 no_laps.push(entry.path.clone());
                 carry = entry.note.take();
-                continue;
             }
-        };
-        t_profile += t.elapsed();
-        let t = Instant::now();
-        let met = stint_overall_metrics(&stint);
-        let fx = met.as_ref().map(effects::vector).unwrap_or_default();
-        t_met += t.elapsed();
+            continue;
+        }
+        let met = data.met.clone();
         let changes = entry
             .note
             .as_deref()
@@ -533,35 +537,33 @@ pub(crate) fn load_campaign<'s>(
             .as_deref()
             .is_some_and(|n| n.to_lowercase().contains("suspect"));
         let t = Instant::now();
+        let profile = data.profile.as_ref().expect("checked above");
         let vs_prev = stints.last().map(|prev: &CampaignStint| {
-            analysis::compare::compare(&prev.profile, &profile).map(|cmp| PairVerdict {
+            analysis::compare::compare(prev.profile(), profile).map(|cmp| PairVerdict {
                 verdict_s: cmp.verdict_delta_s,
                 ideal_s: cmp.ideal_delta_s,
                 best_s: cmp.best_lap_delta_s,
                 median_lap_s: cmp.median_lap_delta_s,
-                attr: analysis::attribution::split_delta(&prev.profile, &cmp.bin_delta_s),
+                attr: analysis::attribution::split_delta(prev.profile(), &cmp.bin_delta_s),
             })
         });
         t_cmp += t.elapsed();
         stints.push(CampaignStint {
             entry,
-            stint,
-            profile,
+            data,
             met,
-            fx,
             changes,
             suspect,
             vs_prev,
         });
     }
     if trace {
+        let (hits, misses) = analysis::products::cache_counters();
         eprintln!(
-            "advise-trace: {} stints in {:.2?} (load {:.2?} / profile {:.2?} / metrics {:.2?} / neighbor-compare {:.2?})",
+            "advise-trace: {} stints in {:.2?} (products {:.2?}, cache {hits} hits / {misses} misses lifetime, neighbor-compare {:.2?})",
             stints.len(),
             t0.elapsed(),
             t_load,
-            t_profile,
-            t_met,
             t_cmp
         );
     }
@@ -581,7 +583,7 @@ pub(crate) fn load_campaign<'s>(
     let setups: Vec<Option<&'s crate::advice::tuning::Revision>> = stints
         .iter()
         .map(|cs| {
-            let car = car_of(&cs.stint);
+            let car = cs.car();
             if car.is_none() || car != session.car {
                 return None;
             }
@@ -604,7 +606,7 @@ pub(crate) fn load_campaign<'s>(
     // spread), and A-B-A stays per-stint too.
     let standing: Vec<bool> = stints
         .iter()
-        .map(|s| s.profile.standing_start_only)
+        .map(|s| s.profile().standing_start_only)
         .collect();
     let groups = consecutive_groups(&standing, &setups);
     let mut last_member: Vec<usize> = (0..n).collect();
@@ -621,7 +623,7 @@ pub(crate) fn load_campaign<'s>(
             continue; // not a group head, or a singleton
         }
         let laps: Vec<analysis::profile::LapProfile> = (g..=last_member[g])
-            .flat_map(|k| stints[k].profile.laps.iter().cloned())
+            .flat_map(|k| stints[k].profile().laps.iter().cloned())
             .collect();
         let Some(shared) = laps.iter().map(|l| l.bins.len()).min() else {
             continue;
@@ -632,8 +634,8 @@ pub(crate) fn load_campaign<'s>(
                 composite: analysis::profile::build_composite(&laps, shared),
                 shared_bins: shared,
                 best_lap_time_s: laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min),
-                standing_start_only: stints[g].profile.standing_start_only,
-                car_ordinal: stints[g].profile.car_ordinal,
+                standing_start_only: stints[g].profile().standing_start_only,
+                car_ordinal: stints[g].profile().car_ordinal,
                 laps,
             },
         );
@@ -646,7 +648,9 @@ pub(crate) fn load_campaign<'s>(
         );
     }
     let state_profile = |k: usize| -> &analysis::profile::StintProfile {
-        pooled.get(&groups[k]).unwrap_or(&stints[k].profile)
+        pooled
+            .get(&groups[k])
+            .unwrap_or_else(|| stints[k].profile())
     };
     let group_suspect = |k: usize| (groups[k]..=last_member[k]).any(|m: usize| stints[m].suspect);
     let state_weak = |i: usize, j: usize| {
@@ -677,7 +681,7 @@ pub(crate) fn load_campaign<'s>(
             if pair_thin(&stints, i, j) {
                 continue;
             }
-            if let Ok(cmp) = analysis::compare::compare(&stints[i].profile, &stints[j].profile) {
+            if let Ok(cmp) = analysis::compare::compare(stints[i].profile(), stints[j].profile()) {
                 drift_obs.push(cmp.verdict_delta_s.abs());
                 // Same-setup behavioural movement is pure drift too: the
                 // campaign's own per-field noise floor.

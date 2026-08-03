@@ -27,10 +27,9 @@ pub struct LapsView {
 
 pub fn laps_view(file: &str) -> Result<LapsView, ApiError> {
     let path = checked_session_path(file)?;
-    let session = crate::analysis::Stint::load(path)
+    let data = crate::analysis::products::cached(path)
         .map_err(|e| ApiError::internal(format!("{}: {e}", path.display())))?;
-    let profile =
-        crate::analysis::profile::stint_profile(&session.frames).map_err(ApiError::internal)?;
+    let profile = data.profile.as_ref().map_err(ApiError::internal)?;
     let laps = profile
         .laps
         .iter()
@@ -87,15 +86,22 @@ pub struct CompareView {
 pub fn compare_view(a: &str, b: &str) -> Result<CompareView, ApiError> {
     let a_path = checked_session_path(a)?;
     let b_path = checked_session_path(b)?;
-    let profile = |path: &Path| -> Result<_, ApiError> {
-        let session = crate::analysis::Stint::load(path)
-            .map_err(|e| ApiError::internal(format!("{}: {e}", path.display())))?;
-        crate::analysis::profile::stint_profile(&session.frames)
+    let load = |path: &Path| -> Result<_, ApiError> {
+        crate::analysis::products::cached(path)
             .map_err(|e| ApiError::internal(format!("{}: {e}", path.display())))
     };
-    let pa = profile(a_path)?;
-    let pb = profile(b_path)?;
-    let cmp = crate::analysis::compare::compare(&pa, &pb).map_err(ApiError::internal)?;
+    let (da, db) = (load(a_path)?, load(b_path)?);
+    fn profile<'d>(
+        data: &'d crate::analysis::products::StintData,
+        path: &Path,
+    ) -> Result<&'d crate::analysis::profile::StintProfile, ApiError> {
+        data.profile
+            .as_ref()
+            .map_err(|e| ApiError::internal(format!("{}: {e}", path.display())))
+    }
+    let pa = profile(&da, a_path)?;
+    let pb = profile(&db, b_path)?;
+    let cmp = crate::analysis::compare::compare(pa, pb).map_err(ApiError::internal)?;
     let shared = cmp.bin_delta_s.len();
     let speeds = |p: &crate::analysis::profile::StintProfile| {
         p.composite.bins[..shared]
@@ -113,10 +119,10 @@ pub fn compare_view(a: &str, b: &str) -> Result<CompareView, ApiError> {
     };
     Ok(CompareView {
         bin_meters: crate::analysis::profile::BIN_METERS,
-        a: side(a_path, &pa),
-        b: side(b_path, &pb),
-        speeds_a: speeds(&pa),
-        speeds_b: speeds(&pb),
+        a: side(a_path, pa),
+        b: side(b_path, pb),
+        speeds_a: speeds(pa),
+        speeds_b: speeds(pb),
         times_a: pa.composite.bins[..shared]
             .iter()
             .map(|b| b.time_s)
