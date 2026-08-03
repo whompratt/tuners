@@ -473,6 +473,16 @@ pub(crate) fn load_campaign<'s>(
         ));
     }
 
+    use std::time::{Duration, Instant};
+    let trace = std::env::var_os("TUNERS_ADVISE_TRACE").is_some();
+    let t0 = Instant::now();
+    let (mut t_load, mut t_profile, mut t_met, mut t_cmp) = (
+        Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
+        Duration::ZERO,
+    );
+
     let mut stints: Vec<CampaignStint> = Vec::new();
     let mut in_progress = None;
     let mut no_laps: Vec<String> = Vec::new();
@@ -487,8 +497,11 @@ pub(crate) fn load_campaign<'s>(
                 None => c,
             });
         }
+        let t = Instant::now();
         let stint = analysis::Stint::load(entry.path.as_ref())
             .map_err(|e| format!("{}: {e}", entry.path))?;
+        t_load += t.elapsed();
+        let t = Instant::now();
         let profile = match analysis::profile::stint_profile(&stint.frames) {
             Ok(profile) => profile,
             Err(_) if i == last => {
@@ -505,8 +518,11 @@ pub(crate) fn load_campaign<'s>(
                 continue;
             }
         };
+        t_profile += t.elapsed();
+        let t = Instant::now();
         let met = stint_overall_metrics(&stint);
         let fx = met.as_ref().map(effects::vector).unwrap_or_default();
+        t_met += t.elapsed();
         let changes = entry
             .note
             .as_deref()
@@ -516,6 +532,7 @@ pub(crate) fn load_campaign<'s>(
             .note
             .as_deref()
             .is_some_and(|n| n.to_lowercase().contains("suspect"));
+        let t = Instant::now();
         let vs_prev = stints.last().map(|prev: &CampaignStint| {
             analysis::compare::compare(&prev.profile, &profile).map(|cmp| PairVerdict {
                 verdict_s: cmp.verdict_delta_s,
@@ -525,6 +542,7 @@ pub(crate) fn load_campaign<'s>(
                 attr: analysis::attribution::split_delta(&prev.profile, &cmp.bin_delta_s),
             })
         });
+        t_cmp += t.elapsed();
         stints.push(CampaignStint {
             entry,
             stint,
@@ -535,6 +553,17 @@ pub(crate) fn load_campaign<'s>(
             suspect,
             vs_prev,
         });
+    }
+    if trace {
+        eprintln!(
+            "advise-trace: {} stints in {:.2?} (load {:.2?} / profile {:.2?} / metrics {:.2?} / neighbor-compare {:.2?})",
+            stints.len(),
+            t0.elapsed(),
+            t_load,
+            t_profile,
+            t_met,
+            t_cmp
+        );
     }
     if stints.is_empty() {
         return Err(format!(
@@ -584,6 +613,7 @@ pub(crate) fn load_campaign<'s>(
             last_member[k] = last_member[k + 1];
         }
     }
+    let t_pool = Instant::now();
     let mut pooled: std::collections::HashMap<usize, analysis::profile::StintProfile> =
         std::collections::HashMap::new();
     for g in 0..n {
@@ -608,6 +638,13 @@ pub(crate) fn load_campaign<'s>(
             },
         );
     }
+    if trace {
+        eprintln!(
+            "advise-trace: {} pooled group profiles in {:.2?}",
+            pooled.len(),
+            t_pool.elapsed()
+        );
+    }
     let state_profile = |k: usize| -> &analysis::profile::StintProfile {
         pooled.get(&groups[k]).unwrap_or(&stints[k].profile)
     };
@@ -626,6 +663,7 @@ pub(crate) fn load_campaign<'s>(
     // The campaign's own noise floor: |ideal delta| across SAME-setup stint
     // pairs is pure driver/track drift. Verdicts with margins below the
     // worst observed drift are provisional, and advice must say so.
+    let t_drift = Instant::now();
     let mut drift_obs: Vec<f32> = Vec::new();
     let mut effect_floor: effects::Effects = Vec::new();
     for j in 1..n {
@@ -658,6 +696,14 @@ pub(crate) fn load_campaign<'s>(
     // Reconciliation then uses each family's LATEST measurement, so
     // knowledge from earlier steps keeps tempering advice instead of
     // evaporating when the experiment topic changes.
+    if trace {
+        eprintln!(
+            "advise-trace: drift floor ({} same-setup pairs) in {:.2?}",
+            drift_obs.len(),
+            t_drift.elapsed()
+        );
+    }
+    let t_meas = Instant::now();
     let mut measurements: Vec<Measurement> = Vec::new();
     for j in 1..n {
         for i in 0..j {
@@ -815,6 +861,15 @@ pub(crate) fn load_campaign<'s>(
                 });
             }
         }
+    }
+
+    if trace {
+        eprintln!(
+            "advise-trace: {} measurements in {:.2?}; load_campaign total {:.2?}",
+            measurements.len(),
+            t_meas.elapsed(),
+            t0.elapsed()
+        );
     }
 
     Ok(Campaign {

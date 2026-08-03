@@ -356,7 +356,11 @@ pub fn advise(
     }
 
     let mut c = load_campaign(entries, &session, journal_path)?;
+    let t_sat = std::time::Instant::now();
     attach_saturation(&mut c.stints, stints_dir);
+    if std::env::var_os("TUNERS_ADVISE_TRACE").is_some() {
+        eprintln!("advise-trace: attach_saturation in {:.2?}", t_sat.elapsed());
+    }
     let n = c.stints.len();
 
     let mut steps = Vec::new();
