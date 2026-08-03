@@ -259,28 +259,36 @@ fn quad_fit_finds_the_interior_optimum() {
 fn probe_extends_the_mapped_edge() {
     // Better at the low end: probe below it by a quarter span.
     let nodes = [(29.0, -0.21, 1), (100.0, 0.22, 1)];
-    let v = probe_value(&nodes, Some((0.0, 100.0))).unwrap();
+    let v = probe_value(&nodes, Some((0.0, 100.0)), 0.1).unwrap();
     assert!((v - 11.2).abs() < 0.11, "{v}");
     // Clamped by the slider range but still a new point.
     let nodes = [(12.0, 0.0, 1), (100.0, 0.63, 1)];
-    assert_eq!(probe_value(&nodes, Some((0.0, 100.0))), Some(0.0));
+    assert_eq!(probe_value(&nodes, Some((0.0, 100.0)), 0.1), Some(0.0));
     // Better at the high end: probe above.
     let nodes = [(20.0, 0.31, 1), (52.0, 0.0, 1)];
-    let v = probe_value(&nodes, Some((0.0, 100.0))).unwrap();
+    let v = probe_value(&nodes, Some((0.0, 100.0)), 0.1).unwrap();
     assert!((v - 60.0).abs() < 0.11, "{v}");
     // Interior best: the fit's vertex owns it.
     let nodes = [(17.0, -0.16, 1), (18.0, -0.49, 1), (20.7, 0.0, 1)];
-    assert_eq!(probe_value(&nodes, None), None);
+    assert_eq!(probe_value(&nodes, None, 0.1), None);
     // One small improving step (the Ferrari final-drive case): a quarter
-    // span rounds onto the best value, so probe one display step out instead.
+    // span rounds onto the best value, so probe one slider step out instead.
     let nodes = [(3.95, 0.0, 1), (4.1, -0.27, 1)];
-    assert_eq!(probe_value(&nodes, None), Some(4.2));
+    assert_eq!(probe_value(&nodes, None, 0.1), Some(4.2));
     // Flat landscape: nothing worth a stint.
     let nodes = [(3.35, -0.04, 1), (3.63, 0.03, 1)];
-    assert_eq!(probe_value(&nodes, None), None);
+    assert_eq!(probe_value(&nodes, None, 0.1), None);
     // Best pinned at the slider bound: no new point exists.
     let nodes = [(0.0, -0.3, 1), (50.0, 0.2, 1)];
-    assert_eq!(probe_value(&nodes, Some((0.0, 100.0))), None);
+    assert_eq!(probe_value(&nodes, Some((0.0, 100.0)), 0.1), None);
+    // Whole-unit slider (diff lock): the probe lands on an integer even
+    // when the quarter span is fractional.
+    let nodes = [(30.0, 0.31, 1), (65.0, 0.0, 1)];
+    let v = probe_value(&nodes, Some((0.0, 100.0)), 1.0).unwrap();
+    assert_eq!(v, 74.0, "quarter span 8.75 snaps to a whole unit");
+    // ...and the small-span fallback steps a whole unit, not 0.1.
+    let nodes = [(50.0, 0.0, 1), (51.0, -0.27, 1)];
+    assert_eq!(probe_value(&nodes, None, 1.0), Some(52.0));
 }
 
 /// Deleted recordings are skipped but their tune changes carry forward:

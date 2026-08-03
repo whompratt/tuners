@@ -42,8 +42,18 @@ pub(super) fn quad_fit(pts: &[(f32, f32)]) -> Option<(f64, f64, f64)> {
 /// value, away from the worse side, by a quarter of the mapped span,
 /// bracketing the optimum from the good side. None when the landscape is
 /// flat vs the noise floor, the best value is interior (the curve fit owns
-/// that case), or the slider's range allows no new point.
-pub(super) fn probe_value(nodes: &[(f32, f32, usize)], lim: Option<(f32, f32)>) -> Option<f32> {
+/// that case), or the slider's range allows no new point. `step` is the
+/// slider's granularity (tuning::slider_step): probes land on real slider
+/// positions, so whole-unit sliders (diff lock) never get fractional asks.
+pub(super) fn probe_value(
+    nodes: &[(f32, f32, usize)],
+    lim: Option<(f32, f32)>,
+    step: f32,
+) -> Option<f32> {
+    // Snap through the reciprocal: dividing the rounded multiple keeps
+    // f32 exactness for tenths ((x/0.1).round()*0.1 drifts, 4.2000003).
+    let inv = 1.0 / step;
+    let snap = move |x: f32| (x * inv).round() / inv;
     let (first, last) = (nodes.first()?, nodes.last()?);
     let (lo, hi) = nodes.iter().fold((f32::MAX, f32::MIN), |(lo, hi), n| {
         (lo.min(n.1), hi.max(n.1))
@@ -63,17 +73,17 @@ pub(super) fn probe_value(nodes: &[(f32, f32, usize)], lim: Option<(f32, f32)>) 
     // A small mapped span must still ask for a NEW point: after a single
     // small improving step, a quarter-span probe rounds back onto the best
     // tried value and the guard below would cancel the ask, so step one
-    // display unit outward instead.
-    if ((v * 10.0).round() - (best.0 * 10.0).round()).abs() < 0.5 {
-        v = best.0 + dir * 0.1;
+    // slider unit outward instead.
+    if (snap(v) - snap(best.0)).abs() < step * 0.5 {
+        v = best.0 + dir * step;
     }
     if let Some((mn, mx)) = lim {
         v = v.clamp(mn, mx);
     }
-    let v = (v * 10.0).round() / 10.0;
-    // Compare at display granularity: clamping to a slider bound must not
+    let v = snap(v);
+    // Compare at slider granularity: clamping to a slider bound must not
     // fabricate a "new" point that rounds to the best tried value.
-    ((v - (best.0 * 10.0).round() / 10.0).abs() > 0.05).then_some(v)
+    ((v - snap(best.0)).abs() > step * 0.5).then_some(v)
 }
 
 /// The tune field a note clause is about, matched by field phrase (auto-

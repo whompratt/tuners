@@ -116,6 +116,18 @@ pub fn universal_limit(key: &str) -> Option<(f32, f32)> {
     })
 }
 
+/// Slider granularity in the game's tuning UI. Percent sliders (diff lock,
+/// center diff, brakes) move in whole units — advice must never suggest a
+/// fractional value for them. Everything else is at least as fine as the
+/// 0.1 the advice rounds suggested values to.
+pub fn slider_step(key: &str) -> f32 {
+    match key {
+        "brake_balance" | "brake_pressure" | "diff_center" | "diff_accel_f" | "diff_accel_r"
+        | "diff_decel_f" | "diff_decel_r" => 1.0,
+        _ => 0.1,
+    }
+}
+
 /// Slider range for a field: a `limit_<key>` session fact ("min..max" in
 /// canonical units) when recorded, else the universal range when the game
 /// fixes it across cars.

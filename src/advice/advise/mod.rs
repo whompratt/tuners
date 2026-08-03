@@ -769,7 +769,9 @@ pub fn advise(
                 if let Some(lim) = crate::advice::tuning::limit_of(&session.facts, key) {
                     vertex = vertex.clamp(lim.0, lim.1);
                 }
-                let vertex = (vertex * 10.0).round() / 10.0;
+                let step = crate::advice::tuning::slider_step(key);
+                // Reciprocal form keeps tenths exact in f32 (4.2, not 4.2000003).
+                let vertex = (vertex * (1.0 / step)).round() / (1.0 / step);
                 vertex_out = Some(vertex);
                 let phrase = crate::advice::tuning::field_phrase(key);
                 // Already there? Then the ask is NOTHING; repeats tighten
@@ -780,7 +782,7 @@ pub fn advise(
                     .copied()
                     .flatten()
                     .and_then(|b| b.values.get(key)?.parse::<f32>().ok())
-                    .is_some_and(|cur| (cur - vertex).abs() < 0.05);
+                    .is_some_and(|cur| (cur - vertex).abs() < step * 0.5);
                 let landscape = nodes_summary(&disp_nodes);
                 let disp =
                     crate::advice::tuning::display_value(key, &vertex.to_string(), &session.facts);
@@ -919,8 +921,11 @@ pub fn advise(
         // matters. Not an optimization claim; explicitly a probe.
         if vertex_out.is_none()
             && let Some(key) = key.as_deref()
-            && let Some(v) =
-                probe_value(&nodes, crate::advice::tuning::limit_of(&session.facts, key))
+            && let Some(v) = probe_value(
+                &nodes,
+                crate::advice::tuning::limit_of(&session.facts, key),
+                crate::advice::tuning::slider_step(key),
+            )
         {
             let phrase = crate::advice::tuning::field_phrase(key);
             let best = nodes
@@ -1091,16 +1096,22 @@ pub fn advise(
             continue;
         };
         let phrase = crate::advice::tuning::field_phrase(key);
+        let step = crate::advice::tuning::slider_step(key);
         // The headline now carries the value; the relative phrasing from
         // blind-mode reconciliation becomes redundant.
         r.advice = r
             .advice
-            .replace(&format!(" Go {delta:+.1} slider units from here."), "");
+            .replace(&journal::slider_units_phrase(implied.family, delta), "");
         r.suggestion = match base.and_then(|b| b.values.get(key)?.parse::<f32>().ok()) {
             Some(cur) => {
                 let mut target = cur + delta;
                 if let Some(lim) = crate::advice::tuning::limit_of(&session.facts, key) {
                     target = target.clamp(lim.0, lim.1);
+                }
+                // Whole-unit sliders (diff lock, brakes) only take integer
+                // positions: the target must land on one.
+                if step >= 1.0 {
+                    target = (target / step).round() * step;
                 }
                 // Clamping can land the target back on the current value
                 // (slider already at the bound): asking for no change is

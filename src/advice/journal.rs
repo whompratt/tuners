@@ -57,6 +57,40 @@ pub fn family_for_area(area: &str) -> Option<Family> {
     })
 }
 
+/// Slider granularity shared by every field of a family: the percent
+/// sliders (diffs, brakes) move in whole units, everything else in tenths
+/// (mirrors tuning::slider_step, which is keyed per field).
+pub fn family_step(family: Family) -> f32 {
+    match family {
+        Family::DiffAccel | Family::DiffDecel | Family::CenterDiff | Family::Brakes => 1.0,
+        _ => 0.1,
+    }
+}
+
+/// A magnitude snapped to the family's slider granularity: derived deltas
+/// (half-reverts) on whole-unit sliders must stay whole. Finer families
+/// pass through untouched.
+pub fn family_magnitude(family: Family, m: f32) -> f32 {
+    let step = family_step(family);
+    if step >= 1.0 {
+        (m / step).round() * step
+    } else {
+        m
+    }
+}
+
+/// The relative-delta advice fragment ("Go +1.0 slider units from here.").
+/// Whole-unit families phrase whole numbers; the advise headline path
+/// removes this exact string when it resolves a concrete target, so both
+/// sides must render through here.
+pub fn slider_units_phrase(family: Family, delta: f32) -> String {
+    if family_step(family) >= 1.0 {
+        format!(" Go {delta:+} slider units from here.")
+    } else {
+        format!(" Go {delta:+.1} slider units from here.")
+    }
+}
+
 /// A step on a parameter family. Still blind to absolute setup values: the
 /// optional magnitude is a SIGNED delta in slider units (negative = softer),
 /// which lets positions accumulate relative to baseline without
@@ -418,8 +452,8 @@ pub fn reconcile(
                      behaviour still points the same way."
                 );
                 if let Some(m) = change.magnitude {
-                    r.advice
-                        .push_str(&format!(" Go {:+.1} slider units from here.", -m / 2.0));
+                    let half = family_magnitude(change.family, -m / 2.0);
+                    r.advice.push_str(&slider_units_phrase(change.family, half));
                 }
                 r.evidence.push(format!(
                     "last step in this direction lost {d:.2}s of ideal lap"
@@ -431,7 +465,9 @@ pub fn reconcile(
                 // can be resolved when the setup is on file.
                 r.implied = Some(Change {
                     softer: !implied.softer,
-                    magnitude: change.magnitude.map(|m| -m / 2.0),
+                    magnitude: change
+                        .magnitude
+                        .map(|m| family_magnitude(change.family, -m / 2.0)),
                     ..implied
                 });
             }
@@ -819,6 +855,38 @@ mod tests {
         let implied = recs[0].implied.unwrap();
         assert!(!implied.softer);
         assert_eq!(implied.magnitude, Some(1.0));
+    }
+
+    #[test]
+    fn revert_half_stays_whole_on_integer_sliders() {
+        // Diff lock moves in whole percent: half of a 15-step revert must
+        // not ask for 7.5, and the fragment must not show decimals.
+        let mut recs = vec![Recommendation {
+            implied: Some(Change {
+                family: Family::DiffAccel,
+                softer: false,
+                magnitude: None,
+            }),
+            ..balance_rec()
+        }];
+        reconcile(
+            &mut recs,
+            Change {
+                family: Family::DiffAccel,
+                softer: false,
+                magnitude: Some(15.0),
+            },
+            Outcome::Worsened(0.3),
+            "rear diff accel +15",
+            None,
+            false,
+        );
+        assert!(
+            recs[0].advice.contains("Go -8 slider units from here"),
+            "{}",
+            recs[0].advice
+        );
+        assert_eq!(recs[0].implied.unwrap().magnitude, Some(-8.0));
     }
 
     /// A compound step's outcome is unattributable, but its clauses still
