@@ -176,6 +176,16 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
 
 - Car identity (`CarOrdinal`), class/PI, **drivetrain type**, cylinder count.
 - Redline (`EngineMaxRpm`), observed peak power/torque (watts/Nm, live).
+- **`EngineMaxRpm` overstates the real rev cut on most cars** (library norm:
+  the cut sits at 91-97% of reported; measured 2026-08-04 across 15 cars).
+  The cut is directly observable: **`Torque` collapses to <= 0 at full
+  throttle in a held gear** when the limiter fires, and the rpm at each
+  collapse onset clusters within ~10 rpm. Upshift/downshift torque dips look
+  identical but straddle a `Gear` change; mid-air free-revs reach the
+  REPORTED max (unloaded wheels), not the cut. Exception: some limiters
+  clamp with torque still positive (Skyline pins 8100 of a reported 10000
+  with zero torque collapses) — only a sustained multi-gear ceiling shows
+  those.
 - Gear count and **effective gear ratios**, derivable from `CurrentEngineRpm` vs
   `WheelRotationSpeed` per `Gear`.
 - Full behaviour set for tuning analysis: per-corner suspension travel (normalized
