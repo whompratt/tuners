@@ -308,11 +308,16 @@ pub(super) fn apply_fd_scale(
             r.suggestion = Some(format!(
                 "final drive {target} (already saved; drive a run to confirm)"
             ));
-        } else {
+        } else if (scale > 1.0) == (target > cur) {
             r.suggestion = Some(format!(
                 "final drive {cur} → {target} (drag-model estimate is rough; a \
                  driven step will refine it)"
             ));
+        } else {
+            // The saved tune already moved past the model's target: an arrow
+            // against the rec's own direction would read broken. The stale
+            // estimate stays quiet; the next completed run re-measures.
+            return;
         }
         r.apply = vec![("final_drive".to_string(), target.to_string())];
         return;

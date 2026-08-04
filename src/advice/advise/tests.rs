@@ -652,6 +652,14 @@ fn fd_scale_bases_on_driven_setup() {
     enrich::apply_fd_scale(&mut recs, &session, Some(1.17), Some(4.12));
     let s = recs[0].suggestion.as_deref().unwrap();
     assert!(s.contains("4.5 → 4.82"), "{s}");
+
+    // Latest revision moved PAST the target: an arrow against the rec's
+    // shorten direction would read broken, so the estimate stays quiet.
+    let session = session_with(&[("final_drive", "5.0")], &[]);
+    let mut recs = vec![gearing_rec(false)];
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.17), Some(4.12));
+    assert!(recs[0].suggestion.is_none());
+    assert!(recs[0].apply.is_empty());
 }
 
 /// Consecutive same-setup stints group into one state; a setup change, an
