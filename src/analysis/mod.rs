@@ -88,23 +88,45 @@ pub struct LapSlice<'a> {
     /// Its time is not comparable to flying laps. Detected by the race clock and
     /// lap clock having started together, which survives capture starting late.
     pub standing_start: bool,
-    /// True when the lap clock stayed locked to the race clock through the
-    /// slice: a point-to-point run. On circuits the lap clock resets at the
-    /// start-line crossing, so the race clock leads it by the rollout time
-    /// (1.9-5.7s measured) for the rest of lap 0; on point-to-point routes the
-    /// clocks never separate (see telemetry.md). Only meaningful on standing
-    /// starts. Rewinds inflate the offset, so a rewound point-to-point run can
-    /// read false (harmless: it falls back to plain standing-start handling).
+    /// True when no start-line lap-clock reset was seen in the slice: a
+    /// point-to-point run, the default assumption. On circuits the lap clock
+    /// RESETS to ~0 at the start-line crossing while the race clock keeps
+    /// advancing; on point-to-point routes it never resets (see telemetry.md).
+    /// A rewind also steps the lap clock down, but steps the race clock (and
+    /// distance) back with it, so requiring an advancing race clock and
+    /// non-retreating distance excludes rewinds (even a rewind to the GO
+    /// moment) and restart-menu flicker. Only meaningful on standing starts.
     pub point_to_point: bool,
 }
 
 /// Max seconds the race clock may lead the lap clock on a standing start
 /// (covers the pre-launch countdown offset, ~2s observed).
 const STANDING_START_CLOCK_OFFSET_S: f32 = 5.0;
-/// Max seconds the race clock may lead the lap clock at the END of a lap for
-/// the run to read point-to-point. Measured separation: circuits 1.86-5.74s
-/// (start-line reset), point-to-point < 0.01s (clocks locked).
-const POINT_TO_POINT_CLOCK_OFFSET_S: f32 = 1.0;
+/// A start-line reset must step the lap clock down at least this far...
+const LAP_RESET_MIN_DROP_S: f32 = 0.25;
+/// ...landing near zero (a rewind restores a mid-lap clock; the line reset
+/// lands within one frame of 0, measured 0.01-0.02s at 60 Hz).
+const LAP_RESET_LANDING_MAX_S: f32 = 0.5;
+
+/// Did the lap clock reset to ~0 at a start-line crossing between these two
+/// frames? The circuit signature: lap clock steps down to near zero while the
+/// race clock advances and distance does not retreat. Rewind splices step the
+/// race clock back; restart-menu flicker teleports distance backwards: neither
+/// qualifies. Shared by lap classification and the live tailer (which flips
+/// the gauge from point-to-point to out lap the moment the line is crossed).
+pub fn line_reset_step(a: &TelemetryFrame, b: &TelemetryFrame) -> bool {
+    b.current_lap < a.current_lap - LAP_RESET_MIN_DROP_S
+        && b.current_lap < LAP_RESET_LANDING_MAX_S
+        && b.current_race_time > a.current_race_time - 0.05
+        && b.distance_traveled > a.distance_traveled - 5.0
+}
+
+/// Was a start-line reset seen anywhere inside this slice?
+fn line_reset_seen(frames: &[TimedFrame]) -> bool {
+    frames
+        .windows(2)
+        .any(|w| line_reset_step(&w[0].frame, &w[1].frame))
+}
 
 /// Split a stint into laps on `LapNumber` transitions. A stint with no transitions
 /// (free roam, where LapNumber stays 0) yields a single slice; callers should only
@@ -127,7 +149,6 @@ pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
                 .map(|next| next.frame.last_lap)
                 .filter(|t| *t > 0.0);
             let first = frames[0].frame;
-            let last = frames[frames.len() - 1].frame;
             let standing_start =
                 first.current_race_time - first.current_lap < STANDING_START_CLOCK_OFFSET_S;
             LapSlice {
@@ -135,8 +156,7 @@ pub fn split_laps(stint: &[TimedFrame]) -> Vec<LapSlice<'_>> {
                 frames,
                 time_s,
                 standing_start,
-                point_to_point: standing_start
-                    && last.current_race_time - last.current_lap < POINT_TO_POINT_CLOCK_OFFSET_S,
+                point_to_point: standing_start && !line_reset_seen(frames),
             }
         })
         .collect()
@@ -372,6 +392,74 @@ mod tests {
         assert_eq!(
             laps[2].time_s, None,
             "final partial lap has no finished time"
+        );
+    }
+
+    /// Route-kind detection: the ONLY circuit signature is the lap clock
+    /// resetting to ~0 at the start-line crossing while the race clock
+    /// advances and distance does not retreat. Rewinds (race clock steps back
+    /// with the lap clock, even to the GO moment) and restart-menu flicker
+    /// (distance teleports backwards) must not read as circuits.
+    #[test]
+    fn line_reset_detects_circuit_not_rewind_or_flicker() {
+        let clocked = |race_t: f32, lap_t: f32, dist: f32| TimedFrame {
+            recv_us: 0,
+            frame: TelemetryFrame {
+                is_race_on: true,
+                lap_number: 0,
+                current_race_time: race_t,
+                current_lap: lap_t,
+                distance_traveled: dist,
+                ..Default::default()
+            },
+        };
+
+        // Circuit: clocks locked from GO, lap clock resets at the line (~2s in).
+        let circuit = vec![
+            clocked(0.0, 0.0, -30.0),
+            clocked(1.0, 1.0, -10.0),
+            clocked(2.0, 2.0, -0.5),
+            clocked(2.02, 0.01, 0.5),
+            clocked(3.0, 0.99, 20.0),
+        ];
+        let laps = split_laps(&circuit);
+        assert!(laps[0].standing_start && !laps[0].point_to_point);
+
+        // Point-to-point: clocks stay locked, no reset.
+        let p2p = vec![
+            clocked(0.0, 0.0, -15.0),
+            clocked(1.0, 1.0, -5.0),
+            clocked(2.0, 2.0, 10.0),
+            clocked(60.0, 60.0, 2500.0),
+        ];
+        let laps = split_laps(&p2p);
+        assert!(laps[0].standing_start && laps[0].point_to_point);
+
+        // Rewind to the GO moment: lap clock lands near 0 but the race clock
+        // (and distance) step back with it — not a line crossing.
+        let rewound = vec![
+            clocked(0.0, 0.0, -15.0),
+            clocked(8.0, 8.0, 300.0),
+            clocked(0.1, 0.1, -14.0),
+            clocked(5.0, 5.0, 150.0),
+        ];
+        let laps = split_laps(&rewound);
+        assert!(
+            laps[0].point_to_point,
+            "rewind to GO is not a circuit reset"
+        );
+
+        // Restart-menu flicker: lap clock drops under a running race clock but
+        // distance teleports backwards (measured pattern, telemetry.md).
+        let flicker = vec![
+            clocked(0.0, 0.0, -15.0),
+            clocked(14.0, 14.0, 400.0),
+            clocked(15.0, 0.45, 196.0),
+        ];
+        let laps = split_laps(&flicker);
+        assert!(
+            laps[0].point_to_point,
+            "restart flicker is not a line reset"
         );
     }
 

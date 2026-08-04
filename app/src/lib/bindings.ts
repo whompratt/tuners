@@ -263,6 +263,11 @@ export type LiveStateView = {
 	ageMs: number | null,
 	frame: FrameView | null,
 	recorder: RecorderView,
+	/**
+	 *  The current race start has crossed a circuit's start line (lap clock
+	 *  reset seen). False = point-to-point so far, the default assumption.
+	 */
+	circuitSeen: boolean,
 };
 
 export type MeasurementView = {

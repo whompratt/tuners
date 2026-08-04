@@ -120,12 +120,16 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   starts). On a **point-to-point route the lap clock never resets**: the two clocks
   stay locked for the whole run (|offset| < 0.01s over 20+ runs, three drivers),
   and the run's official time therefore includes the launch rollout. The
-  race-minus-lap offset at the end of lap 0 separates the kinds with total margin
-  (threshold 1.0s); rewinds only ever inflate the offset (lap clock steps back,
-  race clock does not), so an inflated read can misname a point-to-point run a
-  circuit out lap but never the reverse. Restart-menu flicker can freeze
-  `CurrentLap` (~0.6s) under a running race clock; such runs never complete a lap
-  and are excluded anyway.
+  race-minus-lap offset at the end of lap 0 separates the kinds with total margin,
+  but the production detector is the RESET EVENT itself (point-to-point assumed
+  until a reset is seen): the lap clock stepping down to < 0.5s while the race
+  clock advances and distance does not retreat. The guards matter: a rewind steps
+  the race clock (and distance) back together with the lap clock, so even a rewind
+  to the GO moment cannot fake a line crossing, and restart-menu transitions can
+  leak frames mixing the OLD race clock with a NEW near-zero lap clock while
+  distance teleports backwards (measured: race 15.07 / lap 0.45 / dist 408→196) —
+  excluded by the distance guard. The event also makes the kind knowable live,
+  seconds into lap 0.
 
 ## Rewinds, restarts, collisions (verified 2026-07-19, deliberate-rewind capture)
 

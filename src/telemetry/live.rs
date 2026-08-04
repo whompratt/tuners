@@ -204,6 +204,10 @@ pub struct LiveState {
     pub quality: Option<Quality>,
     /// Bumped whenever quality is recomputed, so SSE resends only on change.
     pub quality_seq: u64,
+    /// A start-line lap-clock reset was seen in the CURRENT race start: the
+    /// run is a circuit lap, not a point-to-point run. Cleared on restart.
+    /// Lets the gauge assume point-to-point and update at the line crossing.
+    pub circuit_seen: bool,
 }
 
 pub type SharedLive = Arc<Mutex<LiveState>>;
@@ -226,6 +230,9 @@ pub fn run_tailer(dir: String, state: SharedLive) {
     let mut frames: Vec<TimedFrame> = Vec::new();
     let mut frames_at_last_quality = 0usize;
     let mut last_quality_at = Instant::now() - QUALITY_INTERVAL;
+    // Route-kind tracking for the current race start (see LiveState).
+    let mut prev_race: Option<crate::telemetry::packet::TelemetryFrame> = None;
+    let mut circuit_seen = false;
 
     loop {
         let newest = newest_stint(&dir);
@@ -233,6 +240,8 @@ pub fn run_tailer(dir: String, state: SharedLive) {
             tail = None;
             frames.clear();
             frames_at_last_quality = 0;
+            prev_race = None;
+            circuit_seen = false;
             if let Some(path) = &newest
                 && let Ok(t) = StintTail::open(path)
             {
@@ -250,6 +259,19 @@ pub fn run_tailer(dir: String, state: SharedLive) {
                 Ok(records) if !records.is_empty() => {
                     for (recv_us, payload) in &records {
                         if let Ok(frame) = packet::decode(payload) {
+                            if frame.is_race_on {
+                                if let Some(p) = &prev_race {
+                                    // Restart: the race clock stepped back to ~0.
+                                    if frame.current_race_time < p.current_race_time - 0.25
+                                        && frame.current_race_time < 5.0
+                                    {
+                                        circuit_seen = false;
+                                    } else if crate::analysis::line_reset_step(p, &frame) {
+                                        circuit_seen = true;
+                                    }
+                                }
+                                prev_race = Some(frame);
+                            }
                             frames.push(TimedFrame {
                                 recv_us: *recv_us,
                                 frame,
@@ -259,6 +281,7 @@ pub fn run_tailer(dir: String, state: SharedLive) {
                     let mut s = state.lock().unwrap();
                     s.latest = frames.last().copied();
                     s.last_data = Some(Instant::now());
+                    s.circuit_seen = circuit_seen;
                 }
                 Ok(_) => {}
                 Err(_) => {

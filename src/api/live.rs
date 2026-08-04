@@ -48,6 +48,9 @@ pub struct LiveStateView {
     pub age_ms: Option<u32>,
     pub frame: Option<FrameView>,
     pub recorder: RecorderView,
+    /// The current race start has crossed a circuit's start line (lap clock
+    /// reset seen). False = point-to-point so far, the default assumption.
+    pub circuit_seen: bool,
 }
 
 pub fn live_state_view(
@@ -80,6 +83,7 @@ pub fn live_state_view(
             .map(|t| t.elapsed().as_millis().min(u32::MAX as u128) as u32),
         frame,
         recorder: recorder_view(r),
+        circuit_seen: s.circuit_seen,
     }
 }
 
