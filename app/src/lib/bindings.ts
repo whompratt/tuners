@@ -312,6 +312,8 @@ export type QualityView = {
 	laps: number,
 	standingOnly: boolean,
 	pointToPoint: boolean,
+	/**  Recordings contributing laps (> 1 = same-setup predecessors pooled in). */
+	recordings: number,
 	bestLapS: number | null,
 	spreadPct: number | null,
 	sharedKm: number | null,

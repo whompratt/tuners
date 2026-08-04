@@ -120,6 +120,8 @@ pub struct QualityView {
     pub laps: u32,
     pub standing_only: bool,
     pub point_to_point: bool,
+    /// Recordings contributing laps (> 1 = same-setup predecessors pooled in).
+    pub recordings: u32,
     pub best_lap_s: f32,
     pub spread_pct: f32,
     pub shared_km: f32,
@@ -134,6 +136,7 @@ pub fn quality_view(q: Option<&crate::telemetry::live::Quality>) -> Option<Quali
         laps: q.laps as u32,
         standing_only: q.standing_only,
         point_to_point: q.point_to_point,
+        recordings: q.recordings,
         best_lap_s: q.best_lap_s,
         spread_pct: q.spread_frac * 100.0,
         shared_km: q.shared_km,

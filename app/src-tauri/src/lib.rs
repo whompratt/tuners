@@ -571,8 +571,12 @@ pub fn run() {
             let recorder = tuners::telemetry::record::new_shared();
             {
                 let dir = sessions_dir.clone();
+                let session = session_file.clone();
+                let journal = journal_base.clone();
                 let live = live.clone();
-                std::thread::spawn(move || tuners::telemetry::live::run_tailer(dir, live));
+                std::thread::spawn(move || {
+                    tuners::telemetry::live::run_tailer(dir, session, journal, live)
+                });
             }
             {
                 let out_dir = PathBuf::from(&sessions_dir);

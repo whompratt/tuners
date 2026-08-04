@@ -19,8 +19,8 @@ mod view;
 
 use campaign::pair_effects;
 pub(crate) use campaign::{
-    Campaign, Measurement, attach_saturation, campaign_closed, implicit_steps, load_campaign,
-    stint_stamp,
+    Campaign, CampaignBound, Measurement, attach_saturation, campaign_bound, campaign_closed,
+    implicit_steps, load_campaign, stint_stamp,
 };
 pub use campaign::{latest_stint_for_car, stints_for_car_newest_first};
 pub(crate) use compose::composition_proposal;

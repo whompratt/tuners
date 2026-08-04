@@ -369,24 +369,42 @@ pub fn stint_profile(frames: &[TimedFrame]) -> Result<StintProfile, String> {
     // Out laps aren't comparable to flying laps; drop them when flying laps exist.
     // On point-to-point routes every run is a standing start, so keep them all.
     let standing_start_only = laps.iter().all(|l| l.standing_start);
-    let point_to_point = standing_start_only && laps.iter().all(|l| l.point_to_point);
     if !standing_start_only {
         laps.retain(|l| !l.standing_start);
     }
 
-    let shared_bins = laps.iter().map(|l| l.bins.len()).min().unwrap();
-    let composite = build_composite(&laps, shared_bins);
-    let best_lap_time_s = laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min);
-
-    Ok(StintProfile {
-        shared_bins,
-        composite,
-        best_lap_time_s,
-        standing_start_only,
-        point_to_point,
-        car_ordinal,
-        laps,
+    StintProfile::from_laps(laps, car_ordinal).ok_or_else(|| {
+        "no profileable laps (needs a race-mode session: live DistanceTraveled, \
+         completed laps captured from their start)"
+            .into()
     })
+}
+
+impl StintProfile {
+    /// Assemble a profile from already-selected laps: one recording's, or
+    /// several same-setup recordings' pooled (the live gauge merges a
+    /// crash-cut run with its same-setup predecessors this way). Flags derive
+    /// from the laps; callers own lap selection (out-lap dropping, route and
+    /// standing-kind compatibility).
+    pub fn from_laps(laps: Vec<LapProfile>, car_ordinal: i32) -> Option<StintProfile> {
+        if laps.is_empty() {
+            return None;
+        }
+        let standing_start_only = laps.iter().all(|l| l.standing_start);
+        let point_to_point = standing_start_only && laps.iter().all(|l| l.point_to_point);
+        let shared_bins = laps.iter().map(|l| l.bins.len()).min().unwrap();
+        let composite = build_composite(&laps, shared_bins);
+        let best_lap_time_s = laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min);
+        Some(StintProfile {
+            shared_bins,
+            composite,
+            best_lap_time_s,
+            standing_start_only,
+            point_to_point,
+            car_ordinal,
+            laps,
+        })
+    }
 }
 
 #[cfg(test)]

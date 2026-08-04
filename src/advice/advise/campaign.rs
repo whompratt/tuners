@@ -21,7 +21,7 @@ pub(crate) fn stint_stamp(path: &str) -> Option<&str> {
 /// lines the session archive/resume flow appends; the entry parser skips
 /// them). Closed = parked in the archive, nothing joins the trajectory;
 /// Since = resumed at that stamp, only newer stints join as implicit steps.
-pub(super) enum CampaignBound {
+pub(crate) enum CampaignBound {
     Open,
     Closed,
     Since(String),
@@ -33,7 +33,7 @@ pub(crate) fn campaign_closed(journal_text: &str) -> bool {
     matches!(campaign_bound(journal_text), CampaignBound::Closed)
 }
 
-pub(super) fn campaign_bound(journal_text: &str) -> CampaignBound {
+pub(crate) fn campaign_bound(journal_text: &str) -> CampaignBound {
     let mut bound = CampaignBound::Open;
     for line in journal_text.lines() {
         let line = line.trim();
@@ -625,21 +625,12 @@ pub(crate) fn load_campaign<'s>(
         let laps: Vec<analysis::profile::LapProfile> = (g..=last_member[g])
             .flat_map(|k| stints[k].profile().laps.iter().cloned())
             .collect();
-        let Some(shared) = laps.iter().map(|l| l.bins.len()).min() else {
+        let Some(profile) =
+            analysis::profile::StintProfile::from_laps(laps, stints[g].profile().car_ordinal)
+        else {
             continue;
         };
-        pooled.insert(
-            g,
-            analysis::profile::StintProfile {
-                composite: analysis::profile::build_composite(&laps, shared),
-                shared_bins: shared,
-                best_lap_time_s: laps.iter().map(|l| l.time_s).fold(f32::INFINITY, f32::min),
-                standing_start_only: stints[g].profile().standing_start_only,
-                point_to_point: stints[g].profile().point_to_point,
-                car_ordinal: stints[g].profile().car_ordinal,
-                laps,
-            },
-        );
+        pooled.insert(g, profile);
     }
     if trace {
         eprintln!(

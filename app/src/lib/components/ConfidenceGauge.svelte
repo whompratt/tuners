@@ -48,9 +48,10 @@
   {:else if q}
     <div class="q-sub">
       {q.laps}
-      {q.pointToPoint ? "point-to-point run(s)" : q.standingOnly ? "standing run(s)" : "flying lap(s)"} · best {fmtLap(
-        q.bestLapS ?? 0,
-      )}
+      {q.pointToPoint ? "point-to-point run(s)" : q.standingOnly ? "standing run(s)" : "flying lap(s)"}{q.recordings >
+      1
+        ? ` across ${q.recordings} recordings`
+        : ""} · best {fmtLap(q.bestLapS ?? 0)}
     </div>
     {#if q.note}
       <div class="q-note" style="max-width:{width}px">{q.note}</div>
