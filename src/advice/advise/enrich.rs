@@ -266,10 +266,17 @@ pub(super) fn enrich_with_tune(
 /// applies, and only decorates a rec that carries no suggestion of its own:
 /// measured paths (vertex, probe, return-to-best) always outrank a model
 /// estimate. The direction must agree (scale > 1 = shorten = higher number).
+///
+/// The scale is relative to the final drive the analyzed stint was DRIVEN
+/// on (`driven`, from its bound revision) — a newer saved revision must not
+/// be re-scaled on top of an already-applied change. When the latest
+/// revision already holds the target (accepted, no completed lap since),
+/// the suggestion reads as pending instead of asking for a further step.
 pub(super) fn apply_fd_scale(
     recs: &mut [recommend::Recommendation],
     session: &TuningSession,
     scale: Option<f32>,
+    driven: Option<f32>,
 ) {
     let Some(scale) = scale else { return };
     let Some(cur) = session
@@ -279,12 +286,13 @@ pub(super) fn apply_fd_scale(
     else {
         return;
     };
-    let mut target = cur * scale;
+    let base = driven.unwrap_or(cur);
+    let mut target = base * scale;
     if let Some((lo, hi)) = crate::advice::tuning::limit_of(&session.facts, "final_drive") {
         target = target.clamp(lo, hi);
     }
     let target = (target * 100.0).round() / 100.0;
-    if (target - cur).abs() < 0.005 {
+    if (target - base).abs() < 0.005 {
         return;
     }
     for r in recs {
@@ -296,10 +304,16 @@ pub(super) fn apply_fd_scale(
         {
             continue;
         }
-        r.suggestion = Some(format!(
-            "final drive {cur} → {target} (drag-model estimate is rough; a \
-             driven step will refine it)"
-        ));
+        if (target - cur).abs() < 0.005 {
+            r.suggestion = Some(format!(
+                "final drive {target} (already saved; drive a run to confirm)"
+            ));
+        } else {
+            r.suggestion = Some(format!(
+                "final drive {cur} → {target} (drag-model estimate is rough; a \
+                 driven step will refine it)"
+            ));
+        }
         r.apply = vec![("final_drive".to_string(), target.to_string())];
         return;
     }

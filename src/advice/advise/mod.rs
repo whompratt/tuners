@@ -280,7 +280,7 @@ pub fn advise(
         let lints = setup_lints(&session, &[], &recs, data.met.as_ref());
         recs.extend(lints);
         let current_tune = enrich_with_tune(&mut recs, &session);
-        enrich::apply_fd_scale(&mut recs, &session, fd_scale);
+        enrich::apply_fd_scale(&mut recs, &session, fd_scale, None);
         return Ok(AdviseView {
             journal: None,
             steps: Vec::new(),
@@ -1046,7 +1046,17 @@ pub fn advise(
         let lints = setup_lints(&session, &c.measurements, &recs, last.met.as_ref());
         recs.extend(lints);
         let tune = enrich_with_tune(&mut recs, &session);
-        enrich::apply_fd_scale(&mut recs, &session, fd_scale);
+        // The scale was measured on the LAST stint; resolve it against the
+        // final drive that stint was actually driven on, not the latest
+        // saved revision (which may already hold the applied fix).
+        let driven_fd = c
+            .setups
+            .last()
+            .copied()
+            .flatten()
+            .and_then(|rev| rev.values.get("final_drive"))
+            .and_then(|v| v.parse::<f32>().ok());
+        enrich::apply_fd_scale(&mut recs, &session, fd_scale, driven_fd);
         tune
     } else {
         Vec::new()

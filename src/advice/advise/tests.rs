@@ -582,7 +582,7 @@ fn gearing_rec(softer: bool) -> Recommendation {
 fn fd_scale_resolves_to_caveated_target() {
     let session = session_with(&[("final_drive", "3.4")], &[]);
     let mut recs = vec![gearing_rec(false)];
-    enrich::apply_fd_scale(&mut recs, &session, Some(1.2));
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.2), None);
     let s = recs[0].suggestion.as_deref().unwrap();
     assert!(s.contains("3.4 → 4.08"), "{s}");
     assert!(s.contains("drag-model estimate"), "{s}");
@@ -599,19 +599,19 @@ fn fd_scale_respects_direction_ownership_and_limits() {
     let session = session_with(&[("final_drive", "3.4")], &[]);
     // Lengthen rec (softer) with a shorten scale: untouched.
     let mut recs = vec![gearing_rec(true)];
-    enrich::apply_fd_scale(&mut recs, &session, Some(1.2));
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.2), None);
     assert!(recs[0].suggestion.is_none());
 
     // A measured suggestion already owns the rec: untouched.
     let mut recs = vec![gearing_rec(false)];
     recs[0].suggestion = Some("final drive 3.4 → 4.2 (measured)".into());
-    enrich::apply_fd_scale(&mut recs, &session, Some(1.2));
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.2), None);
     assert!(recs[0].suggestion.as_deref().unwrap().contains("measured"));
     assert!(recs[0].apply.is_empty());
 
     // Near-1.0 scale = no-op: untouched.
     let mut recs = vec![gearing_rec(false)];
-    enrich::apply_fd_scale(&mut recs, &session, Some(1.0004));
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.0004), None);
     assert!(recs[0].suggestion.is_none());
 
     // Clamped to the slider limit when the estimate overshoots.
@@ -620,12 +620,38 @@ fn fd_scale_respects_direction_ownership_and_limits() {
         &[("limit_final_drive", "2.2..4.0")],
     );
     let mut recs = vec![gearing_rec(false)];
-    enrich::apply_fd_scale(&mut recs, &session, Some(1.5));
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.5), None);
     assert!(
         recs[0].suggestion.as_deref().unwrap().contains("3.4 → 4"),
         "{:?}",
         recs[0].suggestion
     );
+}
+
+/// The scale applies to the final drive the stint was DRIVEN on, never the
+/// latest saved revision: an accepted-but-undriven change must not be
+/// re-scaled on top of itself (4.12 × 1.17 saved as 4.82 advising 5.64).
+#[test]
+fn fd_scale_bases_on_driven_setup() {
+    // Latest revision already holds the applied target: pending, not a
+    // further step.
+    let session = session_with(&[("final_drive", "4.82")], &[]);
+    let mut recs = vec![gearing_rec(false)];
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.17), Some(4.12));
+    let s = recs[0].suggestion.as_deref().unwrap();
+    assert!(s.contains("already saved"), "{s}");
+    assert_eq!(
+        recs[0].apply,
+        vec![("final_drive".to_string(), "4.82".to_string())]
+    );
+
+    // Latest revision moved somewhere else: the target still comes from the
+    // driven value, the arrow from the current one.
+    let session = session_with(&[("final_drive", "4.5")], &[]);
+    let mut recs = vec![gearing_rec(false)];
+    enrich::apply_fd_scale(&mut recs, &session, Some(1.17), Some(4.12));
+    let s = recs[0].suggestion.as_deref().unwrap();
+    assert!(s.contains("4.5 → 4.82"), "{s}");
 }
 
 /// Consecutive same-setup stints group into one state; a setup change, an
