@@ -175,11 +175,16 @@ pub struct GearStats {
     pub avg_upshift_rpm: Option<f32>,
     /// Fraction of grounded samples at >= LIMITER of the EFFECTIVE redline.
     pub limiter_frac: f32,
-    /// The redline gearing stats are judged against. Some cars' reported
-    /// engine_max_rpm sits well above the actual rev cut (Datsun 240Z:
-    /// limiter ~7500 vs reported 8000). When 3+ gears max out within 1% of
-    /// the same sustained ceiling, that ceiling IS the limiter and becomes
-    /// the effective redline. Otherwise the reported value stands.
+    /// Limiter time in a HELD gear (no gear change within CUT_SHIFT_WINDOW
+    /// frames): the share where the cut is a wall rather than the driver's
+    /// shift point. The lengthen rule gates on this, not on limiter_frac.
+    pub limiter_held_frac: f32,
+    /// The redline gearing stats are judged against. Most cars' reported
+    /// engine_max_rpm sits above the actual rev cut (library norm 91-97%
+    /// of reported; Datsun 240Z ~7500 vs 8000). Detected from torque-cut
+    /// onsets (torque collapsing to <= 0 at full throttle in a held gear)
+    /// or, for soft limiters, from a sustained multi-gear rev ceiling.
+    /// Otherwise the reported value stands.
     pub effective_redline: f32,
     /// True when the effective redline came from an observed multi-gear rev
     /// ceiling rather than the reported engine_max_rpm.
@@ -410,6 +415,50 @@ fn band_balance((samples, front, rear): (usize, f32, f32)) -> BandBalance {
         index: (samples > 0).then(|| (front - rear) / samples as f32),
         rear_slip: (samples > 0).then(|| rear / samples as f32),
     }
+}
+
+/// Full throttle for cut detection (matches the driveline fit's gate).
+const CUT_THROTTLE: u8 = 250;
+/// Frames either side of a gear change excluded from cut evidence: an
+/// upshift/downshift torque dip must not read as the limiter.
+const CUT_SHIFT_WINDOW: usize = 10;
+/// Distinct torque-cut onsets required to adopt the estimate.
+const MIN_CUT_ONSETS: usize = 5;
+
+/// True when a gear change lands within CUT_SHIFT_WINDOW frames of `i`.
+fn shift_near(frames: &[TimedFrame], i: usize) -> bool {
+    let lo = i.saturating_sub(CUT_SHIFT_WINDOW);
+    let hi = (i + CUT_SHIFT_WINDOW).min(frames.len() - 1);
+    let g = frames[i].frame.gear;
+    (lo..=hi).any(|j| frames[j].frame.gear != g)
+}
+
+/// Rpm at each rev-cut onset: full-throttle, grounded, moving frames away
+/// from any gear change where engine torque crosses from positive to <= 0.
+/// See the effective-redline block in `stint_metrics` for why this is the
+/// limiter's direct signature.
+fn cut_onsets(frames: &[TimedFrame]) -> Vec<f32> {
+    let n = frames.len();
+    let mut onsets = Vec::new();
+    for i in 1..n {
+        let f = &frames[i].frame;
+        let p = &frames[i - 1].frame;
+        if !f.is_race_on
+            || !(1..=MAX_REAL_GEAR).contains(&f.gear)
+            || f.accel < CUT_THROTTLE
+            || f.speed <= 15.0
+            || f.torque > 0.0
+            || p.torque <= 0.0
+        {
+            continue;
+        }
+        let travel = f.norm_suspension_travel.to_array();
+        if travel.iter().all(|v| *v <= AIRBORNE_TRAVEL) || shift_near(frames, i) {
+            continue;
+        }
+        onsets.push(f.current_engine_rpm.max(p.current_engine_rpm));
+    }
+    onsets
 }
 
 pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
@@ -852,11 +901,41 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
         .collect();
     let top_gear = time_frac.last().map(|(g, _)| *g).unwrap_or(0);
 
-    // Effective redline: the SUSTAINED rev ceiling (highest 25-rpm bucket
-    // holding >= 0.25s, so a single downhill over-rev spike can't set it),
-    // adopted only when 3+ well-used gears max out within 1% of it: the
-    // signature of a rev cut, not of a consistent shift point in one gear.
+    // Effective redline, two independent detectors.
+    //
+    // (1) Torque-cut onsets: a full-throttle, grounded, moving frame in a
+    // held gear whose engine torque collapses from positive to <= 0 is the
+    // limiter firing — nothing else zeroes torque under those conditions
+    // (shift dips straddle a gear change and are excluded; launch caps are
+    // excluded by the speed floor). Onset rpm clusters within ~10 rpm on
+    // every library car, including bouncing cuts that never dwell in one
+    // rpm bucket (Celica ST205 oscillates over ~100 rpm) and cuts hiding
+    // within 3% of the reported redline — which the library shows is the
+    // NORM: most cars' true cut sits at 91-97% of engine_max_rpm.
+    //
+    // (2) The SUSTAINED rev ceiling (highest 25-rpm bucket holding
+    // >= 0.25s), adopted only when 3+ well-used gears max out within 1% of
+    // it. Kept for soft limiters that clamp without a torque collapse (the
+    // Skyline pins 8100 of 10000 with torque still positive). Where both
+    // fire the onset estimate wins: it is the measured cut point itself.
     let reported_redline = first.engine_max_rpm;
+    let onset_cut = {
+        let mut onsets = cut_onsets(frames);
+        onsets.sort_by(f32::total_cmp);
+        // p90 is robust to sub-cut noise (impact shocks read as onsets);
+        // the estimate must be supported by a tight cluster around it.
+        (!onsets.is_empty())
+            .then(|| {
+                let est = onsets[(onsets.len() - 1) * 9 / 10];
+                let support = onsets
+                    .iter()
+                    .filter(|r| **r >= 0.99 * est && **r <= 1.005 * est)
+                    .count();
+                (est, support)
+            })
+            .filter(|(est, support)| *support >= MIN_CUT_ONSETS && *est < 0.995 * reported_redline)
+            .map(|(est, _)| est)
+    };
     let ceiling = {
         let mut hist = std::collections::BTreeMap::<i32, u32>::new();
         for &(_, rpm) in &gear_frames {
@@ -880,20 +959,40 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
                 && gear_max_rpm[*g] <= 1.01 * ceiling
         })
         .count();
-    // Adopt only a MATERIALLY lower cut (<97% of reported): near-reported
-    // ceilings are consistent shift points (the Ferrari rides to 97.5% in
-    // every gear), and correcting by <3% moves no threshold meaningfully
-    // while it would quietly shift calibrated behavior.
-    let limiter_detected =
+    // The cluster path keeps its <97% guard: without direct torque
+    // evidence, a near-reported ceiling could still be a shift habit. The
+    // onset path needs no such guard — the torque collapse IS the cut —
+    // so it recovers the many real cuts sitting at 97%+ of reported.
+    let cluster_detected =
         ceiling > 0.0 && gears_at_ceiling >= 3 && ceiling < 0.97 * reported_redline;
-    let effective_redline = if limiter_detected {
-        ceiling
-    } else {
-        reported_redline
+    let limiter_detected = onset_cut.is_some() || cluster_detected;
+    let effective_redline = match onset_cut {
+        Some(est) => est,
+        None if cluster_detected => ceiling,
+        None => reported_redline,
     };
     let limiter = gear_frames
         .iter()
         .filter(|(_, rpm)| effective_redline > 0.0 && *rpm >= LIMITER * effective_redline)
+        .count();
+    // Limiter dwell in a HELD gear: with the real cut detected, a driver
+    // who rides each gear to the cut before upshifting shows raw limiter
+    // time without any gearing wall. Away from gear changes the cut IS a
+    // wall (top gear on a straight); the lengthen rule gates on this.
+    let limiter_held = (0..frames.len())
+        .filter(|&i| {
+            let f = &frames[i].frame;
+            f.is_race_on
+                && (1..=MAX_REAL_GEAR).contains(&f.gear)
+                && effective_redline > 0.0
+                && f.current_engine_rpm >= LIMITER * effective_redline
+                && !f
+                    .norm_suspension_travel
+                    .to_array()
+                    .iter()
+                    .all(|v| *v <= AIRBORNE_TRAVEL)
+                && !shift_near(frames, i)
+        })
         .count();
     let top_gear_high_rev = gear_frames
         .iter()
@@ -1030,6 +1129,7 @@ pub fn stint_metrics(frames: &[TimedFrame]) -> StintMetrics {
             upshifts,
             avg_upshift_rpm: (upshifts > 0).then(|| upshift_rpm_sum / upshifts as f32),
             limiter_frac: gfrac(limiter),
+            limiter_held_frac: gfrac(limiter_held),
             effective_redline,
             limiter_detected,
         },
@@ -1077,6 +1177,55 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    /// A bouncing rev cut (torque collapsing to <= 0 at full throttle in a
+    /// held gear, oscillating ~100 rpm under the cut) must set the effective
+    /// redline from the onset cluster — even within 3% of reported, where
+    /// the sustained-ceiling path's shift-habit guard rejects it. The same
+    /// torque dips around gear changes must NOT read as a cut.
+    #[test]
+    fn bouncing_rev_cut_detected_from_torque_onsets() {
+        let grounded = Corners {
+            fl: 0.4,
+            fr: 0.4,
+            rl: 0.4,
+            rr: 0.4,
+        };
+        let cut_frame = |bounce: usize| TelemetryFrame {
+            engine_max_rpm: 9000.0,
+            gear: 8,
+            accel: 255,
+            speed: 68.0,
+            // 6-frame bounce cycle: climb to the cut, torque collapses,
+            // rpm falls ~100, torque returns.
+            current_engine_rpm: 8750.0 - (bounce % 6) as f32 * 20.0,
+            torque: if bounce % 6 < 2 { -40.0 } else { 300.0 },
+            norm_suspension_travel: grounded,
+            ..Default::default()
+        };
+        let frames: Vec<TelemetryFrame> = (0..600).map(cut_frame).collect();
+        let m = stint_metrics(&timed(frames));
+        assert!(m.gears.limiter_detected);
+        assert!(
+            (m.gears.effective_redline - 8750.0).abs() < 30.0,
+            "effective {}",
+            m.gears.effective_redline
+        );
+        assert!(m.gears.limiter_held_frac > 0.2);
+
+        // Same torque dips, but each sits next to a gear change: a shift
+        // habit. No onsets survive the exclusion window.
+        let shifty: Vec<TelemetryFrame> = (0..600)
+            .map(|i| {
+                let mut f = cut_frame(i);
+                f.gear = 5 + ((i / 12) % 4) as u8; // shift every 12 frames
+                f
+            })
+            .collect();
+        let m = stint_metrics(&timed(shifty));
+        assert!(!m.gears.limiter_detected);
+        assert_eq!(m.gears.effective_redline, 9000.0);
     }
 
     #[test]

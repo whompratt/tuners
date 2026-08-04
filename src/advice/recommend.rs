@@ -100,8 +100,13 @@ const WHEELSPIN_HIGH: f32 = 0.15;
 /// never sees these gates.
 const INSIDE_ONLY_SPIN: f32 = 0.08;
 const BOTH_REAR_SPIN: f32 = 0.025;
-/// Time on the rev limiter worth reacting to.
-const LIMITER_FRAC: f32 = 0.02;
+/// Held-gear limiter time worth reacting to. With real cuts detected on
+/// nearly every car, small held shares are routine (shift habits and
+/// corner-exit brushes measured 2-5% across 8 library cars); genuinely
+/// wall-limited stints read far above (Datsun 240Z baseline 29.5%, Celica
+/// ST205 over-shortened final drive 15%). Below the gate the drag model's
+/// lengthen path still speaks when the mismatch is real.
+const LIMITER_FRAC: f32 = 0.10;
 /// Minimum cornering samples in a conditioned band (speed / throttle) before
 /// band rules speak (~8s of cornering at 60 Hz).
 const BAND_MIN_SAMPLES: usize = 500;
@@ -1150,21 +1155,24 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
 
 fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     let g = &overall.gears;
-    if g.limiter_frac >= LIMITER_FRAC {
+    // Held-gear limiter time only: a driver who rides each gear to the cut
+    // before upshifting shows raw limiter time that is a shift habit, not a
+    // gearing wall.
+    if g.limiter_held_frac >= LIMITER_FRAC {
         let mut evidence = vec![if g.limiter_detected {
             format!(
-                "on the rev limiter {:.1}% of the stint. The ACTUAL rev cut sits at \
-                 {:.0} rpm ({:.0}% of the reported {:.0} redline; 3+ gears max out \
-                 there)",
-                g.limiter_frac * 100.0,
+                "held on the rev limiter {:.1}% of the stint. The ACTUAL rev cut \
+                 sits at {:.0} rpm ({:.0}% of the reported {:.0} redline, measured \
+                 from the cut itself)",
+                g.limiter_held_frac * 100.0,
                 g.effective_redline,
                 100.0 * g.effective_redline / overall.redline.max(1.0),
                 overall.redline,
             )
         } else {
             format!(
-                "on the rev limiter {:.1}% of the stint (redline {:.0} rpm)",
-                g.limiter_frac * 100.0,
+                "held on the rev limiter {:.1}% of the stint (redline {:.0} rpm)",
+                g.limiter_held_frac * 100.0,
                 g.effective_redline,
             )
         }];
@@ -2470,7 +2478,8 @@ mod tests {
     #[test]
     fn limiter_time_triggers_final_drive_advice() {
         let mut overall = base_metrics();
-        overall.gears.limiter_frac = 0.05;
+        overall.gears.limiter_frac = 0.16;
+        overall.gears.limiter_held_frac = 0.15;
         overall.gears.top_gear = 6;
         overall.gears.top_gear_max_rpm = 7900.0;
         let recs = recommend(&overall, &[], &Default::default());
@@ -2479,6 +2488,23 @@ mod tests {
             gearing.advice.contains("lengthen the final drive"),
             "{}",
             gearing.advice
+        );
+    }
+
+    /// Raw limiter time from riding each gear to the cut before shifting is
+    /// a habit, not a gearing wall: the rule gates on the HELD-gear share
+    /// (library shift habits read 2-5%; validated walls 15-29%).
+    #[test]
+    fn shift_habit_limiter_time_stays_quiet() {
+        let mut overall = base_metrics();
+        overall.gears.limiter_frac = 0.05;
+        overall.gears.limiter_held_frac = 0.03;
+        overall.gears.top_gear = 6;
+        overall.gears.top_gear_max_rpm = 7900.0;
+        let recs = recommend(&overall, &[], &Default::default());
+        assert!(
+            recs.iter()
+                .all(|r| !r.advice.contains("lengthen the final drive"))
         );
     }
 

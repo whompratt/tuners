@@ -526,11 +526,12 @@ pub fn render_stint(index: usize, m: &StintMetrics) -> String {
     }
     writeln!(
         out,
-        "    top gear used: {} | {} of top-gear time >=90% redline (max {:.0} rpm) | time on limiter: {}",
+        "    top gear used: {} | {} of top-gear time >=90% redline (max {:.0} rpm) | time on limiter: {} ({} in a held gear)",
         m.gears.top_gear,
         pct(m.gears.top_gear_high_rev_frac),
         m.gears.top_gear_max_rpm,
         pct(m.gears.limiter_frac),
+        pct(m.gears.limiter_held_frac),
     )
     .unwrap();
     if m.gears.limiter_detected {
