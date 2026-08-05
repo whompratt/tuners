@@ -457,7 +457,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     }
     for p in &view.no_laps {
         println!(
-            "\nnote: {p} has no completed laps (an event entered and abandoned?), \
+            "\nnote: {p} has no usable laps (an event entered and abandoned?), \
              so it was skipped; any tune change was merged into the next step"
         );
     }

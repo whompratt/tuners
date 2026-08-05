@@ -546,6 +546,122 @@ fn lapless_middle_stint_is_skipped_note_merged() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Unjournaled stints between two journal entries (a crash or idle
+/// auto-cut: no tune save, so no journal line) join the trajectory as
+/// implicit no-change steps in stamp order, so their laps corroborate the
+/// setup they were driven on; stints recorded while the campaign was
+/// parked belong to whatever campaign was active then and stay out.
+#[test]
+fn implicit_middle_stints_join_between_entries() {
+    let dir = std::env::temp_dir().join(format!("tuners-implicitmid-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for stamp in [
+        "20260101-080000", // journaled baseline
+        "20260101-083000", // unjournaled middle: joins
+        "20260101-100000", // recorded while parked: stays out
+        "20260101-120000", // journaled
+        "20260101-130000", // unjournaled trailing: joins
+    ] {
+        write_stint_with_laps(&dir.join(format!("stint-{stamp}.ftel")));
+    }
+    let sd = dir.to_string_lossy();
+    let text = format!(
+        "{sd}/stint-20260101-080000.ftel | baseline\n\
+         # parked 20260101-090000\n\
+         # resumed 20260101-110000\n\
+         {sd}/stint-20260101-120000.ftel | front arb -1\n"
+    );
+    let mut entries = journal::parse_journal(&text);
+    implicit_steps(&text, &mut entries, Some(42), &sd);
+    let stamps: Vec<_> = entries
+        .iter()
+        .filter_map(|e| stint_stamp(&e.path))
+        .collect();
+    assert_eq!(
+        stamps,
+        vec![
+            "20260101-080000",
+            "20260101-083000",
+            "20260101-120000",
+            "20260101-130000",
+        ]
+    );
+    assert!(entries[1].note.is_none(), "implicit middle carries no note");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A parked (archived) journal accrues nothing after the park stamp, but a
+/// stint driven while the campaign was still active keeps its place.
+#[test]
+fn parked_journal_keeps_pre_park_stints_only() {
+    let dir = std::env::temp_dir().join(format!("tuners-parked-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for stamp in ["20260101-080000", "20260101-083000", "20260101-100000"] {
+        write_stint_with_laps(&dir.join(format!("stint-{stamp}.ftel")));
+    }
+    let sd = dir.to_string_lossy();
+    let text = format!("{sd}/stint-20260101-080000.ftel | baseline\n# parked 20260101-090000\n");
+    let mut entries = journal::parse_journal(&text);
+    implicit_steps(&text, &mut entries, Some(42), &sd);
+    let stamps: Vec<_> = entries
+        .iter()
+        .filter_map(|e| stint_stamp(&e.path))
+        .collect();
+    assert_eq!(stamps, vec!["20260101-080000", "20260101-083000"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An implicit (unjournaled) stint whose recording doesn't decode — e.g.
+/// truncated by a crash mid-write — is skipped like a lap-less one; it
+/// only ever corroborated, and no journal line names it for the user to
+/// fix. A noted entry that doesn't decode stays a hard error.
+#[test]
+fn unreadable_implicit_stint_is_skipped() {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join(format!("tuners-truncated-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let good = dir.join("stint-20260101-080000.ftel");
+    write_stint_with_laps(&good);
+    let bad = dir.join("stint-20260101-083000.ftel");
+    write_stint_with_laps(&bad);
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&bad)
+        .unwrap()
+        .write_all(&[1, 2, 3, 4, 5]) // partial record header
+        .unwrap();
+    let good = good.to_string_lossy().into_owned();
+    let bad = bad.to_string_lossy().into_owned();
+    let entry = |path: &str, note: Option<&str>| journal::Entry {
+        path: path.to_string(),
+        note: note.map(String::from),
+    };
+    let session = TuningSession::default();
+    let c = load_campaign(
+        vec![
+            entry(&good, Some("baseline")),
+            entry(&bad, None),
+            entry(&good, Some("front arb -1")),
+        ],
+        &session,
+        "test",
+    )
+    .expect("truncated implicit stint tolerated");
+    assert_eq!(c.stints.len(), 2);
+    assert_eq!(c.no_laps, vec![bad.clone()]);
+    let err = load_campaign(
+        vec![
+            entry(&good, Some("baseline")),
+            entry(&bad, Some("front arb -1")),
+            entry(&good, Some("rear arb -1")),
+        ],
+        &session,
+        "test",
+    );
+    assert!(err.is_err(), "noted unreadable entry stays a hard error");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn stint_stamps_parse_from_both_naming_schemes() {
     assert_eq!(

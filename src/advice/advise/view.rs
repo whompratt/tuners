@@ -152,8 +152,8 @@ pub struct AdviseView {
     /// dashboard): skipped, with their notes merged into the next step so
     /// slider positions stay honest.
     pub missing: Vec<String>,
-    /// Mid-campaign stints with no completed laps (menu-pause artifacts):
-    /// skipped the same way.
+    /// Mid-campaign stints that couldn't contribute (no completed laps, or
+    /// an unreadable unjournaled recording): skipped the same way.
     pub no_laps: Vec<String>,
     /// Per-family measured landscapes (see LandscapeView).
     pub landscapes: Vec<LandscapeView>,

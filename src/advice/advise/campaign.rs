@@ -341,8 +341,9 @@ pub(crate) struct Campaign<'s> {
     pub in_progress: Option<String>,
     /// Journaled stints whose recordings no longer exist.
     pub missing: Vec<String>,
-    /// Mid-campaign stints with no completed laps (an event entered and
-    /// immediately abandoned auto-cuts a tiny recording): skipped, any note
+    /// Mid-campaign stints that couldn't contribute: no completed laps (an
+    /// event entered and immediately abandoned auto-cuts a tiny recording),
+    /// or an implicit stint whose file doesn't decode. Skipped, any note
     /// merged into the next step.
     pub no_laps: Vec<String>,
     /// Consecutive same-setup group per stint (the group head's index): a
@@ -422,53 +423,90 @@ impl Campaign<'_> {
     }
 }
 
-/// Stints of the session car recorded AFTER the last journal entry join the
-/// trajectory as implicit no-change steps. Journal lines are written on tune
-/// saves, so a stint driven without touching anything (the same-setup repeat
-/// that measures pure drift) would otherwise be invisible. Campaign
-/// boundaries bound the scan: a parked (archived) journal accrues nothing,
-/// and a resumed one only takes stints newer than the resume; stints driven
-/// in ANOTHER campaign of the same car while this one was parked must not
-/// leak in.
+/// Parked intervals from the journal's boundary markers, in order: each
+/// "# parked <stamp>" opens a window that the next "# resumed <stamp>"
+/// closes (a still-parked journal leaves the last window open-ended).
+fn parked_windows(journal_text: &str) -> Vec<(String, Option<String>)> {
+    let mut windows: Vec<(String, Option<String>)> = Vec::new();
+    for line in journal_text.lines() {
+        let line = line.trim();
+        if let Some(stamp) = line.strip_prefix("# parked ") {
+            windows.push((stamp.trim().to_string(), None));
+        } else if let Some(stamp) = line.strip_prefix("# resumed ")
+            && let Some(w) = windows.last_mut()
+            && w.1.is_none()
+        {
+            w.1 = Some(stamp.trim().to_string());
+        }
+    }
+    windows
+}
+
+/// Unjournaled stints of the session car recorded since the campaign began
+/// join the trajectory as implicit no-change steps, in stamp order. Journal
+/// lines are written on tune saves, so a stint driven without touching
+/// anything — the same-setup repeat that measures pure drift, or a
+/// crash/idle auto-cut mid-campaign — would otherwise be invisible and its
+/// corroboration lost (middle stints pool into their setup's state).
+/// Parked windows bound the scan: stints driven while this campaign sat in
+/// the archive belong to whatever campaign was active at the time and must
+/// not leak in.
 pub(crate) fn implicit_steps(
     journal_text: &str,
     entries: &mut Vec<journal::Entry>,
     session_car: Option<i32>,
     stints_dir: &str,
 ) {
-    let bound = campaign_bound(journal_text);
-    if matches!(bound, CampaignBound::Closed) {
-        return;
-    }
-    let Some(last_stamp) = entries.last().and_then(|e| stint_stamp(&e.path)) else {
+    let Some(first_stamp) = entries.first().and_then(|e| stint_stamp(&e.path)) else {
         return;
     };
-    let mut last_stamp = last_stamp.to_string();
-    if let CampaignBound::Since(s) = &bound
-        && s.as_str() > last_stamp.as_str()
-    {
-        last_stamp = s.clone();
-    }
-    let mut extra: Vec<String> = std::fs::read_dir(stints_dir)
+    let first_stamp = first_stamp.to_string();
+    // Stamp-keyed dedup: journal paths may use foreign separators
+    // ("sessions\stint-...", written on Windows), the stamp is
+    // separator-robust.
+    let journaled: std::collections::HashSet<String> = entries
+        .iter()
+        .filter_map(|e| stint_stamp(&e.path).map(str::to_string))
+        .collect();
+    let windows = parked_windows(journal_text);
+    let parked = |stamp: &str| {
+        windows
+            .iter()
+            .any(|(p, r)| stamp > p.as_str() && r.as_deref().is_none_or(|r| stamp < r))
+    };
+    let mut extra: Vec<(String, String)> = std::fs::read_dir(stints_dir)
         .ok()
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|e| {
             let path = e.path();
-            (path.extension().is_some_and(|x| x == "ftel")
-                && stint_stamp(&path.to_string_lossy()).is_some_and(|s| s > last_stamp.as_str())
+            if path.extension().is_none_or(|x| x != "ftel") {
+                return None;
+            }
+            let name = path.to_string_lossy();
+            let stamp = stint_stamp(&name)?.to_string();
+            (stamp.as_str() > first_stamp.as_str()
+                && !journaled.contains(&stamp)
+                && !parked(&stamp)
                 && session_car.is_some()
                 && crate::api::stint_car(&path) == session_car)
-                .then(|| format!("{stints_dir}/{}", e.file_name().to_string_lossy()))
+                .then(|| {
+                    (
+                        stamp,
+                        format!("{stints_dir}/{}", e.file_name().to_string_lossy()),
+                    )
+                })
         })
         .collect();
     extra.sort();
-    entries.extend(
-        extra
-            .into_iter()
-            .map(|path| journal::Entry { path, note: None }),
-    );
+    for (stamp, path) in extra {
+        let pos = entries
+            .iter()
+            .position(|e| stint_stamp(&e.path).is_some_and(|s| s > stamp.as_str()))
+            .unwrap_or(entries.len());
+        entries.insert(pos, journal::Entry { path, note: None });
+    }
 }
 
 /// Load and profile a campaign's journal entries, in chronological order,
@@ -503,6 +541,7 @@ pub(crate) fn load_campaign<'s>(
     let mut carry: Option<String> = None;
     let last = entries.len() - 1;
     for (i, mut entry) in entries.into_iter().enumerate() {
+        let implicit = entry.note.is_none();
         if let Some(c) = carry.take() {
             entry.note = Some(match entry.note.take() {
                 Some(n) => format!("{c}; {n}"),
@@ -510,8 +549,20 @@ pub(crate) fn load_campaign<'s>(
             });
         }
         let t = Instant::now();
-        let data = analysis::products::cached(entry.path.as_ref())
-            .map_err(|e| format!("{}: {e}", entry.path))?;
+        let data = match analysis::products::cached(entry.path.as_ref()) {
+            Ok(data) => data,
+            // An implicit no-change stint that doesn't decode (a recording
+            // truncated by a crash mid-write) only ever corroborated: skip
+            // it rather than wedge the campaign on a file no journal line
+            // names. A noted entry stays a hard error — its changes are
+            // setup-position truth.
+            Err(_) if implicit => {
+                no_laps.push(entry.path.clone());
+                carry = entry.note.take();
+                continue;
+            }
+            Err(e) => return Err(format!("{}: {e}", entry.path)),
+        };
         t_load += t.elapsed();
         if data.profile.is_err() {
             if i == last {
