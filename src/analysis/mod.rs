@@ -128,6 +128,31 @@ fn line_reset_seen(frames: &[TimedFrame]) -> bool {
         .any(|w| line_reset_step(&w[0].frame, &w[1].frame))
 }
 
+/// Max seconds the certificate's LastLap may exceed the run's last seen lap
+/// clock: the game cuts to race-off AT the line, so the official time trails
+/// the last driving frame by well under a second (measured +0.004s).
+const FINISH_CERT_SLACK_S: f32 = 5.0;
+
+/// Is `resume` a finish certificate for a run whose last driving frame was
+/// `last`? At the finish line FH6 goes race-off BEFORE any frame carries the
+/// run time; the results screen later flashes brief race-on frames with
+/// LapNumber incremented and LastLap holding the official time, while the
+/// race clock kept running and the position channels are garbage (distance
+/// teleports; see telemetry.md). Matching LastLap against the run's own lap
+/// clock makes false adoption implausible: a pre-race flash of a new event
+/// carries lap 0 / LastLap 0, and a stale flash of another event cannot
+/// match this run's clock. The race clock must have ADVANCED across the gap
+/// (results screens keep it running, measured +2.97..+11.36s): a pause taken
+/// right at a lap line also resumes on lap+1 with a matching LastLap, but a
+/// real pause resumes within hundredths and its driving must stay stitched.
+pub fn finish_certificate(last: &TelemetryFrame, resume: &TelemetryFrame) -> bool {
+    resume.lap_number == last.lap_number.wrapping_add(1)
+        && resume.last_lap > 0.0
+        && resume.last_lap >= last.current_lap - 0.5
+        && resume.last_lap <= last.current_lap + FINISH_CERT_SLACK_S
+        && resume.current_race_time > last.current_race_time + 0.5
+}
+
 /// Split a stint into laps on `LapNumber` transitions. A stint with no transitions
 /// (free roam, where LapNumber stays 0) yields a single slice; callers should only
 /// treat the result as laps when there is more than one.
@@ -189,7 +214,7 @@ pub struct SessionGap {
 }
 
 /// Race clock below this on resume = the session was restarted, not rewound.
-const RESTART_RACE_T_S: f32 = 5.0;
+pub(crate) const RESTART_RACE_T_S: f32 = 5.0;
 /// Race clock must step back at least this far to call a gap a rewind.
 const REWIND_MIN_STEP_S: f32 = 0.25;
 /// Race clock advancing more than this across a race-off gap means the game
@@ -287,6 +312,24 @@ pub fn driving_segments(frames: &[TimedFrame], min_seconds: f32) -> Vec<Vec<Time
         }
         if in_gap {
             in_gap = false;
+            if let Some(last) = current.last().copied()
+                && finish_certificate(&last.frame, &tf.frame)
+            {
+                // The run finished at the race-off: adopt the certificate's
+                // official time by synthesizing the lap boundary the game
+                // never sent while driving. The flicker frames themselves
+                // stay out (garbage position); leftovers form a sub-5s
+                // segment the retain below drops.
+                let mut boundary = last;
+                boundary.recv_us += 20_000;
+                boundary.frame.lap_number = last.frame.lap_number.wrapping_add(1);
+                boundary.frame.last_lap = tf.frame.last_lap;
+                boundary.frame.current_race_time += 0.02;
+                boundary.frame.current_lap += 0.02;
+                current.push(boundary);
+                segments.push(std::mem::take(&mut current));
+                continue;
+            }
             let race_t = tf.frame.current_race_time;
             let last_t = current.last().map(|l| l.frame.current_race_time);
             if race_t < RESTART_RACE_T_S {
@@ -317,7 +360,7 @@ pub fn driving_segments(frames: &[TimedFrame], min_seconds: f32) -> Vec<Vec<Time
 }
 
 /// A segment must exceed this speed at least once to count as driving (~11 mph).
-const MIN_DRIVING_SPEED_MPS: f32 = 5.0;
+pub(crate) const MIN_DRIVING_SPEED_MPS: f32 = 5.0;
 
 #[cfg(test)]
 mod tests {
@@ -720,6 +763,131 @@ mod tests {
             "{:?}",
             gaps[0].kind
         );
+    }
+
+    /// At the finish line the game goes race-off BEFORE any frame carries
+    /// the run time; the results screen later flashes a race-on frame with
+    /// LapNumber+1 and LastLap = the official time while the race clock
+    /// kept running (measured live: race-off at 135.16s, certificate 16.7s
+    /// of wall time later at race_t 146.52 / last_lap 135.164). The
+    /// certificate's time must be adopted so the run reads complete, and
+    /// the flicker frame's garbage position must stay out of the segment.
+    #[test]
+    fn finish_certificate_completes_the_run() {
+        let mut frames: Vec<TimedFrame> = (0..1350)
+            .map(|i| {
+                let t = i as f32 * 0.1;
+                let mut tf = racing(t, 0);
+                tf.frame.current_lap = t;
+                tf.frame.distance_traveled = t * 44.0 + 1.0;
+                tf
+            })
+            .collect();
+        frames.push(gap_frame());
+        let mut cert = racing(146.5, 1);
+        cert.frame.current_lap = 0.0;
+        cert.frame.last_lap = 135.02;
+        cert.frame.distance_traveled = 196.0; // teleported garbage
+        frames.push(cert);
+        frames.push(gap_frame());
+
+        let segments = driving_segments(&frames, 5.0);
+        assert_eq!(segments.len(), 1);
+        assert!(
+            stint_seconds(&segments[0]) < 135.5,
+            "no ghost results-screen time: {}",
+            stint_seconds(&segments[0])
+        );
+        let laps = split_laps(&segments[0]);
+        assert_eq!(laps.len(), 2, "run + one-frame boundary slice");
+        assert_eq!(laps[0].time_s, Some(135.02));
+        assert!(laps[0].standing_start && laps[0].point_to_point);
+    }
+
+    /// The same pattern on a circuit's FINAL lap (mid-race crossings emit
+    /// the boundary while race-on; only the last one goes race-off at the
+    /// line): the certificate's LastLap matches the lap clock, not the race
+    /// clock, and the final lap gets its time.
+    #[test]
+    fn finish_certificate_completes_a_circuit_final_lap() {
+        let mut frames: Vec<TimedFrame> = (0..450)
+            .map(|i| {
+                let t = i as f32 * 0.1;
+                let mut tf = racing(230.55 + t, 3);
+                tf.frame.current_lap = t;
+                tf.frame.distance_traveled = 13000.0 + t * 44.0;
+                tf
+            })
+            .collect();
+        frames.push(gap_frame());
+        let mut cert = racing(550.0, 4); // clock ran 275s through results
+        cert.frame.current_lap = 0.0;
+        cert.frame.last_lap = 45.0;
+        cert.frame.distance_traveled = 196.0;
+        frames.push(cert);
+
+        let segments = driving_segments(&frames, 5.0);
+        let laps = split_laps(&segments[0]);
+        assert_eq!(laps[0].time_s, Some(45.0));
+        assert!(!laps[0].standing_start);
+    }
+
+    /// A pause taken right at a lap line resumes on lap+1 with a matching
+    /// LastLap, but the race clock resumes within hundredths: NOT a
+    /// certificate, and the driving on both sides must stay one stitched
+    /// segment (found on the real library: the certificate branch split
+    /// mid-race pauses and shifted longest-segment metrics).
+    #[test]
+    fn pause_at_the_lap_line_is_not_a_certificate() {
+        let mut frames: Vec<TimedFrame> = (0..600)
+            .map(|i| {
+                let t = i as f32 * 0.1;
+                let mut tf = racing(t, 0);
+                tf.frame.current_lap = t;
+                tf.frame.distance_traveled = t * 44.0 + 1.0;
+                tf
+            })
+            .collect();
+        frames.push(gap_frame()); // pause exactly at the line
+        frames.extend((0..600).map(|i| {
+            let t = 60.0 + i as f32 * 0.1;
+            let mut tf = racing(t + 0.02, 1);
+            tf.frame.current_lap = i as f32 * 0.1;
+            tf.frame.last_lap = 60.0;
+            tf.frame.distance_traveled = t * 44.0 + 1.0;
+            tf
+        }));
+
+        let segments = driving_segments(&frames, 5.0);
+        assert_eq!(segments.len(), 1, "mid-race pause must stay stitched");
+        let laps = split_laps(&segments[0]);
+        assert_eq!(laps.len(), 2);
+        assert_eq!(laps[0].time_s, Some(60.0));
+    }
+
+    /// A resume whose LastLap does not match the run's own lap clock is NOT
+    /// a certificate: the ClockRan split stands and the run stays timeless.
+    #[test]
+    fn mismatched_last_lap_is_not_a_certificate() {
+        let mut frames: Vec<TimedFrame> = (0..1350)
+            .map(|i| {
+                let t = i as f32 * 0.1;
+                let mut tf = racing(t, 0);
+                tf.frame.current_lap = t;
+                tf.frame.distance_traveled = t * 44.0 + 1.0;
+                tf
+            })
+            .collect();
+        frames.push(gap_frame());
+        let mut cert = racing(146.5, 1);
+        cert.frame.current_lap = 0.0;
+        cert.frame.last_lap = 60.0; // some other event's lap time
+        frames.push(cert);
+
+        let segments = driving_segments(&frames, 5.0);
+        assert_eq!(segments.len(), 1, "flicker-only leftover segment dropped");
+        let laps = split_laps(&segments[0]);
+        assert!(laps[0].time_s.is_none());
     }
 
     /// Pre-race menus flicker race-on frames carrying the PREVIOUS event's

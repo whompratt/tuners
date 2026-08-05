@@ -147,6 +147,21 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   clock** (stationary, `DistanceTraveled` 0): a race-on run in which the car never
   moves is menu noise, not driving, and must not anchor gap classification (the
   flicker's clock dropping to the new race's zero otherwise fakes a restart).
+- **The finish line goes race-off BEFORE any frame carries the run time**
+  (measured 2026-08-05, Celica point-to-point sprints): the last race-on driving
+  frame sits meters short of the line with `LastLap` still 0, and the official
+  time arrives only in brief race-on flicker from the results screen, seconds to
+  tens of seconds later: `LapNumber` incremented, `LastLap` = the official run
+  time (within ~0.5s of the last seen lap clock), race clock run forward
+  (+2.97..+11.36s measured), position channels garbage (`DistanceTraveled`
+  teleports, e.g. 5952 → 196). This "finish certificate" can be a SINGLE frame,
+  and when the recorder's idle cut lands between the line and the results
+  flicker it opens the NEXT recording instead. Analysis adopts the certificate's
+  time for the run it completes (in-file and across the cut); the race clock
+  must have advanced across the gap, since a pause taken exactly at a lap line
+  also resumes on lap+1 with a matching `LastLap` but within hundredths.
+  Without adoption, a run's time survives only when the driver restarts fast
+  enough (< 5s of results screen) that the flicker stitches into the segment.
 - **`CurrentRaceTime` is the canonical time axis**: it runs in free roam too, freezes
   during pauses, and steps back coherently at rewinds. All durations, distance
   integration, and profile bin times use it (not `TimestampMS`, which keeps running
