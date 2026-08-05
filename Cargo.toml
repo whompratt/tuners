@@ -4,7 +4,7 @@ members = ["app/src-tauri"]
 # The single place the app version is bumped: both crates inherit it, and
 # tauri.conf.json (no version key) picks it up from the app crate.
 [workspace.package]
-version = "0.1.10"
+version = "0.1.11"
 
 [profile.release]
 codegen-units = 1

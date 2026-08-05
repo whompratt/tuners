@@ -671,6 +671,7 @@ pub fn advise(
         };
 
         let mut nodes: Vec<(f32, f32, usize)> = Vec::new();
+        let mut provisional: Vec<(f32, f32)> = Vec::new();
         if let Some(key) = key.as_deref() {
             let value_of = |idx: usize| -> Option<f32> {
                 c.setups
@@ -709,6 +710,33 @@ pub fn advise(
                 }
             }
             nodes.sort_by(|x, y| x.0.total_cmp(&y.0));
+            // Tried values whose only measurements were too weak (single-lap
+            // side) or channel-dirty to join the curve get a PROVISIONAL
+            // point anchored on their clean from-node: a value the user
+            // drove must never be invisible in the setup history. Excluded
+            // from the fit and the vertex.
+            for m in fam_all.iter().filter(|m| m.weak || !m.clean) {
+                if m.key.as_deref() != Some(key) {
+                    continue;
+                }
+                let Some(d) = m.outcome.delta_s() else {
+                    continue;
+                };
+                let (Some(vf), Some(vt)) = (value_of(m.i), value_of(m.j)) else {
+                    continue;
+                };
+                if nodes.iter().any(|n| (n.0 - vt).abs() < 1e-3)
+                    || provisional.iter().any(|p| (p.0 - vt).abs() < 1e-3)
+                {
+                    continue;
+                }
+                let Some(cum_f) = nodes.iter().find(|n| (n.0 - vf).abs() < 1e-3).map(|n| n.1)
+                else {
+                    continue;
+                };
+                provisional.push((vt, cum_f + d));
+            }
+            provisional.sort_by(|x, y| x.0.total_cmp(&y.0));
         }
 
         let pts: Vec<(f32, f32)> = nodes.iter().map(|n| (n.0, n.1)).collect();
@@ -727,6 +755,8 @@ pub fn advise(
         };
         let disp_nodes: Vec<(f32, f32, usize)> =
             nodes.iter().map(|n| (dround(n.0), n.1, n.2)).collect();
+        let disp_provisional: Vec<(f32, f32)> =
+            provisional.iter().map(|p| (dround(p.0), p.1)).collect();
         let disp_fit = if (dk - 1.0).abs() < 1e-9 {
             fit
         } else {
@@ -942,6 +972,7 @@ pub fn advise(
                 .unwrap_or_else(|| journal::family_area(family).to_string()),
             key,
             nodes: disp_nodes,
+            provisional: disp_provisional,
             fit: disp_fit,
             vertex: vertex_out.map(dround),
             measurements: mviews,

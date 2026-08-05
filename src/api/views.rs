@@ -267,6 +267,9 @@ pub struct LandscapeView {
     pub key: Option<String>,
     /// (value, cumulative verdict delta s, samples), ascending by value.
     pub nodes: Vec<(f32, f32, u32)>,
+    /// Tried values whose measurements were too weak or dirty to join the
+    /// curve: (value, provisional cumulative delta). Not in the fit.
+    pub provisional: Vec<(f32, f32)>,
     /// y = ax² + bx + c least-squares fit over the nodes (3+ nodes).
     pub fit: Option<(f32, f32, f32)>,
     pub vertex: Option<f32>,
@@ -400,6 +403,7 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
                     .iter()
                     .map(|(v, c, n)| (*v, *c, *n as u32))
                     .collect(),
+                provisional: l.provisional.clone(),
                 fit: l.fit,
                 vertex: l.vertex,
                 measurements: l.measurements.iter().map(measurement_view).collect(),

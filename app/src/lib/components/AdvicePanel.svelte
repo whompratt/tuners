@@ -75,6 +75,7 @@
     if (!l) return null;
     return {
       nodes: l.nodes.map((nd) => [N(nd[0]), N(nd[1])] as [number, number]),
+      provisional: l.provisional.map((p) => [N(p[0]), N(p[1])] as [number, number]),
       fit: l.fit ? [N(l.fit[0]), N(l.fit[1]), N(l.fit[2])] : null,
       vertex: l.vertex,
     };

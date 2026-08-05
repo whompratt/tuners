@@ -130,6 +130,11 @@ pub struct LandscapeView {
     pub key: Option<String>,
     /// (value, cumulative verdict delta s, samples), ascending by value.
     pub nodes: Vec<(f32, f32, usize)>,
+    /// Tried values whose only measurements were too weak (single-lap side)
+    /// or channel-dirty to join the curve: (value, provisional cumulative
+    /// delta anchored on the clean neighbor). Shown so a value the user
+    /// drove is never invisible; excluded from the fit and the vertex.
+    pub provisional: Vec<(f32, f32)>,
     /// y = ax² + bx + c least-squares fit over the nodes (3+ nodes).
     pub fit: Option<(f32, f32, f32)>,
     /// Estimated optimum (interior fit vertex with meaningful spread).

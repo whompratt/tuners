@@ -424,7 +424,7 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
     let mapped: Vec<_> = view
         .landscapes
         .iter()
-        .filter(|l| l.nodes.len() >= 2)
+        .filter(|l| l.nodes.len() >= 2 || (!l.nodes.is_empty() && !l.provisional.is_empty()))
         .collect();
     if !mapped.is_empty() {
         println!(
@@ -436,11 +436,21 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                 .iter()
                 .map(|(v, cum, _)| format!("{v} → {cum:+.2}s"))
                 .collect();
+            let provisional = if l.provisional.is_empty() {
+                String::new()
+            } else {
+                let ps: Vec<String> = l
+                    .provisional
+                    .iter()
+                    .map(|(v, cum)| format!("{v} → {cum:+.2}s"))
+                    .collect();
+                format!("  (provisional, corroborate: {})", ps.join(", "))
+            };
             let vertex = l
                 .vertex
                 .map(|v| format!("  | est. optimum ≈ {v}"))
                 .unwrap_or_default();
-            println!("  {}: {}{vertex}", l.phrase, nodes.join(", "));
+            println!("  {}: {}{provisional}{vertex}", l.phrase, nodes.join(", "));
         }
     }
     if let Some(p) = &view.in_progress {

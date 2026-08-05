@@ -219,6 +219,11 @@ export type LandscapeView = {
 	key: string | null,
 	/**  (value, cumulative verdict delta s, samples), ascending by value. */
 	nodes: ([number | null, number | null, number])[],
+	/**
+	 *  Tried values whose measurements were too weak or dirty to join the
+	 *  curve: (value, provisional cumulative delta). Not in the fit.
+	 */
+	provisional: ([number | null, number | null])[],
 	/**  y = ax² + bx + c least-squares fit over the nodes (3+ nodes). */
 	fit: [number | null, number | null, number | null] | null,
 	vertex: number | null,

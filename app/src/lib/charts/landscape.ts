@@ -6,6 +6,9 @@ import type { Palette } from "./palette";
 export type LandscapeData = {
   /** (value, cumulative verdict delta s); sanitized, ascending by value. */
   nodes: [number, number][];
+  /** Tried values whose measurements were too weak or dirty to join the
+   *  curve: drawn hollow, excluded from the fit. */
+  provisional: [number, number][];
   fit: [number, number, number] | null;
   vertex: number | null;
 };
@@ -22,8 +25,9 @@ export type LandscapeLayout = {
 };
 
 export function landscapeLayout(data: LandscapeData, cssW: number, cssH = 170): LandscapeLayout {
-  const xs = data.nodes.map((n) => n[0]),
-    ys = data.nodes.map((n) => n[1]);
+  const pts = [...data.nodes, ...data.provisional];
+  const xs = pts.map((n) => n[0]),
+    ys = pts.map((n) => n[1]);
   const x0 = Math.min(...xs),
     x1 = Math.max(...xs);
   const y0 = Math.min(...ys, 0),
@@ -55,7 +59,7 @@ export function drawLandscape(
 ) {
   const { cssW: W, cssH: H } = L;
   ctx.font = '11px "JetBrains Mono", ui-monospace, monospace';
-  if (data.nodes.length < 2) {
+  if (data.nodes.length + data.provisional.length < 2) {
     ctx.fillStyle = pal.muted;
     ctx.fillText("not enough mapped values to chart. Drive more single-change stints", 10, 24);
     return;
@@ -93,5 +97,15 @@ export function drawLandscape(
     ctx.fillText(`${v}`, X(v) - 8, H - 14);
     ctx.fillStyle = pal.muted;
     ctx.fillText(sgn(cum), Math.min(X(v) + 6, W - 45), Y(cum) - 6);
+  }
+  // Provisional points: driven, but only weakly measured. Hollow marker,
+  // no curve membership.
+  for (const [v, cum] of data.provisional) {
+    ctx.strokeStyle = pal.info;
+    ctx.beginPath(); ctx.arc(X(v), Y(cum), 3.5, 0, 7); ctx.stroke();
+    ctx.fillStyle = pal.ink2;
+    ctx.fillText(`${v}`, X(v) - 8, H - 14);
+    ctx.fillStyle = pal.muted;
+    ctx.fillText(`${sgn(cum)}?`, Math.min(X(v) + 6, W - 50), Y(cum) - 6);
   }
 }

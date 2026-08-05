@@ -77,6 +77,7 @@ describe("landscape layout", () => {
       [19.5, -0.2],
       [20.7, 0],
     ] as [number, number][],
+    provisional: [] as [number, number][],
     fit: null,
     vertex: 18.5,
   };
@@ -97,8 +98,17 @@ describe("landscape layout", () => {
   });
 
   it("pads degenerate (single-value or flat) inputs", () => {
-    const L = landscapeLayout({ nodes: [[18, 0], [18, 0]], fit: null, vertex: null }, 720);
+    const L = landscapeLayout(
+      { nodes: [[18, 0], [18, 0]], provisional: [], fit: null, vertex: null },
+      720,
+    );
     expect(L.padX).toBe(1);
     expect(L.padY).toBe(0.05);
+  });
+
+  it("provisional points widen the frame like clean nodes", () => {
+    const L = landscapeLayout({ ...data, provisional: [[22, -0.9]] }, 720);
+    expect(L.x1).toBe(22);
+    expect(L.y0).toBe(-0.9);
   });
 });
