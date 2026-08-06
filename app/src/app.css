@@ -124,8 +124,8 @@ pre { white-space: pre-wrap; font: 14px/1.45 var(--font-mono); }
 .adv-rec { margin-top: 10px; font-size: 14px; color: var(--ink); }
 .adv-conf { font-weight: 600; }
 .adv-ev { font-size: 13px; color: var(--ink-2); margin: 2px 0 0 16px; }
-#tune-summary .kv { margin-right: 14px; white-space: nowrap; }
-#tune-summary .kv b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.kv { margin-right: 14px; white-space: nowrap; }
+.kv b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
 #rec-status .rec-dot { color: #e66767; }
 #split-form { display: flex; gap: 6px; align-items: center; }
 #split-form select, #split-form input, #split-form button {
