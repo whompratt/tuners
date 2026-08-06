@@ -230,6 +230,19 @@ const PAUSE_MAX_CLOCK_ADVANCE_S: f32 = 5.0;
 /// flash race-on frames carrying the previous event's clock): they neither end
 /// nor anchor a gap, so the surrounding gap is judged driving-run to
 /// driving-run and a flicker before the first real drive reports nothing.
+/// A race-off gap whose resume frame continues the pre-gap clock (within the
+/// pause window) with distance not retreating is a pause wherever it falls in
+/// the run: the game can flip race-off for a few seconds just after GO with
+/// the car state frozen (early loading hitch on point-to-point rivals,
+/// telemetry.md), and the resume clock then still sits under the restart
+/// threshold. A real restart drops the clock below the pre-gap run and
+/// teleports distance back to the grid, so it never reads as continuous.
+fn paused_resume(before: &TelemetryFrame, after: &TelemetryFrame) -> bool {
+    after.current_race_time >= before.current_race_time
+        && after.current_race_time - before.current_race_time <= PAUSE_MAX_CLOCK_ADVANCE_S
+        && after.distance_traveled >= before.distance_traveled - 1.0
+}
+
 pub fn classify_gaps(frames: &[TimedFrame]) -> Vec<SessionGap> {
     let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
     let mut start = None;
@@ -254,10 +267,11 @@ pub fn classify_gaps(frames: &[TimedFrame]) -> Vec<SessionGap> {
 
     runs.windows(2)
         .map(|pair| {
-            let race_t_before = frames[pair[0].end - 1].frame.current_race_time;
+            let before = &frames[pair[0].end - 1].frame;
+            let race_t_before = before.current_race_time;
             let resume_frame = pair[1].start;
             let f = &frames[resume_frame].frame;
-            let kind = if f.current_race_time < RESTART_RACE_T_S {
+            let kind = if f.current_race_time < RESTART_RACE_T_S && !paused_resume(before, f) {
                 GapKind::Restart
             } else if f.current_race_time < race_t_before - REWIND_MIN_STEP_S {
                 GapKind::Rewind {
@@ -332,7 +346,10 @@ pub fn driving_segments(frames: &[TimedFrame], min_seconds: f32) -> Vec<Vec<Time
             }
             let race_t = tf.frame.current_race_time;
             let last_t = current.last().map(|l| l.frame.current_race_time);
-            if race_t < RESTART_RACE_T_S {
+            let paused = current
+                .last()
+                .is_some_and(|l| paused_resume(&l.frame, &tf.frame));
+            if race_t < RESTART_RACE_T_S && !paused {
                 segments.push(std::mem::take(&mut current));
             } else if last_t.is_some_and(|t| t >= race_t) {
                 // Rewind: erase what the retry supersedes.
@@ -401,6 +418,81 @@ mod tests {
         assert_eq!(stints.len(), 2);
         assert_eq!(stints[0].len(), 100);
         assert_eq!(stints[1].len(), 80);
+    }
+
+    /// The game can flip race-off for a few seconds just after GO with the
+    /// car state frozen (p2p rivals loading hitch, telemetry.md): the resume
+    /// clock sits under the restart threshold, but the continuous clock and
+    /// distance mark it as a pause. Splitting there severs the launch, and a
+    /// standing run not captured from GO cannot be profiled.
+    #[test]
+    fn early_run_race_off_hitch_is_a_pause_not_a_restart() {
+        let moving = |race_t: f32, dist: f32| TimedFrame {
+            recv_us: (race_t * 1e6) as u64,
+            frame: TelemetryFrame {
+                is_race_on: true,
+                current_race_time: race_t,
+                current_lap: race_t,
+                distance_traveled: dist,
+                speed: 20.0,
+                ..Default::default()
+            },
+        };
+        let off = TimedFrame {
+            recv_us: 0,
+            frame: TelemetryFrame {
+                is_race_on: false,
+                ..Default::default()
+            },
+        };
+
+        // Launch from GO, race-off hitch at 3.8s, resume on the same clock
+        // and distance, run to 100s.
+        let mut frames: Vec<TimedFrame> = (0..38)
+            .map(|i| moving(i as f32 * 0.1, i as f32 * 2.0))
+            .collect();
+        frames.push(off);
+        frames.push(off);
+        frames.extend((38..1000).map(|i| moving(i as f32 * 0.1, i as f32 * 2.0)));
+
+        let segs = driving_segments(&frames, 5.0);
+        assert_eq!(segs.len(), 1, "hitch must stitch, not split");
+        assert_eq!(
+            segs[0].first().unwrap().frame.current_race_time,
+            0.0,
+            "launch frames kept"
+        );
+        let gaps = classify_gaps(&frames);
+        assert!(
+            matches!(
+                gaps.as_slice(),
+                [SessionGap {
+                    kind: GapKind::Pause,
+                    ..
+                }]
+            ),
+            "hitch reads as pause, not restart: {gaps:?}"
+        );
+
+        // A real restart 3.8s in: clock back near zero, distance back to the
+        // grid. Still splits (and the sub-5s launch drops).
+        let mut frames: Vec<TimedFrame> = (0..38)
+            .map(|i| moving(i as f32 * 0.1, i as f32 * 2.0))
+            .collect();
+        frames.push(off);
+        frames.extend((2..1000).map(|i| moving(i as f32 * 0.1, -30.0 + i as f32 * 2.0)));
+
+        let segs = driving_segments(&frames, 5.0);
+        assert_eq!(segs.len(), 1);
+        assert!(
+            segs[0].first().unwrap().frame.current_race_time > 0.1,
+            "restarted run starts fresh; the aborted launch is gone"
+        );
+        assert!(matches!(gaps_kind_first(&frames), Some(GapKind::Restart)));
+    }
+
+    fn gaps_kind_first(frames: &[TimedFrame]) -> Option<GapKind> {
+        classify_gaps(frames).first().map(|g| g.kind)
     }
 
     #[test]

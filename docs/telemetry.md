@@ -162,6 +162,15 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   also resumes on lap+1 with a matching `LastLap` but within hundredths.
   Without adoption, a run's time survives only when the driver restarts fast
   enough (< 5s of results screen) that the flicker stitches into the segment.
+- **The game can flip race-off for a few seconds JUST AFTER GO with the car
+  state frozen** (measured 2026-08-06, point-to-point rivals, two of four
+  runs on one session: race-off at race_t 3.6-3.8s for 2.7-7.3s of wall
+  time, clock/distance/speed identical on resume, +0.01s). Likely a
+  loading hitch; also present in two testers' shared recordings. The
+  resume clock sits under the 5s restart threshold, so classification
+  must test clock+distance continuity BEFORE the near-zero-clock restart
+  rule, or the launch is severed and the standing run (not captured from
+  its start) becomes unprofilable.
 - **`CurrentRaceTime` is the canonical time axis**: it runs in free roam too, freezes
   during pauses, and steps back coherently at rewinds. All durations, distance
   integration, and profile bin times use it (not `TimestampMS`, which keeps running
