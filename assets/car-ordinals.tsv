@@ -1,5 +1,6 @@
 # FH6 CarOrdinal -> car name, community-verified against telemetry
 # source: https://gist.github.com/HDR/0659d1717bc61504bf83750628963f4f (retrieved 2026-07-19)
+# corrections: 3622 year 2019 -> 2020 (in-game name, tester report 2026-08-06)
 247	1969 Toyota 2000 GT
 249	1964 Ferrari 250 GTO
 251	1954 Mercedes-Benz 300 SL
@@ -476,7 +477,7 @@
 3611	2022 Maserati MC20
 3616	2021 Mercedes-AMG GT Black Series
 3617	2022 Mercedes-Benz SL63 AMG
-3622	2019 Nissan GT-R Nismo
+3622	2020 Nissan GT-R Nismo
 3625	2021 Rimac Nevera
 3629	2021 Toyota GR Yaris
 3631	2022 Aston Martin Valkyrie AMR Pro
