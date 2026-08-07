@@ -9,6 +9,7 @@ import { landscapeLayout, landscapeX, landscapeY } from "./landscape";
 const laps = {
   binMeters: 100,
   bestTime: 44.7,
+  pointToPoint: false,
   corroborated: Array(50).fill(true),
   laps: [
     { lap: 2, time: 45.0, standing: false, speeds: Array(50).fill(60) },

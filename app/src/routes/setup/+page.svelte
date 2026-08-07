@@ -219,6 +219,7 @@
       if (!g || m.has(g)) continue;
       m.set(g, {
         nodes: l.nodes.map((nd) => [nd[0] ?? 0, nd[1] ?? 0] as [number, number]),
+        provisional: l.provisional.map((nd) => [nd[0] ?? 0, nd[1] ?? 0] as [number, number]),
         fit: l.fit ? [l.fit[0] ?? 0, l.fit[1] ?? 0, l.fit[2] ?? 0] : null,
         vertex: l.vertex,
       });
