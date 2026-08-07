@@ -53,9 +53,10 @@ pub struct RunsChangedEvent {
 // ----------------------------------------------------------------- commands
 //
 // Plain #[tauri::command] runs on the MAIN thread: a slow body freezes the
-// whole window (Windows "Not Responding"). Anything that reads recordings
-// is marked (async) so it executes on the runtime pool instead; the wire
-// signature is identical either way.
+// whole window (Windows "Not Responding"). Every command that touches the
+// filesystem, the recorder, or the network is marked (async) so it executes
+// on the runtime pool instead — the window never waits; the wire signature
+// is identical either way. Only pure in-memory lookups stay sync.
 
 #[tauri::command(async)]
 #[specta::specta]
@@ -81,14 +82,14 @@ fn report(file: String) -> Result<String, api::ApiError> {
     api::report_text(&file)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn session(state: S) -> api::SessionView {
     let s = tuners::advice::tuning::TuningSession::load(state.session_file.as_ref());
     api::session_view(&s, &state.journal_base)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn update_session(
     state: S,
@@ -100,7 +101,7 @@ fn update_session(
     api::update_session(&req, state.session_file.as_ref(), &state.journal_base)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn save_tune(
     state: S,
@@ -115,13 +116,13 @@ fn save_tune(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn sessions(state: S) -> api::SessionsView {
     api::sessions_view(&state.session_file, &state.journal_base)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn new_session(
     state: S,
@@ -140,7 +141,7 @@ fn new_session(
     Ok(out)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn resume_session(state: S, id: String) -> Result<api::SessionView, api::ApiError> {
     let out = api::resume_session(&id, &state.session_file, &state.journal_base)?;
@@ -148,7 +149,7 @@ fn resume_session(state: S, id: String) -> Result<api::SessionView, api::ApiErro
     Ok(out)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn duplicate_session(
     state: S,
@@ -177,7 +178,7 @@ fn advise(state: S) -> Result<api::AdviseView, api::ApiError> {
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn pending(state: S) -> Option<api::PendingView> {
     api::pending_view(state.session_file.as_ref(), &state.recorder)
@@ -195,19 +196,19 @@ fn car_list() -> Vec<api::CarView> {
     api::car_list()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn effect_map_status() -> Option<api::EffectMapStatus> {
     api::effect_map_status()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn sharing(state: S) -> api::SharingView {
     api::sharing_view(&state.config, &state.outbox)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn set_sharing(
     state: S,
@@ -235,7 +236,7 @@ fn share_history(state: S) -> Result<u32, api::ApiError> {
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn session_delete_plan(state: S, id: String) -> Result<api::SessionDeletePlan, api::ApiError> {
     api::session_delete_plan(
@@ -246,7 +247,7 @@ fn session_delete_plan(state: S, id: String) -> Result<api::SessionDeletePlan, a
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn delete_session(state: S, id: String, delete_runs: bool) -> Result<(), api::ApiError> {
     let active = state.recorder.lock().unwrap().file.clone();
@@ -260,7 +261,7 @@ fn delete_session(state: S, id: String, delete_runs: bool) -> Result<(), api::Ap
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn delete_stint(state: S, file: String, force: bool) -> Result<(), api::ApiError> {
     let active = state.recorder.lock().unwrap().file.clone();
@@ -273,7 +274,7 @@ fn delete_stint(state: S, file: String, force: bool) -> Result<(), api::ApiError
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn record_split(state: S, note: Option<String>) {
     api::request_split(&state.recorder, note);
@@ -300,7 +301,7 @@ fn export_stint(state: S, file: String, dest: String) -> Result<String, api::Api
 /// Best-guess LAN IP for the Data Out hookup screen: a connected UDP socket
 /// reveals which local address routes outward, without sending a packet.
 /// None when offline or loopback-only; the wizard then shows 127.0.0.1 alone.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn lan_ip() -> Option<String> {
     let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
@@ -312,7 +313,7 @@ fn lan_ip() -> Option<String> {
 /// True when running inside a flatpak sandbox, where the tauri updater
 /// cannot replace the app (/app is immutable; updates come via flatpak).
 /// The frontend skips the startup update check when this is set.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn in_flatpak() -> bool {
     std::env::var_os("FLATPAK_ID").is_some() || std::path::Path::new("/.flatpak-info").exists()

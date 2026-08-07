@@ -19,6 +19,7 @@ import {
 export type Laps = {
   binMeters: number;
   bestTime: number;
+  pointToPoint: boolean;
   corroborated: boolean[];
   laps: { lap: number; time: number; standing: boolean; speeds: number[] }[];
 };
@@ -26,6 +27,7 @@ const num = (v: number | null) => v ?? 0;
 const sanitizeLaps = (v: LapsView): Laps => ({
   binMeters: num(v.binMeters),
   bestTime: num(v.bestTime),
+  pointToPoint: v.pointToPoint,
   corroborated: v.corroborated,
   laps: v.laps.map((l) => ({ lap: l.lap, time: num(l.time), standing: l.standing, speeds: l.speeds.map(num) })),
 });
@@ -63,6 +65,10 @@ export const app = $state({
   adviceLoading: false,
   // The pending basket: tune edits saved since the last driven run.
   pending: null as PendingView | null,
+  /** A background load failed (invoke rejected, not a typed ApiError).
+   * Rendered as a dismissible banner by the layout: a failure must
+   * surface as content, never as a silently dead screen. */
+  loadError: "",
 });
 
 /** Stint file paths come from the engine with the OS's separator (backslash
@@ -89,29 +95,54 @@ export function detectedCar(staleMs = 3000): { car: number; name: string | null 
 export const errMsg = (e: ApiError | string | unknown): string =>
   typeof e === "string" ? e : ((e as ApiError)?.message ?? String(e));
 
+/** Record a background-load failure where the layout renders it. Loaders
+ * swallow after recording: a rejected invoke (IPC failure, command panic)
+ * must degrade to a banner + stale data, never break the caller's chain —
+ * an exception escaping an event handler or effect can wedge navigation
+ * (the "Analysis tab won't open" field reports). */
+function loadFailed(what: string, e: unknown) {
+  console.error(what, e);
+  app.loadError = `${what} failed: ${errMsg(e)}`;
+}
+
 export async function loadAdvice() {
   app.adviceLoading = true;
   app.adviceError = "";
-  // Fresh session state first: accepted-value detection compares against the
-  // LATEST version, which an accept just changed.
-  await loadSession();
-  await loadPending();
-  const r = await commands.advise();
-  app.adviceLoading = false;
-  if (r.status === "error") {
+  try {
+    // Fresh session state first: accepted-value detection compares against
+    // the LATEST version, which an accept just changed.
+    await loadSession();
+    await loadPending();
+    const r = await commands.advise();
+    if (r.status === "error") {
+      app.advice = null;
+      app.adviceError = errMsg(r.error);
+      return;
+    }
+    app.advice = r.data;
+  } catch (e) {
     app.advice = null;
-    app.adviceError = errMsg(r.error);
-    return;
+    app.adviceError = errMsg(e);
+  } finally {
+    app.adviceLoading = false;
   }
-  app.advice = r.data;
 }
 
 export async function loadPending() {
-  app.pending = await commands.pending();
+  try {
+    app.pending = await commands.pending();
+  } catch (e) {
+    loadFailed("loading pending changes", e);
+  }
 }
 
 export async function loadStints(resetFilter: boolean) {
-  app.stints = await commands.stints();
+  try {
+    app.stints = await commands.stints();
+  } catch (e) {
+    loadFailed("loading runs", e);
+    return;
+  }
   if (!app.stints.length) return;
   // default: the latest session's car (list is filename-sorted = chronological)
   const valid = new Set(["all", ...app.stints.map((s) => String(s.car))]);
@@ -121,7 +152,12 @@ export async function loadStints(resetFilter: boolean) {
 }
 
 export async function loadSession() {
-  app.session = await commands.session();
+  try {
+    app.session = await commands.session();
+  } catch (e) {
+    loadFailed("loading project", e);
+    return;
+  }
   // Bump the units signal only when prefs actually changed: {#key unitsTick}
   // blocks recreate their whole subtree (inputs lose focus mid-tab), so a
   // bump on every session reload would tear down forms on every field commit.
@@ -147,9 +183,14 @@ export async function show(file: string) {
   app.shownFile = file;
   app.reportPlaceholder = false;
   app.report = "analyzing…";
-  const [report, laps] = await Promise.all([commands.report(file), commands.laps(file)]);
-  app.report = report.status === "ok" ? report.data : errMsg(report.error);
-  app.lapData = laps.status === "ok" && laps.data.laps.length ? sanitizeLaps(laps.data) : null;
+  try {
+    const [report, laps] = await Promise.all([commands.report(file), commands.laps(file)]);
+    app.report = report.status === "ok" ? report.data : errMsg(report.error);
+    app.lapData = laps.status === "ok" && laps.data.laps.length ? sanitizeLaps(laps.data) : null;
+  } catch (e) {
+    app.report = errMsg(e);
+    app.lapData = null;
+  }
 }
 
 export function pick(side: "a" | "b", file: string) {

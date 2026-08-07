@@ -25,6 +25,14 @@
 
   onMount(() => {
     initAdvanced();
+    // Last-resort net: anything the loaders' own catches miss surfaces as
+    // the banner instead of wedging navigation as a silent dead click.
+    const onRejection = (e: PromiseRejectionEvent) => {
+      console.error("unhandled rejection", e.reason);
+      app.loadError = String((e.reason as { message?: string })?.message ?? e.reason);
+      e.preventDefault();
+    };
+    window.addEventListener("unhandledrejection", onRejection);
     getVersion().then((v) => (version = v));
     (async () => {
       await loadStints(true);
@@ -48,12 +56,19 @@
       }),
     ];
     return () => {
+      window.removeEventListener("unhandledrejection", onRejection);
       for (const s of subs) s.then((un) => un());
     };
   });
 </script>
 
 <DialogHost />
+{#if app.loadError}
+  <div class="load-error" role="alert">
+    <span>{app.loadError}</span>
+    <button onclick={() => (app.loadError = "")}>dismiss</button>
+  </div>
+{/if}
 {#if onboarding.open}<Onboarding />{/if}
 <nav class="rail">
   <div class="rail-brand" title="FH6 tuning assistant">tuners</div>

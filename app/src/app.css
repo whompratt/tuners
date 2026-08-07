@@ -385,3 +385,17 @@ pre { white-space: pre-wrap; font: 14px/1.45 var(--font-mono); }
 .table-scroll { overflow-x: auto; }
 .table-scroll .adv-table td { white-space: normal; }
 .table-scroll .adv-table td.num, .table-scroll .adv-table th { white-space: nowrap; }
+
+/* Background-load failure banner: fixed over everything so a broken load is
+   visible from any screen; dismissible, never blocks navigation. */
+.load-error {
+  position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 200; max-width: min(720px, 90vw);
+  display: flex; gap: 12px; align-items: center;
+  padding: 8px 12px; border: 1px solid var(--danger); border-radius: 6px;
+  background: var(--surface); color: var(--danger); font-size: 13px;
+}
+.load-error button {
+  border: 1px solid var(--danger); border-radius: 4px; background: none;
+  color: var(--danger); cursor: pointer; padding: 2px 8px;
+}
