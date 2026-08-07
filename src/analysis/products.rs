@@ -250,6 +250,9 @@ fn cache() -> &'static Mutex<Cache> {
 /// size or mtime changed (the recorder appends to the newest stint); errors
 /// carry no path prefix, callers add their own.
 pub fn cached(path: &Path) -> Result<Arc<StintData>, String> {
+    // Journal references are root-relative; resolve them against the data
+    // root so callers are CWD-independent.
+    let path = &crate::util::resolve_data(path);
     let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
     let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let (len, mtime) = (meta.len(), meta.modified().ok());

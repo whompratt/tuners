@@ -520,7 +520,9 @@ pub(crate) fn load_campaign<'s>(
     session: &'s TuningSession,
     label: &str,
 ) -> Result<Campaign<'s>, String> {
-    let (entries, missing) = drop_missing_entries(entries, |p| Path::new(p).exists());
+    let (entries, missing) = drop_missing_entries(entries, |p| {
+        crate::util::resolve_data(Path::new(p)).exists()
+    });
     if entries.is_empty() {
         return Err(format!(
             "{label}: every journaled stint recording is missing; the files \

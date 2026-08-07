@@ -39,6 +39,20 @@ pub fn data_path(rel: &str) -> std::path::PathBuf {
     }
 }
 
+/// Resolve a stored root-relative reference (journal stint paths) against the
+/// data root. Absolute paths pass through, and with the default "." root the
+/// path comes back unchanged, so CLI behavior in a repo checkout is
+/// untouched. Without this, a CLI run with `TUNERS_DATA` set but a different
+/// CWD silently read every journaled stint as missing.
+pub fn resolve_data(path: &std::path::Path) -> std::path::PathBuf {
+    let root = data_root();
+    if path.is_absolute() || root == std::path::Path::new(".") {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    }
+}
+
 /// CLI report display units (storage stays canonical: °F, m/s). Thread-local
 /// so tests can't pollute each other; defaults imperial, set once by main
 /// from the active session's unit prefs or --units.
