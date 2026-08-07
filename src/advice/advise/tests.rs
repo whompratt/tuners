@@ -171,6 +171,45 @@ fn exhausted_direction_without_partner_is_dropped() {
     assert_eq!(recs.len(), 1);
 }
 
+/// AWD build: the family-wide test alone let "lower rear diff accel"
+/// survive with the rear hard at 0 because the front slider still had
+/// headroom (plan-014 field report). Advice naming exactly one slider of
+/// a no-flip-partner family gates on that slider.
+#[test]
+fn named_slider_at_bound_drops_on_awd_build() {
+    let diff_rec = |advice: &str| Recommendation {
+        apply: Vec::new(),
+        area: "traction",
+        advice: advice.into(),
+        evidence: vec![],
+        confidence: Confidence::High,
+        suggestion: None,
+        probe: false,
+        implied: Some(journal::Change {
+            family: journal::Family::DiffAccel,
+            softer: true,
+            magnitude: None,
+        }),
+    };
+
+    // Rear at 0, front free: the rear-named rec must not survive.
+    let session = session_with(&[("diff_accel_f", "30"), ("diff_accel_r", "0")], &[]);
+    let mut recs = vec![diff_rec("Lower rear diff accel.")];
+    enrich_with_tune(&mut recs, &session);
+    assert!(recs.is_empty(), "rear-named reduce at 0 must drop");
+
+    // Same setup, front-named: the front has the whole range, advice stands.
+    let mut recs = vec![diff_rec("Lower front diff accel.")];
+    enrich_with_tune(&mut recs, &session);
+    assert_eq!(recs.len(), 1);
+
+    // Rear off its bound: the rear-named rec stands.
+    let session = session_with(&[("diff_accel_f", "30"), ("diff_accel_r", "20")], &[]);
+    let mut recs = vec![diff_rec("Lower rear diff accel.")];
+    enrich_with_tune(&mut recs, &session);
+    assert_eq!(recs.len(), 1);
+}
+
 /// Only the primary slider pinned: advice stands, evidence points at the
 /// secondary slider instead of flipping ends.
 #[test]

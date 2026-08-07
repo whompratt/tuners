@@ -213,6 +213,33 @@ pub(super) fn enrich_with_tune(
             r.evidence
                 .push(format!("current setting: {}", known.join(", ")));
         }
+        // Family-wide exhaustion misses a rec that names ONE slider of a
+        // multi-slider family whose members are not substitutes for each
+        // other: "lower rear diff accel" with the rear at 0 survived on AWD
+        // builds because the front still had headroom (field report,
+        // plan 014). Where a flip partner exists (roll, aero) the family's
+        // sliders stand in for one another and the family-wide test below
+        // is the right one; where none does (diffs, damping, pressures),
+        // advice naming exactly one pinned slider is impossible to follow
+        // and drops.
+        if keys.len() > 1 && exhausted_flip(implied.family, implied.softer).is_none() {
+            let advice_lc = r.advice.to_lowercase();
+            let named: Vec<&str> = keys
+                .iter()
+                .copied()
+                .filter(|k| {
+                    rev.values.contains_key(*k)
+                        && advice_lc.contains(crate::advice::tuning::field_phrase(k))
+                })
+                .collect();
+            if let [k] = named.as_slice()
+                && let Some(val) = rev.values.get(*k).and_then(|v| v.parse::<f32>().ok())
+                && let Some(lim) = crate::advice::tuning::limit_of(&session.facts, k)
+                && crate::advice::tuning::pinned(val, lim, implied.softer, k)
+            {
+                return false;
+            }
+        }
         // Exhausted = every slider of the family has a known limit and sits
         // at the advised bound. Unknown limits never claim exhaustion.
         if with_limit > 0 && with_limit == known.len() && pinned == with_limit {
