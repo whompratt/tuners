@@ -116,6 +116,11 @@ you're driving.
 only shared if you explicitly ask, and `tuners export` lets you inspect
 exactly what a bundle contains before anything is uploaded.
 
+**What comes back**: everyone's shared data is distilled into a small
+anonymous summary of which adjustments helped on which kinds of builds, and
+every install downloads it to inform advice about adjustments you haven't
+tried yet. You receive it whether or not you share.
+
 The full plain-language policy, including retention and how to have your
 data deleted, is in [docs/privacy.md](docs/privacy.md).
 

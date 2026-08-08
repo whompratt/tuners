@@ -50,6 +50,18 @@ policy:
   complete.
 - If the project winds down, the bucket is deleted, not handed over.
 
+## What comes back: crowd priors
+
+Separately from sharing, the app periodically downloads a small "crowd
+priors" file: an anonymous statistical summary of what tune adjustments
+did across everyone's shared data (pooled averages per adjustment type
+and behaviour curve fits — no recordings, no sender ids, no cars, no
+timestamps of anyone's driving). Advice uses it for suggestions marked as
+global trends. The download is an ordinary HTTPS request (like the app's
+update check) and reveals nothing about you beyond the request itself; it
+works whether or not you share, and Settings → crowd priors turns it off,
+which also removes the downloaded file.
+
 ## Stopping
 
 Toggle sharing off at any time. Queued bundles that haven't uploaded yet

@@ -12,6 +12,7 @@
 
 use crate::advice::effectmap::{self, EffectMap};
 use serde::{Deserialize, Serialize};
+use std::io::Read as _;
 use std::path::Path;
 
 /// Artifact schema this build writes and understands.
@@ -193,6 +194,309 @@ pub fn write(path: &Path, p: &Priors) -> Result<bool, String> {
     Ok(true)
 }
 
+// ---- client side: load, merge, fetch ----
+
+/// Artifact locations under the data root.
+pub const ARTIFACT_FILE: &str = "crowd-priors.json";
+pub const ETAG_FILE: &str = "crowd-priors.etag";
+/// Fetch preference file (independent of the sharing consent in
+/// tune-collect.txt: receiving the crowd's priors must not require
+/// contributing). Absent file = default ON.
+pub const CONFIG_FILE: &str = "tune-priors.txt";
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FetchConfig {
+    pub enabled: bool,
+    pub endpoint: String,
+}
+
+impl Default for FetchConfig {
+    fn default() -> Self {
+        FetchConfig {
+            enabled: true,
+            endpoint: crate::sharing::collect::DEFAULT_ENDPOINT.into(),
+        }
+    }
+}
+
+impl FetchConfig {
+    pub fn load(path: &Path) -> FetchConfig {
+        let mut cfg = FetchConfig::default();
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return cfg;
+        };
+        for line in text.lines() {
+            match line.split_once('=').map(|(k, v)| (k.trim(), v.trim())) {
+                Some(("enabled", v)) => cfg.enabled = v == "true",
+                Some(("endpoint", v)) if !v.is_empty() => cfg.endpoint = v.to_string(),
+                _ => {}
+            }
+        }
+        cfg
+    }
+
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        std::fs::write(
+            path,
+            format!(
+                "# crowd-prior fetch preference (independent of telemetry sharing)\n\
+                 enabled = {}\nendpoint = {}\n",
+                self.enabled, self.endpoint,
+            ),
+        )
+    }
+}
+
+/// The stored artifact, if present and readable. Never errors: a missing,
+/// stale, or unreadable artifact degrades to local-map-only advice.
+pub fn load() -> Option<Priors> {
+    let text = std::fs::read_to_string(crate::util::data_path(ARTIFACT_FILE)).ok()?;
+    parse(&text).ok()
+}
+
+/// True when this install's map already contains other senders' data (an
+/// ingested library): it IS the artifact's source, and merging the crowd
+/// artifact on top would double-count every sample.
+pub fn is_source(map: &EffectMap) -> bool {
+    map.samples.iter().any(|s| s.driver != "local")
+}
+
+fn static_key(key: &str) -> Option<&'static str> {
+    crate::analysis::effects::FIELDS
+        .iter()
+        .find(|(k, ..)| *k == key)
+        .map(|(k, ..)| *k)
+}
+
+fn crowd_cell(c: &PriorCell) -> effectmap::Cell {
+    effectmap::Cell {
+        family: c.family.clone(),
+        softer: c.softer,
+        drivetrain: c.drivetrain,
+        surface_loose: c.surface_loose,
+        aero: c.aero,
+        n: c.n as usize,
+        own_n: 0,
+        direct_n: c.direct_n as usize,
+        weak_n: c.weak_n as usize,
+        delta_mean: c.delta_mean,
+        delta_sd: c.delta_sd,
+        // Unknown field keys (a newer artifact) are dropped, not errors.
+        fields: c
+            .fields
+            .iter()
+            .filter_map(|(k, n, m, sd)| Some((static_key(k)?, *n as usize, *m, *sd)))
+            .collect(),
+        key_mode: c.key_mode.clone(),
+        mag_mean: c.mag_mean,
+    }
+}
+
+/// Pool two (mean, sd, n) summaries as one mixture distribution.
+fn pool(a: (f32, f32, usize), b: (f32, f32, usize)) -> (f32, f32) {
+    let (n, na, nb) = ((a.2 + b.2) as f32, a.2 as f32, b.2 as f32);
+    let mean = (na * a.0 + nb * b.0) / n;
+    let var = (na * (a.1 * a.1 + a.0 * a.0) + nb * (b.1 * b.1 + b.0 * b.0)) / n - mean * mean;
+    (mean, var.max(0.0).sqrt())
+}
+
+/// Merge the local aggregate with the crowd artifact's cells: n-weighted
+/// pooling per bucket, own_n = the local side's own count (so the existing
+/// own-driver rank boost falls out naturally), key_mode/mag_mean from the
+/// higher-n side (step sizes must not average across pools of different
+/// character). Local samples always count; the crowd fills and thickens.
+pub fn merge_cells(local: Vec<effectmap::Cell>, crowd: Option<&Priors>) -> Vec<effectmap::Cell> {
+    let Some(crowd) = crowd else {
+        return local;
+    };
+    let mut out = local;
+    for pc in &crowd.cells {
+        let cc = crowd_cell(pc);
+        let Some(lc) = out.iter_mut().find(|l| {
+            l.family == cc.family
+                && l.softer == cc.softer
+                && l.drivetrain == cc.drivetrain
+                && l.surface_loose == cc.surface_loose
+                && l.aero == cc.aero
+        }) else {
+            out.push(cc);
+            continue;
+        };
+        if lc.n == 0 {
+            // Weak-only local bucket: the crowd's stats stand alone.
+            let weak_n = lc.weak_n + cc.weak_n;
+            *lc = effectmap::Cell { weak_n, ..cc };
+            continue;
+        }
+        let (delta_mean, delta_sd) = pool(
+            (lc.delta_mean, lc.delta_sd, lc.n),
+            (cc.delta_mean, cc.delta_sd, cc.n),
+        );
+        let mut fields = Vec::new();
+        for (key, ..) in crate::analysis::effects::FIELDS {
+            let l = lc.fields.iter().find(|(k, ..)| k == key);
+            let c = cc.fields.iter().find(|(k, ..)| k == key);
+            match (l, c) {
+                (Some(&(k, n, m, sd)), None) | (None, Some(&(k, n, m, sd))) => {
+                    fields.push((k, n, m, sd));
+                }
+                (Some(&(k, ln, lm, lsd)), Some(&(_, cn, cm, csd))) => {
+                    let (m, sd) = pool((lm, lsd, ln), (cm, csd, cn));
+                    fields.push((k, ln + cn, m, sd));
+                }
+                (None, None) => {}
+            }
+        }
+        if cc.n > lc.n && cc.key_mode.is_some() {
+            lc.key_mode = cc.key_mode;
+            lc.mag_mean = cc.mag_mean;
+        }
+        lc.delta_mean = delta_mean;
+        lc.delta_sd = delta_sd;
+        lc.fields = fields;
+        lc.n += cc.n;
+        lc.direct_n += cc.direct_n;
+        lc.weak_n += cc.weak_n;
+    }
+    out
+}
+
+/// Merge landscapes for one (surface, drivetrain) context: a local
+/// landscape for an axis always wins (ordinary installs rarely build one;
+/// when they do, it is their own driving); crowd axes fill the gaps,
+/// flagged so advice wording can say where they came from.
+pub fn merge_landscapes(
+    local: Vec<effectmap::AxisLandscape>,
+    crowd: Option<&Priors>,
+    surface_loose: bool,
+    drivetrain: i32,
+) -> Vec<effectmap::AxisLandscape> {
+    let mut out = local;
+    let Some(ctx) = crowd.and_then(|p| {
+        p.landscapes
+            .iter()
+            .find(|c| c.surface_loose == surface_loose && c.drivetrain == drivetrain)
+    }) else {
+        return out;
+    };
+    for a in &ctx.axes {
+        let Some(key) = static_key(&a.key) else {
+            continue;
+        };
+        if out.iter().any(|l| l.key == key) {
+            continue;
+        }
+        out.push(effectmap::AxisLandscape {
+            key,
+            n: a.n as usize,
+            mean_gradient: a.mean_gradient,
+            sign_share: a.sign_share,
+            r: a.r,
+            alpha: a.alpha,
+            beta: a.beta,
+            lo: a.lo,
+            hi: a.hi,
+            optimum: a.optimum,
+            crowd: true,
+        });
+    }
+    out
+}
+
+/// The advise-time view of the map for one context: local aggregate and
+/// landscapes, merged with the stored crowd artifact unless this install
+/// is the artifact's source (an ingested library means every crowd sample
+/// is already in the local map — merging would double-count).
+pub fn merged_view(
+    emap: &EffectMap,
+    surface_loose: bool,
+    drivetrain: i32,
+) -> (Vec<effectmap::Cell>, Vec<effectmap::AxisLandscape>) {
+    let crowd = (!is_source(emap)).then(load).flatten();
+    let cells = merge_cells(effectmap::aggregate(emap), crowd.as_ref());
+    let landscapes = merge_landscapes(
+        effectmap::axis_landscapes(emap, surface_loose, Some(drivetrain)),
+        crowd.as_ref(),
+        surface_loose,
+        drivetrain,
+    );
+    (cells, landscapes)
+}
+
+#[derive(Debug)]
+pub enum FetchOutcome {
+    Updated,
+    Unchanged,
+    /// The endpoint has no artifact published; any local copy is kept.
+    Missing,
+}
+
+/// Fetch the artifact into the data root, verifying the served signature
+/// against the pinned key BEFORE anything is written. Conditional via the
+/// ETag sidecar; any failure leaves the stored artifact untouched.
+pub fn fetch(endpoint: &str) -> Result<FetchOutcome, String> {
+    fetch_to(
+        endpoint,
+        PUBKEY_HEX,
+        &crate::util::data_path(ARTIFACT_FILE),
+        &crate::util::data_path(ETAG_FILE),
+    )
+}
+
+/// 8 MB cap: the artifact is ~100 KB; a response far past that is wrong
+/// regardless of what it claims to be.
+const FETCH_CAP_BYTES: u64 = 8 * 1024 * 1024;
+
+pub fn fetch_to(
+    endpoint: &str,
+    pubkey_hex: &str,
+    artifact_path: &Path,
+    etag_path: &Path,
+) -> Result<FetchOutcome, String> {
+    let url = format!("{}/v1/priors", endpoint.trim_end_matches('/'));
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(60))
+        .build();
+    let mut req = agent.get(&url);
+    // Only send the cached etag while the artifact it belongs to exists.
+    if artifact_path.exists()
+        && let Ok(etag) = std::fs::read_to_string(etag_path)
+        && !etag.trim().is_empty()
+    {
+        req = req.set("If-None-Match", etag.trim());
+    }
+    let resp = match req.call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(404, _)) => return Ok(FetchOutcome::Missing),
+        Err(ureq::Error::Status(code, _)) => return Err(format!("endpoint says {code}")),
+        Err(ureq::Error::Transport(t)) => return Err(format!("no response ({t})")),
+    };
+    // ureq surfaces only 4xx/5xx as errors; the conditional-GET miss
+    // arrives here as a plain 304 response.
+    if resp.status() == 304 {
+        return Ok(FetchOutcome::Unchanged);
+    }
+    let etag = resp.header("etag").unwrap_or_default().to_string();
+    let sig = resp
+        .header("x-priors-signature")
+        .ok_or("response carries no signature")?
+        .to_string();
+    let mut body = String::new();
+    resp.into_reader()
+        .take(FETCH_CAP_BYTES)
+        .read_to_string(&mut body)
+        .map_err(|e| format!("read: {e}"))?;
+    if !verify(pubkey_hex, body.as_bytes(), &sig) {
+        return Err("signature verification failed; artifact discarded".into());
+    }
+    // Parse before storing so a signed-but-unreadable artifact (schema from
+    // the future) never replaces a working one.
+    parse(&body)?;
+    std::fs::write(artifact_path, &body).map_err(|e| e.to_string())?;
+    let _ = std::fs::write(etag_path, etag);
+    Ok(FetchOutcome::Updated)
+}
+
 // ---- signing ----
 //
 // Ed25519 via ring (already in the tree under ureq's rustls). The key file
@@ -345,6 +649,179 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("20260810-000000"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn merge_cells_pools_and_fills() {
+        let p = derive(&map(), "s".into());
+        // Disjoint local bucket: crowd cells append, local survives whole.
+        let local_only = vec![effectmap::Cell {
+            family: "brakes".into(),
+            softer: true,
+            drivetrain: 1,
+            surface_loose: false,
+            aero: Some(false),
+            n: 2,
+            own_n: 2,
+            direct_n: 1,
+            weak_n: 0,
+            delta_mean: -0.4,
+            delta_sd: 0.1,
+            fields: vec![("front_slip", 2, 0.2, 0.05)],
+            key_mode: Some("brake_balance".into()),
+            mag_mean: Some(5.0),
+        }];
+        let merged = merge_cells(local_only.clone(), Some(&p));
+        assert_eq!(merged.len(), 1 + p.cells.len());
+        let brakes = merged.iter().find(|c| c.family == "brakes").unwrap();
+        assert_eq!((brakes.n, brakes.own_n), (2, 2));
+
+        // Overlapping bucket: n-weighted pooling, own_n stays local, the
+        // higher-n side's step sizes win.
+        let local = vec![effectmap::Cell {
+            family: "front roll".into(),
+            softer: true,
+            drivetrain: 1,
+            surface_loose: false,
+            aero: Some(false),
+            n: 1,
+            own_n: 1,
+            direct_n: 1,
+            weak_n: 0,
+            delta_mean: -0.5,
+            delta_sd: 0.0,
+            fields: vec![("front_slip", 1, 0.3, 0.0)],
+            key_mode: Some("springs_front".into()),
+            mag_mean: Some(9.9),
+        }];
+        let merged = merge_cells(local, Some(&p));
+        let cell = merged
+            .iter()
+            .find(|c| c.family == "front roll" && c.softer)
+            .unwrap();
+        let crowd = p
+            .cells
+            .iter()
+            .find(|c| c.family == "front roll" && c.softer)
+            .unwrap();
+        assert_eq!(cell.n, 1 + crowd.n as usize);
+        assert_eq!(cell.own_n, 1);
+        // Pooled mean sits between the sides, weighted by n.
+        let expect = (-0.5 + crowd.delta_mean * crowd.n as f32) / (1.0 + crowd.n as f32);
+        assert!(
+            (cell.delta_mean - expect).abs() < 1e-5,
+            "{}",
+            cell.delta_mean
+        );
+        // Crowd n=2 > local 1: its key_mode/mag_mean win.
+        assert_eq!(cell.key_mode.as_deref(), crowd.key_mode.as_deref());
+
+        // No crowd: identity.
+        let merged = merge_cells(local_only.clone(), None);
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn merge_cells_drops_unknown_fields() {
+        let mut p = derive(&map(), "s".into());
+        p.cells[0]
+            .fields
+            .push(("field_from_the_future".into(), 3, 1.0, 0.1));
+        let merged = merge_cells(Vec::new(), Some(&p));
+        assert!(
+            merged
+                .iter()
+                .all(|c| c.fields.iter().all(|(k, ..)| *k != "field_from_the_future"))
+        );
+    }
+
+    #[test]
+    fn merge_landscapes_local_wins() {
+        let mk = |key: &'static str, crowd: bool| effectmap::AxisLandscape {
+            key,
+            n: 5,
+            mean_gradient: if crowd { 1.0 } else { -1.0 },
+            sign_share: 0.8,
+            r: 0.6,
+            alpha: 0.0,
+            beta: 0.1,
+            lo: 0.0,
+            hi: 1.0,
+            optimum: None,
+            crowd,
+        };
+        let p = Priors {
+            schema: SCHEMA,
+            min_app_schema: 1,
+            generated: "s".into(),
+            samples: 0,
+            campaigns: 0,
+            senders: 0,
+            cells: Vec::new(),
+            landscapes: vec![PriorContext {
+                surface_loose: false,
+                drivetrain: 1,
+                axes: vec![
+                    PriorAxis {
+                        key: "front_slip".into(),
+                        n: 40,
+                        mean_gradient: 1.0,
+                        sign_share: 0.9,
+                        r: 0.7,
+                        alpha: 0.0,
+                        beta: 0.2,
+                        lo: 0.0,
+                        hi: 1.0,
+                        optimum: Some(0.5),
+                    },
+                    PriorAxis {
+                        key: "wheelspin".into(),
+                        n: 12,
+                        mean_gradient: 0.4,
+                        sign_share: 0.8,
+                        r: 0.6,
+                        alpha: 0.0,
+                        beta: 0.1,
+                        lo: 0.0,
+                        hi: 1.0,
+                        optimum: None,
+                    },
+                    PriorAxis {
+                        key: "axis_from_the_future".into(),
+                        n: 9,
+                        mean_gradient: 0.1,
+                        sign_share: 0.5,
+                        r: 0.1,
+                        alpha: 0.0,
+                        beta: 0.0,
+                        lo: 0.0,
+                        hi: 1.0,
+                        optimum: None,
+                    },
+                ],
+            }],
+        };
+        let merged = merge_landscapes(vec![mk("front_slip", false)], Some(&p), false, 1);
+        // Local front_slip wins; crowd wheelspin fills, flagged; unknown
+        // axis and wrong-context lookups drop.
+        assert_eq!(merged.len(), 2);
+        let fs = merged.iter().find(|l| l.key == "front_slip").unwrap();
+        assert!(!fs.crowd);
+        assert_eq!(fs.mean_gradient, -1.0);
+        let ws = merged.iter().find(|l| l.key == "wheelspin").unwrap();
+        assert!(ws.crowd);
+        assert_eq!(ws.n, 12);
+        assert!(merge_landscapes(Vec::new(), Some(&p), true, 1).is_empty());
+    }
+
+    #[test]
+    fn source_install_detected() {
+        let mut m = map();
+        assert!(!is_source(&m));
+        let mut s = sample("aero", true, -0.1, true, false);
+        s.driver = "b1b71d17aaaaaaaa".into();
+        m.samples.push(s);
+        assert!(is_source(&m));
     }
 
     #[test]

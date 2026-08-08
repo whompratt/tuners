@@ -5,6 +5,8 @@
 /effect-map.tsv
 /crowd-priors.json
 /crowd-priors.json.sig
+/crowd-priors.etag
+/tune-priors.txt
 .env
 
 # local working notes

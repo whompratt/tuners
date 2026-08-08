@@ -61,6 +61,52 @@ pub fn set_sharing(
     Ok(sharing_view(config, outbox))
 }
 
+/// Crowd-prior fetch preference plus stored-artifact status. Deliberately
+/// independent of the sharing consent above: receiving the crowd's priors
+/// must not require contributing.
+#[derive(Serialize, Type, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PriorsView {
+    pub enabled: bool,
+    pub endpoint: String,
+    /// Generation stamp of the stored artifact, when one is on disk.
+    pub generated: Option<String>,
+    /// Unix ms of the stored artifact's last write.
+    pub updated_ms: Option<f64>,
+}
+
+pub fn priors_view() -> PriorsView {
+    use crate::advice::priors;
+    let cfg = priors::FetchConfig::load(&crate::util::data_path(priors::CONFIG_FILE));
+    let updated_ms = std::fs::metadata(crate::util::data_path(priors::ARTIFACT_FILE))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as f64);
+    PriorsView {
+        enabled: cfg.enabled,
+        endpoint: cfg.endpoint,
+        generated: priors::load().map(|p| p.generated),
+        updated_ms,
+    }
+}
+
+/// Toggle the crowd-prior fetch. Disabling also removes the stored
+/// artifact: advice stops drawing on crowd data immediately, not when the
+/// file happens to age out.
+pub fn set_priors(enabled: bool) -> Result<PriorsView, ApiError> {
+    use crate::advice::priors;
+    let path = crate::util::data_path(priors::CONFIG_FILE);
+    let mut cfg = priors::FetchConfig::load(&path);
+    cfg.enabled = enabled;
+    cfg.save(&path).map_err(ApiError::internal)?;
+    if !enabled {
+        let _ = std::fs::remove_file(crate::util::data_path(priors::ARTIFACT_FILE));
+        let _ = std::fs::remove_file(crate::util::data_path(priors::ETAG_FILE));
+    }
+    Ok(priors_view())
+}
+
 /// Preview of a historic backfill: what "share existing
 /// recordings" would queue.
 #[derive(Serialize, Type, Debug, Clone)]

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { app, errMsg, loadSession } from "$lib/app.svelte";
-  import { commands, type EffectMapStatus, type SharingView } from "$lib/bindings";
+  import { commands, type EffectMapStatus, type PriorsView, type SharingView } from "$lib/bindings";
   import { UNITS, UNIT_DIMS, UNIT_PRESETS, unitPrefs } from "$lib/units";
   import { advanced, toggleAdvanced } from "$lib/advanced.svelte";
   import { reopenOnboarding } from "$lib/onboarding.svelte";
@@ -39,12 +39,41 @@
   // --- effect map (built in the background from all tuning history) ---
   let mapStatus: EffectMapStatus | null | undefined = $state(undefined);
 
+  // --- crowd priors (fetched summary of everyone's shared data) ---
+  let priors: PriorsView | null = $state(null);
+
   $effect(() => {
     refreshSharing();
     commands
       .effectMapStatus()
       .then((s) => (mapStatus = s))
       .catch(() => (mapStatus = null));
+    commands
+      .priors()
+      .then((p) => (priors = p))
+      .catch(() => (priors = null));
+  });
+
+  async function togglePriors() {
+    try {
+      const r = await commands.setPriors(!(priors?.enabled ?? true));
+      if (r.status === "error") {
+        await alertDialog("Crowd priors", errMsg(r.error));
+        return;
+      }
+      priors = r.data;
+    } catch (e) {
+      await alertDialog("Crowd priors", `toggle failed: ${e}`);
+    }
+  }
+
+  let priorsStatus = $derived.by(() => {
+    if (!priors) return "";
+    if (!priors.enabled) return "off";
+    const bits = ["on"];
+    if (priors.updatedMs != null) bits.push(`updated ${new Date(priors.updatedMs).toLocaleString()}`);
+    else bits.push("not fetched yet");
+    return bits.join(" · ");
   });
 
   async function refreshSharing() {
@@ -216,6 +245,22 @@
       map of what each adjustment does. Advice uses it to suggest untried adjustments, clearly marked as
       coming from the map rather than from this project's own runs. Kept fresh automatically in the
       background.
+    </div>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+      <h2 style="margin:0">Crowd priors</h2>
+      <span style="color:var(--muted);font-size:13px">{priorsStatus}</span>
+      <span style="flex:1"></span>
+      <Button onclick={togglePriors}>{priors?.enabled ? "turn off" : "turn on"}</Button>
+    </div>
+    <div style="color:var(--muted);font-size:12px;margin-top:6px;max-width:640px">
+      A small anonymous summary of what tune adjustments did across everyone's shared telemetry:
+      pooled statistics only, no recordings, downloaded about once a day and verified before use.
+      Advice marks suggestions drawn from it as a global trend, and your own measurements always
+      win where they exist. Independent of telemetry sharing: you receive it whether or not you
+      share.
     </div>
   </div>
 

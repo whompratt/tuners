@@ -869,6 +869,10 @@ pub struct AxisLandscape {
     /// r >= AXIS_MIN_R) interior to the observed range. None = the pool
     /// is direction-only as sampled (read mean_gradient).
     pub optimum: Option<f32>,
+    /// True when this landscape came from the distributed crowd artifact
+    /// rather than this install's own map (priors::merge_landscapes sets
+    /// it); advice wording distinguishes the two.
+    pub crowd: bool,
 }
 
 /// Landscape gates, provisional until the library calibration
@@ -979,6 +983,7 @@ pub fn axis_landscapes(
             lo,
             hi,
             optimum,
+            crowd: false,
         });
     }
     out
@@ -1028,6 +1033,8 @@ pub struct Displacement {
     pub weight: f32,
     /// Gradient samples behind the landscape.
     pub n: usize,
+    /// Carried from the landscape: crowd artifact vs this install's map.
+    pub crowd: bool,
 }
 
 /// Expected pace gain (fraction of a lap) per one-floor-unit step at
@@ -1099,6 +1106,7 @@ pub fn needed_displacement(
             optimum,
             weight,
             n: l.n,
+            crowd: l.crowd,
         });
     }
     out
@@ -1960,6 +1968,7 @@ mod tests {
             lo: 0.0,
             hi: 0.3,
             optimum,
+            crowd: false,
         };
         let landscapes = vec![
             // os_on_power floor 0.012, optimum 0.04: position 0.09 wants
@@ -2013,6 +2022,7 @@ mod tests {
             optimum: Some(0.04),
             weight: 0.8,
             n: 8,
+            crowd: false,
         }];
         let cell = |family: &str, os_mean: f32, extra: Vec<(&'static str, usize, f32, f32)>| {
             let mut fields = vec![("os_on_power", 3usize, os_mean, 0.01f32)];

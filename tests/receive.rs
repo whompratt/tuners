@@ -442,3 +442,86 @@ fn priors_route() {
     assert_eq!(status, 200);
     assert_ne!(header_value(&head, "etag"), Some(etag.as_str()));
 }
+
+/// The client fetch loop against the twin: verified store, ETag reuse,
+/// tamper rejection, and the unpublished endpoint.
+#[test]
+fn priors_fetch_e2e() {
+    use tuners::advice::priors;
+
+    let dir = std::env::temp_dir().join(format!("tuners-fetch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let served = dir.join("served.json");
+    // A real (empty-corpus) artifact: fetch parses before storing, so a
+    // structurally invalid body would be rejected even correctly signed.
+    let content = priors::render(&priors::derive(
+        &Default::default(),
+        "20260808-000000".into(),
+    ));
+    let content = content.as_str();
+    std::fs::write(served.as_path(), content).unwrap();
+    let key = dir.join("priors.key");
+    let pubkey = priors::keygen(&key).unwrap();
+    let sig = priors::sign(&key, content.as_bytes()).unwrap();
+    std::fs::write(dir.join("served.json.sig"), format!("{sig}\n")).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let cfg = ReceiveConfig {
+        root: dir.join("inbox"),
+        tokens_path: dir.join("no-tokens.txt"),
+        blocklist_path: dir.join("no-blocklist.txt"),
+        max_bundle_bytes: 64 << 20,
+        daily_cap_bytes: 512 << 20,
+        global_cap_bytes: u64::MAX,
+        priors_path: Some(served.clone()),
+    };
+    std::thread::spawn(move || run_listener(listener, cfg));
+
+    let artifact = dir.join("crowd-priors.json");
+    let etag = dir.join("crowd-priors.etag");
+
+    // First fetch: stored after verification, etag cached.
+    let out = priors::fetch_to(&endpoint, &pubkey, &artifact, &etag).unwrap();
+    assert!(matches!(out, priors::FetchOutcome::Updated));
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), content);
+    assert!(!std::fs::read_to_string(&etag).unwrap().trim().is_empty());
+
+    // Second fetch: 304 via the cached etag, nothing rewritten.
+    let before = std::fs::metadata(&artifact).unwrap().modified().unwrap();
+    let out = priors::fetch_to(&endpoint, &pubkey, &artifact, &etag).unwrap();
+    assert!(matches!(out, priors::FetchOutcome::Unchanged));
+    assert_eq!(
+        std::fs::metadata(&artifact).unwrap().modified().unwrap(),
+        before
+    );
+
+    // Wrong pinned key: the response is discarded, the store untouched.
+    let err = priors::fetch_to(
+        &endpoint,
+        &"0".repeat(64),
+        &artifact,
+        &dir.join("other.etag"),
+    )
+    .unwrap_err();
+    assert!(err.contains("signature"), "{err}");
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), content);
+
+    // Tampered artifact on the server: same rejection.
+    std::fs::write(
+        &served,
+        "{\"schema\":1,\"minAppSchema\":1,\"cells\":[{}]}\n",
+    )
+    .unwrap();
+    let err = priors::fetch_to(&endpoint, &pubkey, &artifact, &dir.join("t.etag")).unwrap_err();
+    assert!(err.contains("signature"), "{err}");
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), content);
+
+    // Unpublished endpoint: Missing, local copy kept.
+    let srv = start(64 << 20, 512 << 20, "fetch-off");
+    let endpoint = format!("http://{}", srv.addr);
+    let out = priors::fetch_to(&endpoint, &pubkey, &artifact, &etag).unwrap();
+    assert!(matches!(out, priors::FetchOutcome::Missing));
+    assert_eq!(std::fs::read_to_string(&artifact).unwrap(), content);
+}

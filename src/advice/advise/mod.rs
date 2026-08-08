@@ -246,13 +246,15 @@ pub fn advise(
             return Err(first_err.unwrap_or_else(|| "no stints recorded yet; drive first".into()));
         };
         // Cold start: no journal means no local trends, but the driver's
-        // pooled history from other cars can still rank one untried lever
-        // from the effect map — the first informed suggestion of a fresh
-        // campaign (plan 007).
-        if let Ok(text) = std::fs::read_to_string(crate::util::data_path("effect-map.tsv"))
-            && let Ok(emap) = crate::advice::effectmap::parse(&text)
-            && let Some(met) = data.met.as_ref()
-        {
+        // pooled history from other cars — and the crowd artifact on a
+        // fresh install with no map at all — can still rank one untried
+        // lever: the first informed suggestion of a fresh campaign
+        // (plan 007).
+        if let Some(met) = data.met.as_ref() {
+            let emap = std::fs::read_to_string(crate::util::data_path("effect-map.tsv"))
+                .ok()
+                .and_then(|t| crate::advice::effectmap::parse(&t).ok())
+                .unwrap_or_default();
             let trends = crate::advice::effectmap::driver_trends(&emap, "local", data.car);
             if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
                 eprintln!("map-prior trace (blind): trends:");
@@ -265,8 +267,11 @@ pub fn advise(
                 surface_loose: met.surface_loose,
                 aero: rule_context(&session).aero_tunable,
             };
+            let (cells, landscapes) =
+                crate::advice::priors::merged_view(&emap, met.surface_loose, met.drivetrain_type);
             if let Some(rec) = map_prior(
-                &emap,
+                &cells,
+                &landscapes,
                 &trends,
                 &ctx,
                 &recs,
@@ -994,10 +999,11 @@ pub fn advise(
     // For the rest, estimate which behavioural direction has been profitable
     // here (per-field pace correlation) and surface the best-aligned map
     // cell as one Low-confidence experiment suggestion.
-    if let Ok(text) = std::fs::read_to_string(crate::util::data_path("effect-map.tsv"))
-        && let Ok(emap) = crate::advice::effectmap::parse(&text)
-        && let Some(met) = c.stints.last().and_then(|s| s.met.as_ref())
-    {
+    if let Some(met) = c.stints.last().and_then(|s| s.met.as_ref()) {
+        let emap = std::fs::read_to_string(crate::util::data_path("effect-map.tsv"))
+            .ok()
+            .and_then(|t| crate::advice::effectmap::parse(&t).ok())
+            .unwrap_or_default();
         let pairs: Vec<(effects::Effects, f32)> = c
             .measurements
             .iter()
@@ -1033,8 +1039,11 @@ pub fn advise(
             surface_loose: met.surface_loose,
             aero: rule_context(&session).aero_tunable,
         };
+        let (cells, landscapes) =
+            crate::advice::priors::merged_view(&emap, met.surface_loose, met.drivetrain_type);
         if let Some(rec) = map_prior(
-            &emap,
+            &cells,
+            &landscapes,
             &trends,
             &ctx,
             &recs,

@@ -19,6 +19,8 @@ export const commands = {
 	advise: () => typedError<AdviseView, ApiError>(__TAURI_INVOKE("advise")),
 	sharing: () => __TAURI_INVOKE<SharingView>("sharing"),
 	setSharing: (enabled: boolean, endpoint: string | null, discard: boolean) => typedError<SharingView, ApiError>(__TAURI_INVOKE("set_sharing", { enabled, endpoint, discard })),
+	priors: () => __TAURI_INVOKE<PriorsView>("priors"),
+	setPriors: (enabled: boolean) => typedError<PriorsView, ApiError>(__TAURI_INVOKE("set_priors", { enabled })),
 	sharingHistoryPlan: () => __TAURI_INVOKE<HistoryPlanView>("sharing_history_plan"),
 	shareHistory: () => typedError<number, ApiError>(__TAURI_INVOKE("share_history")),
 	deleteStint: (file: string, force: boolean) => typedError<null, ApiError>(__TAURI_INVOKE("delete_stint", { file, force })),
@@ -304,6 +306,20 @@ export type PendingView = {
 	/**  The netted journal note the next run will be journaled under. */
 	note: string,
 	changes: PendingChange[],
+};
+
+/**
+ *  Crowd-prior fetch preference plus stored-artifact status. Deliberately
+ *  independent of the sharing consent above: receiving the crowd's priors
+ *  must not require contributing.
+ */
+export type PriorsView = {
+	enabled: boolean,
+	endpoint: string,
+	/**  Generation stamp of the stored artifact, when one is on disk. */
+	generated: string | null,
+	/**  Unix ms of the stored artifact's last write. */
+	updatedMs: number | null,
 };
 
 /**

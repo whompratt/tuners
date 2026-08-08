@@ -562,8 +562,41 @@ fn cmd_priors(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("build") => cmd_priors_build(&args[1..]),
         Some("keygen") => cmd_priors_keygen(&args[1..]),
-        _ => Err("usage: tuners priors <build|keygen>".into()),
+        Some("fetch") => cmd_priors_fetch(&args[1..]),
+        _ => Err("usage: tuners priors <build|keygen|fetch>".into()),
     }
+}
+
+/// Explicit fetch (the app polls on its own): conditional GET, signature
+/// verified against the pinned key before anything lands on disk.
+fn cmd_priors_fetch(args: &[String]) -> Result<(), String> {
+    use tuners::advice::priors;
+    let cfg = priors::FetchConfig::load(&tuners::util::data_path(priors::CONFIG_FILE));
+    let mut endpoint = cfg.endpoint;
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--endpoint" => endpoint = value(flag, it.next())?.clone(),
+            other => return Err(format!("unknown flag '{other}' for priors fetch")),
+        }
+    }
+    match priors::fetch(&endpoint)? {
+        priors::FetchOutcome::Updated => {
+            let p = priors::load().ok_or("stored artifact unreadable after fetch")?;
+            println!(
+                "updated: {} ({} cells, {} landscape contexts, generated {})",
+                tuners::util::data_path(priors::ARTIFACT_FILE).display(),
+                p.cells.len(),
+                p.landscapes.len(),
+                p.generated,
+            );
+        }
+        priors::FetchOutcome::Unchanged => {
+            println!("unchanged (endpoint agrees with the copy here)")
+        }
+        priors::FetchOutcome::Missing => println!("endpoint has no priors published yet"),
+    }
+    Ok(())
 }
 
 /// Maintainer-machine convention: next to the updater key, outside the data

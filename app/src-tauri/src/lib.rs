@@ -222,6 +222,27 @@ fn set_sharing(
 
 #[tauri::command(async)]
 #[specta::specta]
+fn priors() -> api::PriorsView {
+    api::priors_view()
+}
+
+#[tauri::command(async)]
+#[specta::specta]
+fn set_priors(enabled: bool) -> Result<api::PriorsView, api::ApiError> {
+    let view = api::set_priors(enabled)?;
+    if enabled {
+        // Fresh consent deserves a fresh artifact now, not at the next
+        // daily poll; failures are the poller's problem to retry.
+        let endpoint = view.endpoint.clone();
+        std::thread::spawn(move || {
+            let _ = tuners::advice::priors::fetch(&endpoint);
+        });
+    }
+    Ok(view)
+}
+
+#[tauri::command(async)]
+#[specta::specta]
 fn sharing_history_plan(state: S) -> api::HistoryPlanView {
     api::history_plan_view(&state.root, &state.sessions_dir, &state.outbox)
 }
@@ -339,6 +360,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             advise,
             sharing,
             set_sharing,
+            priors,
+            set_priors,
             sharing_history_plan,
             share_history,
             delete_stint,
@@ -476,9 +499,12 @@ fn run_emitter(
 /// check every pass, the harvest only when campaigns actually changed and
 /// telemetry is idle (decoding a campaign's stints while the recorder is
 /// busy would fight the drive for CPU). First pass runs shortly after boot
-/// so a stale map catches up before the first advise.
+/// so a stale map catches up before the first advise. The crowd-prior poll
+/// rides the same idle gate: boot then daily, conditional GET, and a
+/// failure just waits for the next pass.
 fn run_map_refresher(live: tuners::telemetry::live::SharedLive) {
     let mut delay = Duration::from_secs(5);
+    let mut priors_fetched: Option<std::time::Instant> = None;
     loop {
         std::thread::sleep(delay);
         delay = Duration::from_secs(60);
@@ -489,6 +515,21 @@ fn run_map_refresher(live: tuners::telemetry::live::SharedLive) {
             .is_some_and(|t| t.elapsed() < Duration::from_secs(30));
         if busy {
             continue;
+        }
+        if priors_fetched.is_none_or(|t| t.elapsed() > Duration::from_secs(24 * 60 * 60)) {
+            let cfg = tuners::advice::priors::FetchConfig::load(&tuners::util::data_path(
+                tuners::advice::priors::CONFIG_FILE,
+            ));
+            if cfg.enabled {
+                match tuners::advice::priors::fetch(&cfg.endpoint) {
+                    Ok(tuners::advice::priors::FetchOutcome::Updated) => {
+                        println!("crowd priors: updated");
+                        priors_fetched = Some(std::time::Instant::now());
+                    }
+                    Ok(_) => priors_fetched = Some(std::time::Instant::now()),
+                    Err(e) => println!("crowd priors: {e}"),
+                }
+            }
         }
         let scratch = std::env::temp_dir().join(format!("tuners-map-{}", std::process::id()));
         match tuners::advice::effectmap::refresh(

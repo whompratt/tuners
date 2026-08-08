@@ -438,16 +438,14 @@ fn map_target(cell: &crate::advice::effectmap::Cell, inp: &PriorInputs) -> Optio
 /// displacement (position healthy or landscapes thin) or no aligned lever
 /// past the gates.
 fn landscape_prior(
-    emap: &crate::advice::effectmap::EffectMap,
+    landscapes: &[crate::advice::effectmap::AxisLandscape],
     cells: &[crate::advice::effectmap::Cell],
     ctx: &crate::advice::effectmap::MapContext,
     position: &effects::Effects,
     gates: &dyn Fn(&crate::advice::effectmap::Cell) -> Option<journal::Family>,
     inp: &PriorInputs,
 ) -> Option<recommend::Recommendation> {
-    let landscapes =
-        crate::advice::effectmap::axis_landscapes(emap, ctx.surface_loose, Some(ctx.drivetrain));
-    let disp = crate::advice::effectmap::needed_displacement(&landscapes, position);
+    let disp = crate::advice::effectmap::needed_displacement(landscapes, position);
     if disp.is_empty() {
         return None;
     }
@@ -489,14 +487,15 @@ fn landscape_prior(
         })
         .map(|d| match d.optimum {
             Some(opt) => format!(
-                "{} {} now; crowd optimum ≈{} ({} pairs)",
+                "{} {} now; {} optimum ≈{} ({} pairs)",
                 effects::label(d.key),
                 axis_value(d.key, d.at),
+                if d.crowd { "crowd" } else { "measured" },
                 axis_value(d.key, opt),
                 d.n,
             ),
             None => format!(
-                "{} {} now; {} read faster on similar builds ({} pairs)",
+                "{} {} now; {} read faster {} ({} pairs)",
                 effects::label(d.key),
                 axis_value(d.key, d.at),
                 if d.move_units > 0.0 {
@@ -504,15 +503,25 @@ fn landscape_prior(
                 } else {
                     "lower"
                 },
+                if d.crowd {
+                    "on similar builds"
+                } else {
+                    "in your history"
+                },
                 d.n,
             ),
         })
         .collect();
     let mut evidence = vec![format!("landscape asks: {}", served.join("; "))];
     evidence.push(format!(
-        "effect map ({} {}{}): {phrase} over n={} ({} direct{}) moved the asked \
+        "{} ({} {}{}): {phrase} over n={} ({} direct{}) moved the asked \
          channels the wanted way; measured {:+.2}s ±{:.2} there; selectivity \
          {:.2} (share of its movement on the asked channels)",
+        if cell.own_n == 0 {
+            "global trend"
+        } else {
+            "personalised"
+        },
         if cell.surface_loose { "dirt" } else { "tarmac" },
         crate::telemetry::packet::drivetrain_name(cell.drivetrain),
         match cell.aero {
@@ -539,8 +548,13 @@ fn landscape_prior(
         area: journal::family_area(family),
         suggestion: target.as_ref().map(|t| t.suggestion.clone()),
         advice: format!(
-            "untried so far. The crowd landscape shows headroom here, and \
-             {phrase} is the best-aligned lever. Worth a probe to explore."
+            "untried so far. The {} landscape shows headroom here, and \
+             {phrase} is the best-aligned lever. Worth a probe to explore.",
+            if disp.iter().any(|d| d.crowd) {
+                "crowd"
+            } else {
+                "behaviour"
+            },
         ),
         evidence,
         confidence: recommend::Confidence::Low,
@@ -564,14 +578,14 @@ fn landscape_prior(
 /// silent. With a `position`, the landscape arm runs first (see
 /// `landscape_prior`); the trend path is its fallback.
 pub(super) fn map_prior(
-    emap: &crate::advice::effectmap::EffectMap,
+    cells: &[crate::advice::effectmap::Cell],
+    landscapes: &[crate::advice::effectmap::AxisLandscape],
     trends: &[crate::advice::effectmap::PaceTrend],
     ctx: &crate::advice::effectmap::MapContext,
     recs: &[recommend::Recommendation],
     inp: &PriorInputs,
     position: Option<&effects::Effects>,
 ) -> Option<recommend::Recommendation> {
-    let cells = crate::advice::effectmap::aggregate(emap);
     // The shared emission gates: a cell must be a distribution (not an
     // anecdote), on a family this build can adjust, that neither local
     // evidence nor another rec already owns.
@@ -599,11 +613,11 @@ pub(super) fn map_prior(
     // best-aligned lever. Falls through to the univariate trend path when
     // the landscape is silent or no aligned lever passes the gates.
     if let Some(pos) = position
-        && let Some(rec) = landscape_prior(emap, &cells, ctx, pos, &gates, inp)
+        && let Some(rec) = landscape_prior(landscapes, cells, ctx, pos, &gates, inp)
     {
         return Some(rec);
     }
-    let ranked = crate::advice::effectmap::rank(&cells, trends, ctx);
+    let ranked = crate::advice::effectmap::rank(cells, trends, ctx);
     if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
         for (score, cell) in &ranked {
             eprintln!(
@@ -649,15 +663,25 @@ pub(super) fn map_prior(
         area: journal::family_area(family),
         suggestion: target.as_ref().map(|t| t.suggestion.clone()),
         advice: format!(
-            "untried so far. Similar builds found {phrase} moved pace in \
-            your favour. Worth a probe to explore."
+            "untried so far. {} found {phrase} moved pace in \
+            your favour. Worth a probe to explore.",
+            if cell.own_n == 0 {
+                "Similar builds"
+            } else {
+                "Your other builds"
+            },
         ),
         evidence: {
             let mut ev = vec![
                 format!("pace trend: {}", trend_desc.join("; ")),
                 format!(
-                    "effect map ({} {}{}): {phrase} over n={} ({} direct{}) read {}; \
+                    "{} ({} {}{}): {phrase} over n={} ({} direct{}) read {}; \
                      measured {:+.2}s ±{:.2} there",
+                    if cell.own_n == 0 {
+                        "global trend"
+                    } else {
+                        "personalised"
+                    },
                     if cell.surface_loose { "dirt" } else { "tarmac" },
                     crate::telemetry::packet::drivetrain_name(cell.drivetrain),
                     match cell.aero {
