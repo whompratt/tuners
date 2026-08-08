@@ -45,6 +45,19 @@ pub struct Sample {
     pub weak: bool,
     pub direct: bool,
     pub clean: bool,
+    /// True for a channel-attributed compound clause: `delta_s` is that
+    /// clause's channel share, NOT the pair's full verdict. Landscape
+    /// gradient pooling must skip these (partial time over full movement).
+    pub attributed: bool,
+    /// The baseline stint's median flying-lap seconds: the pair's own time
+    /// scale, so pooled gradients compare as fractions of a lap across
+    /// routes and cars.
+    pub lap_s: Option<f32>,
+    /// Stint identity of the pair (stamps when available): the same physical
+    /// experiment can surface as both a direct state pair and a note-based
+    /// measurement, and gradient pooling must count it once.
+    pub from: String,
+    pub to: String,
     /// Behavioural movement of the underlying stint pair.
     pub effects: effects::Effects,
     /// Absolute behaviour coordinates of the pair's BASELINE stint (plan 007
@@ -93,6 +106,11 @@ pub(crate) fn harvest_campaign(
         let Some(car) = sj.car() else {
             continue;
         };
+        let stamp_of = |k: usize| {
+            crate::advice::advise::stint_stamp(&c.stints[k].entry.path)
+                .map(str::to_string)
+                .unwrap_or_else(|| k.to_string())
+        };
         samples.push(Sample {
             driver: driver.to_string(),
             campaign: campaign.to_string(),
@@ -109,6 +127,13 @@ pub(crate) fn harvest_campaign(
             weak: m.weak,
             direct: m.direct,
             clean: m.clean,
+            attributed: m.attributed.is_some(),
+            lap_s: {
+                let t = si.profile().median_lap_time_s();
+                (t.is_finite() && t > 0.0).then_some(t)
+            },
+            from: stamp_of(m.i),
+            to: stamp_of(m.j),
             effects: m.effects.clone(),
             position: si.fx().clone(),
         });
@@ -366,6 +391,10 @@ const PREFIX_COLS: &[&str] = &[
     "weak",
     "direct",
     "clean",
+    "attributed",
+    "lap_s",
+    "from",
+    "to",
 ];
 
 /// Column-name prefix for the baseline-position block: `at_<field key>`,
@@ -436,6 +465,10 @@ pub fn render(map: &EffectMap) -> String {
             flag(s.weak).into(),
             flag(s.direct).into(),
             flag(s.clean).into(),
+            flag(s.attributed).into(),
+            opt(s.lap_s),
+            s.from.clone(),
+            s.to.clone(),
         ];
         cols.extend(field_keys.iter().map(|k| fx_cell(&s.effects, k)));
         cols.extend(field_keys.iter().map(|k| fx_cell(&s.position, k)));
@@ -516,6 +549,10 @@ pub fn parse(text: &str) -> Result<EffectMap, String> {
                 weak: cell(15) == "1",
                 direct: cell(16) == "1",
                 clean: cell(17) == "1",
+                attributed: cell(18) == "1",
+                lap_s: num(19),
+                from: cell(20).to_string(),
+                to: cell(21).to_string(),
                 effects: fx,
                 position: pos,
             }),
@@ -764,6 +801,141 @@ pub fn driver_trends(map: &EffectMap, driver: &str, exclude_car: Option<i32>) ->
                 history: true,
             });
         }
+    }
+    out
+}
+
+// ---- increment 3 phase B: behaviour-axis landscapes ----
+
+/// One behaviour axis's pooled pace-gradient landscape. Each eligible
+/// sample is a gradient reading: the pair moved the axis by dx from
+/// position x and paid delta_s of a lap_s lap, so g = (delta_s/lap_s)/dx
+/// at midpoint m = x + dx/2. Under a locally quadratic pace surface the
+/// gradient is linear in position, so a straight-line fit over (m, g)
+/// recovers the surface's shape and its zero crossing is the optimum —
+/// the per-slider quad_fit trick lifted into behaviour space, with
+/// heights never compared across routes (only per-pair fractions).
+#[derive(Debug, Clone)]
+pub struct AxisLandscape {
+    pub key: &'static str,
+    /// Gradient samples behind the fit: unique pairs, non-weak,
+    /// full-verdict (never attributed clauses), above-floor movement.
+    pub n: usize,
+    /// Pooled mean gradient, fraction-of-lap per axis unit (negative =
+    /// raising the axis gained time where sampled).
+    pub mean_gradient: f32,
+    /// Pearson r between midpoint and gradient: how much of the pool a
+    /// rising-gradient (bowl-shaped) surface explains.
+    pub r: f32,
+    /// Fit gradient(m) = alpha + beta * m.
+    pub alpha: f32,
+    pub beta: f32,
+    /// Observed midpoint range.
+    pub lo: f32,
+    pub hi: f32,
+    /// The fit's zero crossing when it reads as a minimum (beta > 0,
+    /// r >= AXIS_MIN_R) interior to the observed range. None = the pool
+    /// is direction-only as sampled (read mean_gradient).
+    pub optimum: Option<f32>,
+}
+
+/// Landscape gates, provisional until the library calibration
+/// (examples/landscape_scan.rs) says otherwise: a 2-parameter fit needs
+/// more points than the univariate trend gate, and a zero crossing is
+/// only quotable when the bowl shape explains a real share of the pool.
+const AXIS_MIN_PAIRS: usize = 5;
+const AXIS_MIN_R: f32 = 0.5;
+
+/// Pool per-axis pace gradients across every eligible sample of a surface
+/// (and optionally drivetrain) and fit the landscape per axis. Weak and
+/// attributed samples never pool; the same physical pair contributes once
+/// (direct form preferred over its note-based echo).
+pub fn axis_landscapes(
+    map: &EffectMap,
+    surface_loose: bool,
+    drivetrain: Option<i32>,
+) -> Vec<AxisLandscape> {
+    let get = |v: &effects::Effects, key: &str| -> Option<f32> {
+        v.iter().find(|(k, _)| *k == key).map(|(_, x)| *x)
+    };
+    let floor_of = |s: &Sample, key: &str| -> f32 {
+        let base = effects::noise_floor(key);
+        map.floors
+            .iter()
+            .find(|f| f.driver == s.driver && f.campaign == s.campaign)
+            .and_then(|f| get(&f.effects, key))
+            .map_or(base, |c| c.abs().max(base))
+    };
+    let mut unique: BTreeMap<(&str, &str, &str, &str), &Sample> = BTreeMap::new();
+    for s in &map.samples {
+        if s.weak
+            || s.attributed
+            || s.surface_loose != surface_loose
+            || drivetrain.is_some_and(|d| d != s.drivetrain)
+            || !s.lap_s.is_some_and(|l| l > 0.0)
+        {
+            continue;
+        }
+        let k = (
+            s.driver.as_str(),
+            s.campaign.as_str(),
+            s.from.as_str(),
+            s.to.as_str(),
+        );
+        match unique.get(&k) {
+            Some(old) if old.direct || !s.direct => {}
+            _ => {
+                unique.insert(k, s);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (key, ..) in effects::FIELDS {
+        // (midpoint, gradient) per pair with above-floor movement here.
+        let pts: Vec<(f32, f32)> = unique
+            .values()
+            .filter_map(|s| {
+                let x = get(&s.position, key)?;
+                let dx = get(&s.effects, key)?;
+                if dx.abs() < floor_of(s, key) {
+                    return None;
+                }
+                let g = (s.delta_s / s.lap_s?) / dx;
+                Some((x + dx / 2.0, g))
+            })
+            .collect();
+        if pts.len() < AXIS_MIN_PAIRS {
+            continue;
+        }
+        let n = pts.len() as f32;
+        let (lo, hi) = pts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), (m, _)| {
+            (lo.min(*m), hi.max(*m))
+        });
+        let (mx, mg) = (
+            pts.iter().map(|p| p.0).sum::<f32>() / n,
+            pts.iter().map(|p| p.1).sum::<f32>() / n,
+        );
+        let (mut sxy, mut sxx) = (0.0f32, 0.0f32);
+        for (m, g) in &pts {
+            sxy += (m - mx) * (g - mg);
+            sxx += (m - mx) * (m - mx);
+        }
+        let beta = if sxx > 0.0 { sxy / sxx } else { 0.0 };
+        let alpha = mg - beta * mx;
+        let r = pearson(&pts);
+        let x0 = -alpha / beta;
+        let optimum = (beta > 0.0 && r >= AXIS_MIN_R && x0 > lo && x0 < hi).then_some(x0);
+        out.push(AxisLandscape {
+            key,
+            n: pts.len(),
+            mean_gradient: mg,
+            r,
+            alpha,
+            beta,
+            lo,
+            hi,
+            optimum,
+        });
     }
     out
 }
@@ -1125,6 +1297,10 @@ mod tests {
             weak,
             direct: true,
             clean: true,
+            attributed: false,
+            lap_s: Some(100.0),
+            from: "20260101-000100".into(),
+            to: "20260101-001000".into(),
             effects: vec![("balance", -0.05), ("temp_front", -6.0)],
             position: vec![("balance", 0.22), ("temp_front", 168.0)],
         }
@@ -1154,6 +1330,10 @@ mod tests {
         assert_eq!(s.split, Some((0.1, -0.2, 0.05)));
         assert_eq!(s.effects, vec![("balance", -0.05), ("temp_front", -6.0)]);
         assert_eq!(s.position, vec![("balance", 0.22), ("temp_front", 168.0)]);
+        assert!(!s.attributed);
+        assert_eq!(s.lap_s, Some(100.0));
+        assert_eq!(s.from, "20260101-000100");
+        assert_eq!(s.to, "20260101-001000");
         let f = &back.floors[0];
         assert_eq!(f.drift_s, Some(0.25));
         assert_eq!(f.effects, vec![("balance", 0.02)]);
@@ -1413,6 +1593,97 @@ mod tests {
         assert!(map.samples.is_empty(), "{report:?}");
         assert!(report.iter().any(|l| l.contains("missing")), "{report:?}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A pair on the synthetic pace bowl h(x) = a(x - 0.2)^2 (fraction of
+    /// lap), sampled on the balance axis: moved dx from x, paid the exact
+    /// quadratic time difference of a 100s lap.
+    fn bowl_sample(i: usize, x: f32, dx: f32) -> Sample {
+        let (a, x0, lap) = (0.05f32, 0.2f32, 100.0f32);
+        let dt = lap * a * dx * (2.0 * (x - x0) + dx);
+        let mut s = sample("front roll", true, dt, false);
+        s.effects = vec![("balance", dx)];
+        s.position = vec![("balance", x)];
+        s.from = format!("f{i}");
+        s.to = format!("t{i}");
+        s
+    }
+
+    #[test]
+    fn axis_landscape_recovers_a_quadratic_optimum() {
+        let samples: Vec<Sample> = [-0.1f32, 0.0, 0.1, 0.3, 0.4]
+            .iter()
+            .enumerate()
+            .map(|(i, x)| bowl_sample(i, *x, 0.2))
+            .collect();
+        let map = EffectMap {
+            samples,
+            floors: Vec::new(),
+        };
+        let ls = axis_landscapes(&map, false, None);
+        let bal = ls.iter().find(|l| l.key == "balance").unwrap();
+        assert_eq!(bal.n, 5);
+        assert!(bal.r > 0.99, "r={}", bal.r);
+        let opt = bal.optimum.unwrap();
+        assert!((opt - 0.2).abs() < 0.02, "optimum={opt}");
+        // Dirt pool: nothing (all samples are tarmac).
+        assert!(axis_landscapes(&map, true, None).is_empty());
+    }
+
+    #[test]
+    fn axis_landscape_monotone_pool_reads_direction_only() {
+        // Every sample on the fast-rising side of the bowl: the zero
+        // crossing sits outside the observed range, so no optimum is
+        // quoted and the mean gradient carries the direction.
+        let samples: Vec<Sample> = [0.4f32, 0.6, 0.8, 1.0, 1.2]
+            .iter()
+            .enumerate()
+            .map(|(i, x)| bowl_sample(i, *x, 0.2))
+            .collect();
+        let map = EffectMap {
+            samples,
+            floors: Vec::new(),
+        };
+        let ls = axis_landscapes(&map, false, None);
+        let bal = ls.iter().find(|l| l.key == "balance").unwrap();
+        assert!(bal.optimum.is_none());
+        assert!(bal.mean_gradient > 0.0);
+    }
+
+    #[test]
+    fn axis_landscape_excludes_weak_attributed_duplicates_and_subfloor() {
+        let mut samples: Vec<Sample> = [-0.1f32, 0.0, 0.1, 0.3, 0.4]
+            .iter()
+            .enumerate()
+            .map(|(i, x)| bowl_sample(i, *x, 0.2))
+            .collect();
+        // A channel-attributed clause with a wild delta: never pools.
+        let mut attributed = bowl_sample(90, 0.2, 0.2);
+        attributed.delta_s = 40.0;
+        attributed.attributed = true;
+        samples.push(attributed);
+        // A weak sample: never pools.
+        let mut weak = bowl_sample(91, 0.2, 0.2);
+        weak.delta_s = -40.0;
+        weak.weak = true;
+        samples.push(weak);
+        // A note-based echo of pair 0 with a wild delta: the direct form
+        // already counted, the echo must not.
+        let mut echo = bowl_sample(0, -0.1, 0.2);
+        echo.delta_s = 40.0;
+        echo.direct = false;
+        samples.push(echo);
+        // A movement under the balance floor (0.03): no gradient reading.
+        samples.push(bowl_sample(92, 0.2, 0.01));
+        let map = EffectMap {
+            samples,
+            floors: Vec::new(),
+        };
+        let ls = axis_landscapes(&map, false, None);
+        let bal = ls.iter().find(|l| l.key == "balance").unwrap();
+        assert_eq!(bal.n, 5);
+        let opt = bal.optimum.unwrap();
+        assert!((opt - 0.2).abs() < 0.02, "optimum={opt}");
     }
 
     #[test]
