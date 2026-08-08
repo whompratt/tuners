@@ -824,6 +824,10 @@ pub struct AxisLandscape {
     /// Pooled mean gradient, fraction-of-lap per axis unit (negative =
     /// raising the axis gained time where sampled).
     pub mean_gradient: f32,
+    /// Share of gradient samples agreeing with the mean's sign: the
+    /// direction-only confidence (a curved pool disagrees legitimately;
+    /// a noisy one disagrees randomly — r tells those apart).
+    pub sign_share: f32,
     /// Pearson r between midpoint and gradient: how much of the pool a
     /// rising-gradient (bowl-shaped) surface explains.
     pub r: f32,
@@ -845,6 +849,10 @@ pub struct AxisLandscape {
 /// only quotable when the bowl shape explains a real share of the pool.
 const AXIS_MIN_PAIRS: usize = 5;
 const AXIS_MIN_R: f32 = 0.5;
+/// An optimum hugging the edge of the sampled range is one outlier away
+/// from being extrapolation: quote only crossings inside the central
+/// span (each edge margin = this fraction of the range).
+const AXIS_INTERIOR_MARGIN: f32 = 0.1;
 
 /// Pool per-axis pace gradients across every eligible sample of a surface
 /// (and optionally drivetrain) and fit the landscape per axis. Weak and
@@ -924,11 +932,19 @@ pub fn axis_landscapes(
         let alpha = mg - beta * mx;
         let r = pearson(&pts);
         let x0 = -alpha / beta;
-        let optimum = (beta > 0.0 && r >= AXIS_MIN_R && x0 > lo && x0 < hi).then_some(x0);
+        let margin = AXIS_INTERIOR_MARGIN * (hi - lo);
+        let optimum =
+            (beta > 0.0 && r >= AXIS_MIN_R && x0 > lo + margin && x0 < hi - margin).then_some(x0);
+        let sign_share = pts
+            .iter()
+            .filter(|(_, g)| g.signum() == mg.signum())
+            .count() as f32
+            / n;
         out.push(AxisLandscape {
             key,
             n: pts.len(),
             mean_gradient: mg,
+            sign_share,
             r,
             alpha,
             beta,
@@ -937,6 +953,214 @@ pub fn axis_landscapes(
             optimum,
         });
     }
+    out
+}
+
+// ---- increment 3 phase C: displacement + vector-alignment lever choice ----
+
+/// Axes vetted as advice COORDINATES: physical shares and events shown
+/// cross-comparable by the library (share-of-limit replicated across
+/// drivers on the shared CRX; event shares and temps carry the phase-B
+/// re-derived optima). Everything else stays a diagnostic: balance
+/// channels measure the driver's operating point, vratio is
+/// tune-convention-relative, roll/jounce/diff splits are car geometry,
+/// reversals-per-second is speed-confounded, drag/gearing shares are
+/// route-and-build. Diagnostics still shape lever choice through
+/// selectivity (side effects), never through the displacement itself.
+pub const BASIS: &[&str] = &[
+    "front_slip",
+    "rear_slip",
+    "margin_ratio",
+    "balance_brake",
+    "wheelspin",
+    "os_flash",
+    "os_on_power",
+    "countersteer",
+    "limiter",
+    "topped",
+    "temp_front",
+    "temp_rear",
+];
+
+/// One axis of the needed behavioural movement: from the current position
+/// toward the landscape's optimum (or downhill along a monotone pool).
+#[derive(Debug, Clone)]
+pub struct Displacement {
+    pub key: &'static str,
+    /// Current position on the axis.
+    pub at: f32,
+    /// Wanted movement in noise-floor units, signed, capped at ±3.
+    pub move_units: f32,
+    /// The interior optimum being targeted, when the landscape has one;
+    /// None = direction-only (one floor unit downhill).
+    pub optimum: Option<f32>,
+    /// Scoring weight, 0..1: the fit's r for an optimum, the expected
+    /// gain per floor step (saturating at DIR_GAIN_FULL_WEIGHT) for a
+    /// direction-only axis.
+    pub weight: f32,
+    /// Gradient samples behind the landscape.
+    pub n: usize,
+}
+
+/// Expected pace gain (fraction of a lap) per one-floor-unit step at
+/// which a direction-only axis scores full weight: 0.1% of a lap
+/// (~0.1s on a 100s lap) is a real gain; smaller gradients still count,
+/// proportionally. Provisional, like the phase-B gates.
+const DIR_GAIN_FULL_WEIGHT: f32 = 0.001;
+
+/// Direction-only asks below this weight aren't worth an experiment.
+const DIR_MIN_WEIGHT: f32 = 0.2;
+
+const MOVE_UNITS_CAP: f32 = 3.0;
+
+/// The needed displacement at `position`, over the vetted basis axes the
+/// landscapes cover. An axis already within one floor of its optimum is
+/// satisfied and emits nothing. With no interior optimum the axis asks
+/// for one floor unit downhill — along the fit's LOCAL gradient when the
+/// fit explains the pool (position-aware: a saturating curve stops
+/// asking near its flat top), else along the mean gradient weighted by
+/// sign agreement (a coin-flip pool weighs nothing) — and only within
+/// the sampled range (no extrapolated asks). Empty result = the
+/// landscape has nothing to say here (caller falls back to univariate
+/// trends).
+pub fn needed_displacement(
+    landscapes: &[AxisLandscape],
+    position: &effects::Effects,
+) -> Vec<Displacement> {
+    let mut out = Vec::new();
+    for l in landscapes {
+        if !BASIS.contains(&l.key) {
+            continue;
+        }
+        let Some(x) = position.iter().find(|(k, _)| *k == l.key).map(|(_, v)| *v) else {
+            continue;
+        };
+        let floor = effects::noise_floor(l.key);
+        if !(floor.is_finite() && floor > 0.0) {
+            continue;
+        }
+        let (move_units, optimum, weight) = match l.optimum {
+            Some(x0) => {
+                let units = (x0 - x) / floor;
+                if units.abs() < 1.0 {
+                    continue; // already there, within noise
+                }
+                (units.clamp(-MOVE_UNITS_CAP, MOVE_UNITS_CAP), Some(x0), l.r)
+            }
+            None => {
+                if x < l.lo - floor || x > l.hi + floor {
+                    continue; // outside the sampled band: extrapolation
+                }
+                let (g_here, confidence) = if l.r.abs() >= AXIS_MIN_R {
+                    (l.alpha + l.beta * x, l.r.abs())
+                } else {
+                    (l.mean_gradient, ((l.sign_share - 0.5) * 2.0).max(0.0))
+                };
+                let gain = g_here.abs() * floor;
+                let w = confidence * (gain / DIR_GAIN_FULL_WEIGHT).min(1.0);
+                if w < DIR_MIN_WEIGHT {
+                    continue;
+                }
+                (-g_here.signum(), None, w)
+            }
+        };
+        out.push(Displacement {
+            key: l.key,
+            at: x,
+            move_units,
+            optimum,
+            weight,
+            n: l.n,
+        });
+    }
+    out
+}
+
+/// A lever candidate from vector alignment: how strongly the cell's
+/// pooled movement points along the needed displacement, and how much of
+/// the cell's TOTAL movement that useful component is (cosine in
+/// floor-normalized space, side-effect channels included). Two levers
+/// with equal alignment separate on selectivity: the one that moves the
+/// wanted axes without dragging everything else along is the cleaner
+/// experiment — this is where the diagnostic channels (vratio, roll
+/// gradients, jounce) discriminate arb vs springs vs damping.
+#[derive(Debug, Clone)]
+pub struct Candidate<'a> {
+    pub score: f32,
+    pub selectivity: f32,
+    pub cell: &'a Cell,
+}
+
+/// Score context-matched cells against the needed displacement: dot
+/// product of the cell's floor-normalized field means with the weighted
+/// displacement, own-driver boosted like `rank`. Known losers
+/// (delta_mean > 0.10) never surface on behavioural grounds. Sorted by
+/// score; empty displacement yields nothing (univariate fallback is the
+/// caller's job).
+pub fn align<'a>(cells: &'a [Cell], disp: &[Displacement], ctx: &MapContext) -> Vec<Candidate<'a>> {
+    let mut out = Vec::new();
+    for cell in cells {
+        if cell.n == 0
+            || cell.drivetrain != ctx.drivetrain
+            || cell.surface_loose != ctx.surface_loose
+        {
+            continue;
+        }
+        if let (Some(a), Some(b)) = (cell.aero, ctx.aero)
+            && a != b
+        {
+            continue;
+        }
+        if cell.delta_mean > 0.10 {
+            continue;
+        }
+        let units_of = |key: &str, mean: f32| -> Option<f32> {
+            let floor = effects::noise_floor(key);
+            (floor.is_finite() && floor > 0.0)
+                .then(|| (mean / floor).clamp(-MOVE_UNITS_CAP, MOVE_UNITS_CAP))
+        };
+        let mut score = 0.0f32;
+        let mut d_norm2 = 0.0f32;
+        for d in disp {
+            let dw = d.move_units * d.weight;
+            d_norm2 += dw * dw;
+            let Some((_, _, mean, _)) = cell.fields.iter().find(|(k, ..)| *k == d.key) else {
+                continue;
+            };
+            if mean.abs() < effects::noise_floor(d.key) {
+                continue;
+            }
+            let Some(e) = units_of(d.key, *mean) else {
+                continue;
+            };
+            score += e * dw;
+        }
+        if score <= 0.0 {
+            continue;
+        }
+        // Full movement norm, side effects included (above-floor only:
+        // noise is not a side effect): the denominator that makes
+        // selectivity a cosine.
+        let e_norm2: f32 = cell
+            .fields
+            .iter()
+            .filter(|(k, _, mean, _)| mean.abs() >= effects::noise_floor(k))
+            .filter_map(|(k, _, mean, _)| units_of(k, *mean))
+            .map(|u| u * u)
+            .sum();
+        let selectivity = if e_norm2 > 0.0 && d_norm2 > 0.0 {
+            score / (e_norm2.sqrt() * d_norm2.sqrt())
+        } else {
+            0.0
+        };
+        let own_frac = cell.own_n as f32 / cell.n as f32;
+        out.push(Candidate {
+            score: score * (1.0 + own_frac),
+            selectivity,
+            cell,
+        });
+    }
+    out.sort_by(|a, b| a.score.total_cmp(&b.score).reverse());
     out
 }
 
@@ -1684,6 +1908,138 @@ mod tests {
         assert_eq!(bal.n, 5);
         let opt = bal.optimum.unwrap();
         assert!((opt - 0.2).abs() < 0.02, "optimum={opt}");
+    }
+
+    #[test]
+    fn needed_displacement_targets_optima_and_skips_satisfied_axes() {
+        let land = |key: &'static str,
+                    optimum: Option<f32>,
+                    grad: f32,
+                    r: f32,
+                    sign_share: f32,
+                    alpha: f32| AxisLandscape {
+            key,
+            n: 8,
+            mean_gradient: grad,
+            sign_share,
+            r,
+            alpha,
+            beta: 0.1,
+            lo: 0.0,
+            hi: 0.3,
+            optimum,
+        };
+        let landscapes = vec![
+            // os_on_power floor 0.012, optimum 0.04: position 0.09 wants
+            // -0.05 = -4.2 floors, capped -3, weight = r.
+            land("os_on_power", Some(0.04), 2.0, 0.8, 0.9, 0.0),
+            // Noisy-but-consistent monotone pool (r under the fit gate,
+            // 90% sign agreement): mean-gradient downhill, wants -1.
+            land("wheelspin", None, 0.24, 0.3, 0.9, 0.0),
+            // Fit-explained tilt with no interior minimum: LOCAL gradient
+            // at x = -0.05 + 0.1*0.05 = -0.045 -> wants +1.
+            land("countersteer", None, -0.03, 0.8, 0.6, -0.05),
+            // Coin-flip pool: r weak AND signs split -> no ask.
+            land("topped", None, 0.30, 0.3, 0.5, 0.0),
+            // Position beyond the sampled band -> no extrapolated ask.
+            land("limiter", None, 0.30, 0.3, 0.9, 0.0),
+            // Non-basis axis: never a coordinate.
+            land("roll_rear", Some(0.5), 1.0, 0.9, 0.9, 0.0),
+        ];
+        let pos = vec![
+            ("os_on_power", 0.09f32),
+            ("wheelspin", 0.10),
+            ("countersteer", 0.05),
+            ("topped", 0.10),
+            ("limiter", 0.50),
+            ("roll_rear", 1.0),
+        ];
+        let d = needed_displacement(&landscapes, &pos);
+        assert_eq!(d.len(), 3, "{d:?}");
+        let os = d.iter().find(|d| d.key == "os_on_power").unwrap();
+        assert!((os.move_units - -3.0).abs() < 1e-6, "{}", os.move_units);
+        assert_eq!(os.optimum, Some(0.04));
+        assert!((os.weight - 0.8).abs() < 1e-6);
+        let ws = d.iter().find(|d| d.key == "wheelspin").unwrap();
+        assert!((ws.move_units - -1.0).abs() < 1e-6);
+        assert!(ws.optimum.is_none());
+        // confidence (0.9-0.5)*2 = 0.8; gain 0.24*0.02 = 0.0048 saturates.
+        assert!((ws.weight - 0.8).abs() < 1e-6, "{}", ws.weight);
+        let cs = d.iter().find(|d| d.key == "countersteer").unwrap();
+        assert!((cs.move_units - 1.0).abs() < 1e-6, "{}", cs.move_units);
+        // Satisfied axis: within one floor of the optimum.
+        let near = vec![("os_on_power", 0.045f32)];
+        assert!(needed_displacement(&landscapes[..1], &near).is_empty());
+    }
+
+    #[test]
+    fn align_scores_alignment_and_selectivity_separates_blunt_levers() {
+        let disp = vec![Displacement {
+            key: "os_on_power",
+            at: 0.09,
+            move_units: -3.0,
+            optimum: Some(0.04),
+            weight: 0.8,
+            n: 8,
+        }];
+        let cell = |family: &str, os_mean: f32, extra: Vec<(&'static str, usize, f32, f32)>| {
+            let mut fields = vec![("os_on_power", 3usize, os_mean, 0.01f32)];
+            fields.extend(extra);
+            Cell {
+                family: family.into(),
+                softer: true,
+                drivetrain: 1,
+                surface_loose: false,
+                aero: Some(false),
+                n: 3,
+                own_n: 0,
+                direct_n: 1,
+                weak_n: 0,
+                delta_mean: -0.2,
+                delta_sd: 0.1,
+                fields,
+            }
+        };
+        let ctx = MapContext {
+            drivetrain: 1,
+            surface_loose: false,
+            aero: Some(false),
+        };
+        // Clean lever: reduces on-power flashes, nothing else. Blunt
+        // lever: same reduction but drags damper phase and roll with it.
+        let clean = cell("diff accel", -0.024, vec![]);
+        let blunt = cell(
+            "damping",
+            -0.024,
+            vec![
+                ("vratio_rear", 3, -0.06, 0.01),
+                ("roll_rear", 3, 0.08, 0.01),
+            ],
+        );
+        // Contra lever: moves flashes the wrong way.
+        let contra = cell("rear roll", 0.024, vec![]);
+        let cells = [clean.clone(), blunt.clone(), contra];
+        let out = align(&cells, &disp, &ctx);
+        assert_eq!(out.len(), 2, "contra must drop");
+        assert_eq!(out[0].cell.family, "diff accel");
+        assert!(
+            (out[0].score - out[1].score).abs() < 1e-6,
+            "equal alignment"
+        );
+        assert!(
+            out[0].selectivity > out[1].selectivity + 0.2,
+            "clean {} vs blunt {}",
+            out[0].selectivity,
+            out[1].selectivity
+        );
+        // Wrong drivetrain: silent.
+        let wrong = MapContext {
+            drivetrain: 2,
+            ..ctx
+        };
+        assert!(align(&cells, &disp, &wrong).is_empty());
+        // Empty displacement: nothing (caller falls back to rank()).
+        assert!(align(&cells, &[], &ctx).is_empty());
     }
 
     #[test]

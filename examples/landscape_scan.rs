@@ -16,16 +16,17 @@ fn print_group(map: &effectmap::EffectMap, name: &str, loose: bool, dt: Option<i
     ls.sort_by_key(|l| std::cmp::Reverse(l.n));
     println!("== {name} ==");
     println!(
-        "{:<28} {:>3} {:>12} {:>6} {:>18} {:>10}",
-        "axis", "n", "grad %lap/u", "r", "midpoint range", "optimum"
+        "{:<28} {:>3} {:>12} {:>6} {:>5} {:>18} {:>10}",
+        "axis", "n", "grad %lap/u", "r", "sign", "midpoint range", "optimum"
     );
     for l in ls {
         println!(
-            "{:<28} {:>3} {:>12.3} {:>6.2} {:>8.3}..{:<8.3} {:>10}",
+            "{:<28} {:>3} {:>12.3} {:>6.2} {:>5.2} {:>8.3}..{:<8.3} {:>10}",
             effects::label(l.key),
             l.n,
             l.mean_gradient * 100.0,
             l.r,
+            l.sign_share,
             l.lo,
             l.hi,
             l.optimum
