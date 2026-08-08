@@ -123,6 +123,7 @@ pub(crate) fn composition_proposal(
     let disp = |k: &str, v: &str| crate::advice::tuning::display_value(k, v, facts);
     let dnote = |n: &str| crate::advice::tuning::display_note(n, facts);
     Some(recommend::Recommendation {
+        kind: recommend::Kind::Explore,
         area: "experiment",
         suggestion: Some(format!(
             "{} {} + {} {}",

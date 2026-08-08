@@ -338,6 +338,11 @@ export type RecommendationView = {
 	evidence: string[],
 	/**  A data request (extend or tighten the map), not an optimization claim. */
 	probe: boolean,
+	/**
+	 *  Advice tier: "fix" | "hone" | "explore" | "hold". Ranked in that
+	 *  order before confidence; renderers badge non-fix tiers.
+	 */
+	kind: string,
 };
 
 export type RecorderView = {

@@ -1,10 +1,11 @@
 use super::campaign::{CampaignBound, campaign_bound, drop_missing_entries};
 use super::*;
-use crate::advice::recommend::{Confidence, Recommendation};
+use crate::advice::recommend::{Confidence, Kind, Recommendation};
 use crate::advice::tuning::Revision;
 
 fn balance_rec() -> Recommendation {
     Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "balance",
         advice: "reduce front roll stiffness".into(),
@@ -111,6 +112,7 @@ fn untunable_family_redirects_or_drops() {
 fn untunable_area_without_direction_is_dropped() {
     let session = session_with(&[("arb_f", "20"), ("arb_r", "30")], &[]);
     let mut recs = vec![Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "damping",
         advice: "reduce front damping".into(),
@@ -132,6 +134,7 @@ fn untunable_area_without_direction_is_dropped() {
 fn exhausted_direction_without_partner_is_dropped() {
     let session = session_with(&[("diff_accel_r", "0")], &[]);
     let mut recs = vec![Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "traction",
         advice: "reduce differential acceleration lock".into(),
@@ -150,6 +153,7 @@ fn exhausted_direction_without_partner_is_dropped() {
 
     // The opposite direction has the whole range: it stands untouched.
     let mut recs = vec![Recommendation {
+        kind: Kind::Fix,
         probe: false,
         implied: Some(journal::Change {
             family: journal::Family::DiffAccel,
@@ -157,6 +161,7 @@ fn exhausted_direction_without_partner_is_dropped() {
             magnitude: None,
         }),
         ..Recommendation {
+            kind: Kind::Fix,
             apply: Vec::new(),
             area: "traction",
             advice: "add rear diff accel lock".into(),
@@ -178,6 +183,7 @@ fn exhausted_direction_without_partner_is_dropped() {
 #[test]
 fn named_slider_at_bound_drops_on_awd_build() {
     let diff_rec = |advice: &str| Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "traction",
         advice: advice.into(),
@@ -716,6 +722,7 @@ fn stint_stamps_parse_from_both_naming_schemes() {
 
 fn gearing_rec(softer: bool) -> Recommendation {
     Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "gearing",
         advice: "shorten the final drive".into(),
@@ -908,6 +915,7 @@ fn setup_lints_fire_from_tune_state_and_defer() {
 
     // An existing damping rec on file silences both damping lints.
     let existing = recommend::Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "damping",
         suggestion: None,

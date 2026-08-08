@@ -94,11 +94,16 @@ pub fn render_recommendations(recs: &[crate::advice::recommend::Recommendation])
     }
     for r in recs {
         // Probes are data requests, not optimization claims; the tag says so
-        // up front instead of burying it in the advice text.
-        let tag = if r.probe {
-            format!("probe: {}", r.confidence.label())
-        } else {
-            r.confidence.label().to_string()
+        // up front instead of burying it in the advice text. Explore-tier
+        // and hold-tier advice announce their register the same way (a hold
+        // asks for nothing, so confidence would be noise).
+        let tag = match r.kind {
+            crate::advice::recommend::Kind::Hold => "hold".to_string(),
+            _ if r.probe => format!("probe: {}", r.confidence.label()),
+            crate::advice::recommend::Kind::Explore => {
+                format!("explore: {}", r.confidence.label())
+            }
+            _ => r.confidence.label().to_string(),
         };
         match &r.suggestion {
             Some(sg) => writeln!(out, "[{tag}] {} - {}", sg, r.advice).unwrap(),

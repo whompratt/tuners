@@ -19,17 +19,27 @@ export function isAccepted(
   );
 }
 
-/** Bracket tag for a recommendation: probes are data requests, not
- * optimization claims, so the tag carries that instead of the advice text. */
-export const confTag = (r: RecommendationView) => (r.probe ? `probe: ${r.confidence}` : r.confidence);
+/** Bracket tag for a recommendation: probes are data requests and
+ * explores are crowd-led experiments, not detection claims; holds ask for
+ * nothing, so confidence there would be noise. The tag says which. */
+export const confTag = (r: RecommendationView) =>
+  r.kind === "hold"
+    ? "hold"
+    : r.probe
+      ? `probe: ${r.confidence}`
+      : r.kind === "explore"
+        ? `explore: ${r.confidence}`
+        : r.confidence;
 
-export const isHold = (r: RecommendationView) => {
-  const t = `${r.suggestion ?? ""} ${r.advice}`;
-  return t.includes("hold") || t.includes("bracketed");
-};
+export const isHold = (r: RecommendationView) => r.kind === "hold";
 
-/** The one next action: best-confidence actionable suggestion that is not a
- * hold and not already accepted; falls back to the top recommendation. */
+// Mirrors Kind::rank_group: fixes and hones pool (confidence decides),
+// explores backstop, holds sink.
+const KIND_RANK: Record<string, number> = { fix: 0, hone: 0, explore: 1, hold: 2 };
+
+/** The one next action: highest-tier actionable suggestion that is not a
+ * hold and not already accepted (the backend list is already tier-then-
+ * confidence sorted); falls back to the top recommendation. */
 export function primaryRec(
   a: AdviseView | null,
   latest: Record<string, string> | null | undefined,
@@ -37,7 +47,11 @@ export function primaryRec(
   if (!a || !a.recommendations.length) return null;
   const actionable = a.recommendations
     .filter((r) => r.apply.length && !isHold(r) && !isAccepted(r.apply as [string, string][], latest))
-    .sort((x, y) => (CONF_RANK[x.confidence] ?? 3) - (CONF_RANK[y.confidence] ?? 3));
+    .sort(
+      (x, y) =>
+        (KIND_RANK[x.kind] ?? 4) - (KIND_RANK[y.kind] ?? 4) ||
+        (CONF_RANK[x.confidence] ?? 3) - (CONF_RANK[y.confidence] ?? 3),
+    );
   return actionable[0] ?? a.recommendations[0];
 }
 

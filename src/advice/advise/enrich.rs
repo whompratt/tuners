@@ -351,6 +351,208 @@ pub(super) fn apply_fd_scale(
     }
 }
 
+/// An absolute axis value in its own unit, for landscape-ask evidence.
+fn axis_value(key: &str, v: f32) -> String {
+    let unit = effects::FIELDS
+        .iter()
+        .find(|(k, ..)| *k == key)
+        .map_or("", |(_, _, u)| *u);
+    match unit {
+        "frac" => format!("{:.1}%", v * 100.0),
+        "F" => format!("{v:.0}F"),
+        "" => format!("{v:.2}"),
+        u => format!("{v:.1} {u}"),
+    }
+}
+
+/// Weak-only local evidence tempers a prior rather than silencing it: the
+/// quoted note says so.
+fn weak_note(
+    measurements: &[Measurement],
+    family: journal::Family,
+    facts: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    measurements
+        .iter()
+        .find(|m| m.change.family == family && m.weak)
+        .map(|m| {
+            format!(
+                "local evidence exists but is weak (\"{}\", {}); \
+                 the prior stands until a trustworthy measurement lands",
+                crate::advice::tuning::display_note(&m.desc, facts),
+                m.outcome.word(),
+            )
+        })
+}
+
+/// The campaign-side inputs both map-prior arms read: local measurements
+/// (for weak-note tempering), the baseline tune, and the session facts.
+pub(super) struct PriorInputs<'a> {
+    pub measurements: &'a [Measurement],
+    pub baseline: Option<&'a crate::advice::tuning::Revision>,
+    pub facts: &'a std::collections::BTreeMap<String, String>,
+}
+
+/// A map cell's ask resolved to a concrete slider value.
+struct MapTarget {
+    suggestion: String,
+    apply: Vec<(String, String)>,
+    /// Signed slider delta from the baseline's current value.
+    delta: f32,
+}
+
+/// Resolve a map cell's ask into a concrete slider target: the cell's
+/// modal slider moved by the step similar builds actually used (at least
+/// one slider step, snapped, limit-clamped) from the baseline's current
+/// value. None = no baseline value for that slider, no observed
+/// magnitude, or the clamp lands back on the current value.
+fn map_target(cell: &crate::advice::effectmap::Cell, inp: &PriorInputs) -> Option<MapTarget> {
+    let key = cell.key_mode.as_deref()?;
+    let mag = cell.mag_mean?;
+    let cur = inp.baseline?.values.get(key)?.parse::<f32>().ok()?;
+    let step = crate::advice::tuning::slider_step(key);
+    // Reciprocal form keeps tenths exact in f32.
+    let snap = |v: f32| (v * (1.0 / step)).round() / (1.0 / step);
+    let mag = snap(mag).max(step);
+    let mut target = cur + if cell.softer { -mag } else { mag };
+    if let Some(lim) = crate::advice::tuning::limit_of(inp.facts, key) {
+        target = target.clamp(lim.0, lim.1);
+    }
+    let target = snap(target);
+    if (target - cur).abs() < step * 0.5 {
+        return None;
+    }
+    let phrase = crate::advice::tuning::field_phrase(key);
+    let disp = crate::advice::tuning::display_value(key, &target.to_string(), inp.facts);
+    Some(MapTarget {
+        suggestion: format!("{phrase}: {disp}"),
+        apply: vec![(key.to_string(), target.to_string())],
+        delta: target - cur,
+    })
+}
+
+/// The landscape arm of the map prior (plan 007 increment 3): pool the
+/// crowd's behaviour-axis landscapes for this context, read the needed
+/// displacement at the campaign's current position, and suggest the
+/// best-aligned grounded lever as an explore-tier experiment. None = no
+/// displacement (position healthy or landscapes thin) or no aligned lever
+/// past the gates.
+fn landscape_prior(
+    emap: &crate::advice::effectmap::EffectMap,
+    cells: &[crate::advice::effectmap::Cell],
+    ctx: &crate::advice::effectmap::MapContext,
+    position: &effects::Effects,
+    gates: &dyn Fn(&crate::advice::effectmap::Cell) -> Option<journal::Family>,
+    inp: &PriorInputs,
+) -> Option<recommend::Recommendation> {
+    let landscapes =
+        crate::advice::effectmap::axis_landscapes(emap, ctx.surface_loose, Some(ctx.drivetrain));
+    let disp = crate::advice::effectmap::needed_displacement(&landscapes, position);
+    if disp.is_empty() {
+        return None;
+    }
+    let candidates = crate::advice::effectmap::align(cells, &disp, ctx);
+    if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
+        eprintln!("landscape-prior trace: {} asks", disp.len());
+        for d in &disp {
+            eprintln!(
+                "  want {} {:+.1} floors at {} (w {:.2}, n {})",
+                d.key,
+                d.move_units,
+                axis_value(d.key, d.at),
+                d.weight,
+                d.n
+            );
+        }
+        for c in &candidates {
+            eprintln!(
+                "  aligned: {} softer={} score={:+.2} sel={:.2} n={}",
+                c.cell.family, c.cell.softer, c.score, c.selectivity, c.cell.n
+            );
+        }
+    }
+    let (cand, family) = candidates.into_iter().find_map(|c| {
+        (c.score >= 1.0)
+            .then(|| gates(c.cell).map(|f| (c, f)))
+            .flatten()
+    })?;
+    let cell = cand.cell;
+    let phrase = crate::advice::effectmap::direction_phrase(&cell.family, cell.softer);
+    // Quote only the asks this lever actually serves: above-floor cell
+    // movement in the asked direction.
+    let served: Vec<String> = disp
+        .iter()
+        .filter(|d| {
+            cell.fields.iter().any(|(k, _, mean, _)| {
+                *k == d.key && mean.abs() >= effects::noise_floor(k) && mean * d.move_units > 0.0
+            })
+        })
+        .map(|d| match d.optimum {
+            Some(opt) => format!(
+                "{} {} now; crowd optimum ≈{} ({} pairs)",
+                effects::label(d.key),
+                axis_value(d.key, d.at),
+                axis_value(d.key, opt),
+                d.n,
+            ),
+            None => format!(
+                "{} {} now; {} read faster on similar builds ({} pairs)",
+                effects::label(d.key),
+                axis_value(d.key, d.at),
+                if d.move_units > 0.0 {
+                    "higher"
+                } else {
+                    "lower"
+                },
+                d.n,
+            ),
+        })
+        .collect();
+    let mut evidence = vec![format!("landscape asks: {}", served.join("; "))];
+    evidence.push(format!(
+        "effect map ({} {}{}): {phrase} over n={} ({} direct{}) moved the asked \
+         channels the wanted way; measured {:+.2}s ±{:.2} there; selectivity \
+         {:.2} (share of its movement on the asked channels)",
+        if cell.surface_loose { "dirt" } else { "tarmac" },
+        crate::telemetry::packet::drivetrain_name(cell.drivetrain),
+        match cell.aero {
+            Some(true) => " aero",
+            Some(false) => " no-aero",
+            None => "",
+        },
+        cell.n,
+        cell.direct_n,
+        if cell.own_n < cell.n {
+            format!(", {} yours", cell.own_n)
+        } else {
+            String::new()
+        },
+        cell.delta_mean,
+        cell.delta_sd,
+        cand.selectivity,
+    ));
+    evidence.extend(weak_note(inp.measurements, family, inp.facts));
+    let target = map_target(cell, inp);
+    Some(recommend::Recommendation {
+        kind: recommend::Kind::Explore,
+        apply: target.as_ref().map(|t| t.apply.clone()).unwrap_or_default(),
+        area: journal::family_area(family),
+        suggestion: target.as_ref().map(|t| t.suggestion.clone()),
+        advice: format!(
+            "untried so far. The crowd landscape shows headroom here, and \
+             {phrase} is the best-aligned lever. Worth a probe to explore."
+        ),
+        evidence,
+        confidence: recommend::Confidence::Low,
+        probe: false,
+        implied: Some(journal::Change {
+            family,
+            softer: cell.softer,
+            magnitude: target.map(|t| t.delta),
+        }),
+    })
+}
+
 /// One Low-confidence suggestion from the cross-campaign effect map (built
 /// by `tuners map`): the best grounded, context-matched cell whose pooled
 /// behavioural movement aligns with the pace trends, for a family without
@@ -359,17 +561,48 @@ pub(super) fn apply_fd_scale(
 /// tempers the prior (quoted) instead of silencing it. A cell must also be
 /// a distribution, not an anecdote: one attributed clause from one other
 /// car (n=1, no direct A/B) never carries a suggestion. None = the map is
-/// silent.
+/// silent. With a `position`, the landscape arm runs first (see
+/// `landscape_prior`); the trend path is its fallback.
 pub(super) fn map_prior(
     emap: &crate::advice::effectmap::EffectMap,
     trends: &[crate::advice::effectmap::PaceTrend],
     ctx: &crate::advice::effectmap::MapContext,
-    measurements: &[Measurement],
     recs: &[recommend::Recommendation],
-    baseline: Option<&crate::advice::tuning::Revision>,
-    facts: &std::collections::BTreeMap<String, String>,
+    inp: &PriorInputs,
+    position: Option<&effects::Effects>,
 ) -> Option<recommend::Recommendation> {
     let cells = crate::advice::effectmap::aggregate(emap);
+    // The shared emission gates: a cell must be a distribution (not an
+    // anecdote), on a family this build can adjust, that neither local
+    // evidence nor another rec already owns.
+    let gates = |cell: &crate::advice::effectmap::Cell| -> Option<journal::Family> {
+        let family = journal::family_for_area(&cell.family)?;
+        let grounded = cell.n >= 2 || cell.direct_n >= 1;
+        let tried = inp
+            .measurements
+            .iter()
+            .any(|m| m.change.family == family && !m.weak);
+        let advised = recs
+            .iter()
+            .any(|r| r.implied.is_some_and(|i| i.family == family));
+        // A map cell for a family this build cannot adjust (whole group
+        // absent from the baseline) is not a suggestible experiment here.
+        let tunable = inp.baseline.is_none_or(|rev| {
+            family_keys(family)
+                .iter()
+                .any(|k| rev.values.contains_key(*k))
+        });
+        (grounded && tunable && !tried && !advised).then_some(family)
+    };
+    // Landscape-first (plan 007 increment 3): locate the position on the
+    // crowd landscapes, derive the needed displacement, pick the
+    // best-aligned lever. Falls through to the univariate trend path when
+    // the landscape is silent or no aligned lever passes the gates.
+    if let Some(pos) = position
+        && let Some(rec) = landscape_prior(emap, &cells, ctx, pos, &gates, inp)
+    {
+        return Some(rec);
+    }
     let ranked = crate::advice::effectmap::rank(&cells, trends, ctx);
     if std::env::var_os("TUNERS_MAP_TRACE").is_some() {
         for (score, cell) in &ranked {
@@ -380,22 +613,9 @@ pub(super) fn map_prior(
         }
     }
     let (cell, family) = ranked.into_iter().find_map(|(score, cell)| {
-        let family = journal::family_for_area(&cell.family)?;
-        let grounded = cell.n >= 2 || cell.direct_n >= 1;
-        let tried = measurements
-            .iter()
-            .any(|m| m.change.family == family && !m.weak);
-        let advised = recs
-            .iter()
-            .any(|r| r.implied.is_some_and(|i| i.family == family));
-        // A map cell for a family this build cannot adjust (whole group
-        // absent from the baseline) is not a suggestible experiment here.
-        let tunable = baseline.is_none_or(|rev| {
-            family_keys(family)
-                .iter()
-                .any(|k| rev.values.contains_key(*k))
-        });
-        (grounded && tunable && !tried && !advised && score >= 1.0).then_some((cell, family))
+        (score >= 1.0)
+            .then(|| gates(cell).map(|family| (cell, family)))
+            .flatten()
     })?;
     let phrase = crate::advice::effectmap::direction_phrase(&cell.family, cell.softer);
     let movers: effects::Effects = cell
@@ -421,21 +641,13 @@ pub(super) fn map_prior(
         })
         .collect();
     // Weak-only local evidence tempers rather than silences: say so.
-    let weak_local = measurements
-        .iter()
-        .find(|m| m.change.family == family && m.weak)
-        .map(|m| {
-            format!(
-                "local evidence exists but is weak (\"{}\", {}); \
-                 the prior stands until a trustworthy measurement lands",
-                crate::advice::tuning::display_note(&m.desc, facts),
-                m.outcome.word(),
-            )
-        });
+    let weak_local = weak_note(inp.measurements, family, inp.facts);
+    let target = map_target(cell, inp);
     Some(recommend::Recommendation {
-        apply: Vec::new(),
+        kind: recommend::Kind::Explore,
+        apply: target.as_ref().map(|t| t.apply.clone()).unwrap_or_default(),
         area: journal::family_area(family),
-        suggestion: None,
+        suggestion: target.as_ref().map(|t| t.suggestion.clone()),
         advice: format!(
             "untried so far. Similar builds found {phrase} moved pace in \
             your favour. Worth a probe to explore."
@@ -477,7 +689,7 @@ pub(super) fn map_prior(
         implied: Some(journal::Change {
             family,
             softer: cell.softer,
-            magnitude: None,
+            magnitude: target.map(|t| t.delta),
         }),
     })
 }
@@ -544,6 +756,7 @@ pub(super) fn setup_lints(
         }
         if !off.is_empty() {
             out.push(recommend::Recommendation {
+                kind: recommend::Kind::Explore,
                 apply: Vec::new(),
                 area: "damping",
                 suggestion: None,
@@ -586,6 +799,7 @@ pub(super) fn setup_lints(
                 ("rear", "front")
             };
             out.push(recommend::Recommendation {
+                kind: recommend::Kind::Explore,
                 apply: Vec::new(),
                 area: "damping",
                 suggestion: None,
@@ -649,6 +863,7 @@ pub(super) fn setup_lints(
                     .into(),
             );
             out.push(recommend::Recommendation {
+                kind: recommend::Kind::Explore,
                 apply: Vec::new(),
                 area: "ride height",
                 suggestion: None,

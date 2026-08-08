@@ -197,6 +197,47 @@ impl Confidence {
     }
 }
 
+/// The advice tier (plan 007 increment 3). Ranking is by tier before
+/// confidence: a hold must never headline over any actionable ask, and
+/// explores backstop silence when nothing is detected or in motion.
+/// Variant order IS the display order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Kind {
+    /// Detection-led: a behavioural rule found a problem.
+    Fix,
+    /// Measurement-led: the campaign's own loop (landscapes, reverts,
+    /// reconciled steps) refining what is already in motion.
+    Hone,
+    /// Crowd- or convention-led experiment: untried here, worth a
+    /// measured attempt.
+    Explore,
+    /// Status, not an ask: the setting sits where the evidence wants it.
+    Hold,
+}
+
+impl Kind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Fix => "fix",
+            Kind::Hone => "hone",
+            Kind::Explore => "explore",
+            Kind::Hold => "hold",
+        }
+    }
+
+    /// Display rank group. Fixes and hones POOL (confidence decides
+    /// between a detection and a measured next step — a High revert must
+    /// outrank a Medium rule); explores backstop below them; holds sink
+    /// below everything actionable.
+    pub fn rank_group(self) -> u8 {
+        match self {
+            Kind::Fix | Kind::Hone => 0,
+            Kind::Explore => 1,
+            Kind::Hold => 2,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Recommendation {
     pub area: &'static str,
@@ -218,6 +259,8 @@ pub struct Recommendation {
     /// extend or tighten the map, not a move expected to gain time. Renderers
     /// tag these "probe" alongside the confidence.
     pub probe: bool,
+    /// Advice tier; ranks before confidence.
+    pub kind: Kind,
 }
 
 /// What the car's setup tells us beyond telemetry: rules must not suggest
@@ -591,6 +634,7 @@ fn balance_rule(
         ));
     }
     recs.push(Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "balance",
         advice,
@@ -621,6 +665,7 @@ fn balance_rule(
         && brake >= BRAKE_PUSH
     {
         recs.push(Recommendation {
+            kind: Kind::Fix,
             apply: Vec::new(),
             area: "brakes",
             advice: "shift brake balance rearward a step: the front spends its \
@@ -709,6 +754,7 @@ fn stability_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommen
         ));
     }
     recs.push(Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "stability",
         advice: if aero {
@@ -789,6 +835,7 @@ fn brake_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         ));
     }
     recs.push(Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "brakes",
         advice: "shift brake balance forward: the car rotates while braking. \
@@ -865,6 +912,7 @@ fn aero_rule(overall: &StintMetrics, ctx: &Context, recs: &mut Vec<Recommendatio
     };
     let band = format!("{:.0} {}", speed_val(HIGH_SPEED_MPS), speed_unit());
     recs.push(Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "aero",
         advice: advice.into(),
@@ -947,6 +995,7 @@ fn power_balance_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         ));
     }
     recs.push(Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "differential",
         advice,
@@ -1011,6 +1060,7 @@ fn tire_pressure_rule(
             );
         }
         recs.push(Recommendation {
+            kind: Kind::Fix,
             apply: Vec::new(),
             area: "tires",
             suggestion: None,
@@ -1078,6 +1128,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 ));
             }
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "traction",
                 advice: format!(
@@ -1097,6 +1148,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             });
         } else if ts.inside_only_frac >= INSIDE_ONLY_SPIN {
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "traction",
                 advice: "increase rear diff accel lock: the unloaded inside \
@@ -1117,6 +1169,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             // Neither signature: the wheelspin is real but does not implicate
             // the diff in either direction.
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "traction",
                 advice: format!(
@@ -1135,6 +1188,7 @@ fn traction_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     }
 
     recs.push(Recommendation {
+        kind: Kind::Fix,
         apply: Vec::new(),
         area: "traction",
         advice: format!("improve {drive_axle}-axle traction: reduce diff accel lock."),
@@ -1181,6 +1235,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         }
         evidence.push(format!("top gear used: {}", g.top_gear));
         recs.push(Recommendation {
+            kind: Kind::Fix,
             apply: Vec::new(),
             area: "gearing",
             advice: "lengthen the final drive, or the gears that hit the \
@@ -1211,6 +1266,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     let top_time = g.time_frac.last().map(|(_, f)| *f).unwrap_or(0.0);
     if top_time >= TOP_GEAR_TIME_FRAC && g.top_gear_high_rev_frac < HIGH_REV_SHARE_MIN {
         recs.push(Recommendation {
+            kind: Kind::Fix,
             apply: Vec::new(),
             area: "gearing",
             advice: "shorten the final drive: the car lives in top gear but \
@@ -1258,6 +1314,7 @@ fn gearing_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     {
         let short = scale < 1.0;
         recs.push(Recommendation {
+            kind: Kind::Fix,
             apply: Vec::new(),
             area: "gearing",
             advice: if short {
@@ -1309,6 +1366,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
     ] {
         if bottomed >= BOTTOMING_FRAC {
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "suspension",
                 advice: format!(
@@ -1327,6 +1385,7 @@ fn suspension_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
         }
         if topped >= TOPPING_FRAC {
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "suspension",
                 advice: format!(
@@ -1382,6 +1441,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
                 ));
             }
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "damping",
                 advice: format!(
@@ -1396,6 +1456,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             });
         } else if rev >= under_rev && topped >= under_topped {
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "damping",
                 advice: format!(
@@ -1428,6 +1489,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             && topped >= OVERDAMPED_BUMP_TOPPED
         {
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "damping",
                 suggestion: None,
@@ -1458,6 +1520,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             });
         } else if !loose && rev > 0.0 && rev <= OVERDAMPED_REV_TARMAC {
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "damping",
                 advice: format!(
@@ -1493,6 +1556,7 @@ fn damping_rule(overall: &StintMetrics, recs: &mut Vec<Recommendation>) {
             && v <= REBOUND_VRATIO_LOW
         {
             recs.push(Recommendation {
+                kind: Kind::Fix,
                 apply: Vec::new(),
                 area: "damping",
                 advice: format!(

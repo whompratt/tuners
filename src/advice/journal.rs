@@ -2,7 +2,7 @@
 //! Blind mode stays blind to numbers: hill-climbing only needs the *direction* of
 //! each past change plus the measured outcome.
 
-use super::recommend::{Confidence, Recommendation};
+use super::recommend::{Confidence, Kind, Recommendation};
 
 /// Parameter families the change-note parser understands (grow as exercised).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -459,6 +459,7 @@ pub fn reconcile(
                     "last step in this direction lost {d:.2}s of ideal lap"
                 ));
                 r.confidence = Confidence::High;
+                r.kind = Kind::Hone;
                 // The advice now points the other way; implied must follow it
                 // (limit checks and future reconciliation read the direction),
                 // and carries the half-revert delta so a concrete target value
@@ -504,6 +505,7 @@ pub fn reconcile(
                 // "Hold" advises no direction: clear implied so nothing
                 // downstream pushes either way.
                 r.implied = None;
+                r.kind = Kind::Hold;
             }
             (false, Outcome::Worsened(d)) => {
                 r.evidence.push(format!(
@@ -512,6 +514,7 @@ pub fn reconcile(
                      both behaviour and history",
                 ));
                 r.confidence = Confidence::High;
+                r.kind = Kind::Hone;
             }
             (false, Outcome::Unclear(_)) | (_, Outcome::NotComparable) => {}
         }
@@ -619,6 +622,7 @@ pub fn history_revert(
         )];
         evidence.extend(attributed.map(String::from));
         return Some(Recommendation {
+            kind: Kind::Hone,
             apply: Vec::new(),
             area: family_area(change.family),
             advice: format!(
@@ -643,6 +647,7 @@ pub fn history_revert(
         confidence = Confidence::Medium;
     }
     Some(Recommendation {
+        kind: Kind::Hone,
         apply: Vec::new(),
         area: family_area(change.family),
         advice: format!("revert: the last change (\"{note}\") measurably cost lap time."),
@@ -918,6 +923,7 @@ mod tests {
 
     fn balance_rec() -> Recommendation {
         Recommendation {
+            kind: Kind::Fix,
             apply: Vec::new(),
             area: "balance",
             advice: "reduce front roll stiffness".into(),

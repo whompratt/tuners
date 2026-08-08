@@ -593,6 +593,11 @@ pub struct Cell {
     pub delta_sd: f32,
     /// Per effect field: (key, samples carrying it, mean, sd).
     pub fields: Vec<(&'static str, usize, f32, f32)>,
+    /// The slider most often moved in this cell, and the mean |slider
+    /// delta| of those moves: the step size similar builds actually used,
+    /// so a prior can suggest a concrete value instead of a direction.
+    pub key_mode: Option<String>,
+    pub mag_mean: Option<f32>,
 }
 
 fn mean_sd(vals: &[f32]) -> (f32, f32) {
@@ -643,6 +648,8 @@ pub fn aggregate(map: &EffectMap) -> Vec<Cell> {
                 delta_mean: 0.0,
                 delta_sd: 0.0,
                 fields: Vec::new(),
+                key_mode: None,
+                mag_mean: None,
             });
             continue;
         }
@@ -660,6 +667,25 @@ pub fn aggregate(map: &EffectMap) -> Vec<Cell> {
             let (m, sd) = mean_sd(&vals);
             fields.push((*fkey, vals.len(), m, sd));
         }
+        let mut key_counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for s in &samples {
+            if let Some(k) = &s.key {
+                *key_counts.entry(k.as_str()).or_default() += 1;
+            }
+        }
+        let key_mode = key_counts
+            .iter()
+            .max_by_key(|(_, c)| **c)
+            .map(|(k, _)| k.to_string());
+        let mag_mean = key_mode.as_ref().and_then(|k| {
+            let mags: Vec<f32> = samples
+                .iter()
+                .filter(|s| s.key.as_deref() == Some(k))
+                .filter_map(|s| s.magnitude)
+                .map(f32::abs)
+                .collect();
+            (!mags.is_empty()).then(|| mags.iter().sum::<f32>() / mags.len() as f32)
+        });
         out.push(Cell {
             family,
             softer,
@@ -673,6 +699,8 @@ pub fn aggregate(map: &EffectMap) -> Vec<Cell> {
             delta_mean,
             delta_sd,
             fields,
+            key_mode,
+            mag_mean,
         });
     }
     out
@@ -1664,6 +1692,8 @@ mod tests {
             delta_mean,
             delta_sd: 0.1,
             fields: vec![("balance", 2, mean, 0.01)],
+            key_mode: None,
+            mag_mean: None,
         };
         let ctx = MapContext {
             drivetrain: 2,
@@ -1704,6 +1734,8 @@ mod tests {
             delta_mean: -0.2,
             delta_sd: 0.1,
             fields: vec![("balance", 2, -0.06, 0.01)],
+            key_mode: None,
+            mag_mean: None,
         };
         let ctx = MapContext {
             drivetrain: 2,
@@ -1998,6 +2030,8 @@ mod tests {
                 delta_mean: -0.2,
                 delta_sd: 0.1,
                 fields,
+                key_mode: None,
+                mag_mean: None,
             }
         };
         let ctx = MapContext {

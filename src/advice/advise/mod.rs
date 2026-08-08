@@ -269,10 +269,13 @@ pub fn advise(
                 &emap,
                 &trends,
                 &ctx,
-                &[],
                 &recs,
-                session.latest(),
-                &session.facts,
+                &enrich::PriorInputs {
+                    measurements: &[],
+                    baseline: session.latest(),
+                    facts: &session.facts,
+                },
+                Some(&data.fx),
             ) {
                 recs.push(rec);
             }
@@ -281,6 +284,7 @@ pub fn advise(
         recs.extend(lints);
         let current_tune = enrich_with_tune(&mut recs, &session);
         enrich::apply_fd_scale(&mut recs, &session, fd_scale, None);
+        recs.sort_by_key(|r| (r.kind.rank_group(), std::cmp::Reverse(r.confidence)));
         return Ok(AdviseView {
             journal: None,
             steps: Vec::new(),
@@ -805,6 +809,7 @@ pub fn advise(
                         .any(|r| r.implied.is_some_and(|i| i.family == family))
                 {
                     recs.push(recommend::Recommendation {
+                        kind: recommend::Kind::Hone,
                         apply: Vec::new(),
                         area: journal::family_area(family),
                         suggestion: None,
@@ -847,6 +852,7 @@ pub fn advise(
                         r.probe = false;
                         r.implied = None;
                         r.apply.clear();
+                        r.kind = recommend::Kind::Hold;
                     } else {
                         r.suggestion = Some(format!("{phrase}: {disp}"));
                         r.apply = vec![(key.to_string(), vertex.to_string())];
@@ -866,6 +872,7 @@ pub fn advise(
                             softer: vertex < cur.unwrap_or(vertex),
                             magnitude: None,
                         });
+                        r.kind = recommend::Kind::Hone;
                     }
                     r.confidence = recommend::Confidence::Medium;
                     r.evidence.push(format!(
@@ -907,6 +914,7 @@ pub fn advise(
                 );
                 r.confidence = recommend::Confidence::Medium;
                 r.probe = false;
+                r.kind = recommend::Kind::Hone;
                 r.implied = Some(journal::Change {
                     family,
                     softer: best.0 < cur,
@@ -944,6 +952,7 @@ pub fn advise(
                 .unwrap_or(v);
             let vdisp = crate::advice::tuning::display_value(key, &v.to_string(), &session.facts);
             recs.push(recommend::Recommendation {
+                kind: recommend::Kind::Hone,
                 apply: vec![(key.to_string(), v.to_string())],
                 area: "probe",
                 suggestion: Some(format!("{phrase}: {vdisp}")),
@@ -1028,10 +1037,13 @@ pub fn advise(
             &emap,
             &trends,
             &ctx,
-            &c.measurements,
             &recs,
-            session.latest(),
-            &session.facts,
+            &enrich::PriorInputs {
+                measurements: &c.measurements,
+                baseline: session.latest(),
+                facts: &session.facts,
+            },
+            c.stints.last().map(|s| s.fx()),
         ) {
             recs.push(rec);
         }
@@ -1068,8 +1080,10 @@ pub fn advise(
         }
     }
 
-    // History-only recs arrive unsorted; keep most-confident-first for display.
-    recs.sort_by_key(|r| std::cmp::Reverse(r.confidence));
+    // History-only recs arrive unsorted; tier first (fix > hone > explore >
+    // hold — a hold must never headline over an actionable ask), confidence
+    // within tier. Lints join below and get the same order at the end.
+    recs.sort_by_key(|r| (r.kind.rank_group(), std::cmp::Reverse(r.confidence)));
     // Cite tune absolutes only when the journal's stints are the session
     // car's; an explicitly passed foreign journal must not quote this car's
     // sliders as if they were its own.
@@ -1160,6 +1174,10 @@ pub fn advise(
             )),
         };
     }
+
+    // Final order: reconciliation and lints may have re-tiered entries
+    // after the earlier sort (holds emerge from rewrites).
+    recs.sort_by_key(|r| (r.kind.rank_group(), std::cmp::Reverse(r.confidence)));
 
     Ok(AdviseView {
         journal: Some(journal_path.to_string()),
