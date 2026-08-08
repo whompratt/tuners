@@ -4,5 +4,6 @@
 pub mod advise;
 pub mod effectmap;
 pub mod journal;
+pub mod priors;
 pub mod recommend;
 pub mod tuning;

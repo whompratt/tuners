@@ -33,6 +33,14 @@ USAGE:
                     distributions, write the sample file, and print the
                     aggregated summary. The app refreshes this automatically
                     while telemetry is idle
+  tuners priors   build [--out crowd-priors.json] [--key <file>] [--rebuild]
+                  keygen [--key <file>]
+                    distill the crowd prior artifact (aggregated cells + axis
+                    landscapes + provenance header; no raw samples or sender
+                    ids) from a freshly refreshed effect map, and sign it with
+                    the ed25519 key (default ~/.tauri/tuners-priors.key).
+                    Rebuilding from unchanged data leaves the file untouched,
+                    so a scheduled pipeline only publishes real updates
   tuners simulate [--addr 127.0.0.1] [--port 20440] [--packets 600] [--rate 60] [--timescale 1]
                     send synthetic telemetry (stand-in for the game); timescale
                     compresses in-game time for headless lap testing
@@ -78,6 +86,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
         "recommend" => cmd_recommend(&args[1..]),
         "advise" => cmd_advise(&args[1..]),
         "map" => cmd_map(&args[1..]),
+        "priors" => cmd_priors(&args[1..]),
         "simulate" => cmd_simulate(&args[1..]),
         "receive" => cmd_receive(&args[1..]),
         "export" => cmd_export(&args[1..]),
@@ -545,6 +554,100 @@ fn cmd_map(args: &[String]) -> Result<(), String> {
         "{}",
         tuners::advice::effectmap::summary(&tuners::advice::effectmap::aggregate(&map))
     );
+    Ok(())
+}
+
+fn cmd_priors(args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("build") => cmd_priors_build(&args[1..]),
+        Some("keygen") => cmd_priors_keygen(&args[1..]),
+        _ => Err("usage: tuners priors <build|keygen>".into()),
+    }
+}
+
+/// Maintainer-machine convention: next to the updater key, outside the data
+/// root so the private half can never ride along in a bundle or export.
+fn default_priors_key() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(PathBuf::from(home).join(".tauri").join("tuners-priors.key"))
+}
+
+fn cmd_priors_keygen(args: &[String]) -> Result<(), String> {
+    let mut key = default_priors_key();
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--key" => key = Some(PathBuf::from(it.next().ok_or("--key needs a value")?)),
+            other => return Err(format!("unknown flag '{other}' for priors keygen")),
+        }
+    }
+    let key = key.ok_or("no home directory; pass --key")?;
+    let pubkey = tuners::advice::priors::keygen(&key)?;
+    println!("key written to {}", key.display());
+    println!("public key (pin as priors::PUBKEY_HEX): {pubkey}");
+    Ok(())
+}
+
+fn cmd_priors_build(args: &[String]) -> Result<(), String> {
+    let mut out = tuners::util::data_path("crowd-priors.json");
+    let mut key = default_priors_key();
+    let mut force = false;
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--out" => out = PathBuf::from(it.next().ok_or("--out needs a value")?),
+            "--key" => key = Some(PathBuf::from(it.next().ok_or("--key needs a value")?)),
+            "--rebuild" => force = true,
+            other => return Err(format!("unknown flag '{other}' for priors build")),
+        }
+    }
+    let root = tuners::util::data_root().to_path_buf();
+    let scratch = std::env::temp_dir().join(format!("tuners-priors-{}", std::process::id()));
+    let result = tuners::advice::effectmap::refresh(
+        &root,
+        &tuners::util::data_path("sessions").to_string_lossy(),
+        &tuners::util::data_path("effect-map.tsv"),
+        &scratch,
+        force,
+    );
+    let _ = std::fs::remove_dir_all(&scratch);
+    let (map, _) = result?;
+    if map.samples.is_empty() {
+        return Err("no measurements harvested; the map needs journaled campaigns".into());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let priors = tuners::advice::priors::derive(&map, tuners::util::utc_stamp(now));
+    let changed = tuners::advice::priors::write(&out, &priors)?;
+    println!(
+        "{}: {} ({} cells, {} landscape contexts; corpus {} samples / {} campaigns / {} senders)",
+        out.display(),
+        if changed { "updated" } else { "unchanged" },
+        priors.cells.len(),
+        priors.landscapes.len(),
+        priors.samples,
+        priors.campaigns,
+        priors.senders,
+    );
+    let sig_path = out.with_file_name(format!(
+        "{}.sig",
+        out.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    match key {
+        Some(key) if key.exists() => {
+            if changed || !sig_path.exists() {
+                let bytes = std::fs::read(&out).map_err(|e| e.to_string())?;
+                let sig = tuners::advice::priors::sign(&key, &bytes)?;
+                std::fs::write(&sig_path, format!("{sig}\n")).map_err(|e| e.to_string())?;
+                println!("signed: {}", sig_path.display());
+            } else {
+                println!("signature current: {}", sig_path.display());
+            }
+        }
+        _ => println!("UNSIGNED: no key (run `tuners priors keygen` or pass --key)"),
+    }
     Ok(())
 }
 

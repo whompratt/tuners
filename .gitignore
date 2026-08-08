@@ -3,6 +3,8 @@
 /tune-journal*.txt
 /tune-session*.txt
 /effect-map.tsv
+/crowd-priors.json
+/crowd-priors.json.sig
 .env
 
 # local working notes
