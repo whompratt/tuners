@@ -47,6 +47,11 @@ pub struct Sample {
     pub clean: bool,
     /// Behavioural movement of the underlying stint pair.
     pub effects: effects::Effects,
+    /// Absolute behaviour coordinates of the pair's BASELINE stint (plan 007
+    /// increment 3): where on the landscape the movement was measured, so
+    /// gradients can pool by position. Delta-only channels (apex_speed)
+    /// never appear here — they have no per-stint absolute form.
+    pub position: effects::Effects,
 }
 
 /// A campaign's own measured noise floors (same-setup pairs).
@@ -105,6 +110,7 @@ pub(crate) fn harvest_campaign(
             direct: m.direct,
             clean: m.clean,
             effects: m.effects.clone(),
+            position: si.fx().clone(),
         });
     }
     let floor = CampaignFloor {
@@ -362,6 +368,11 @@ const PREFIX_COLS: &[&str] = &[
     "clean",
 ];
 
+/// Column-name prefix for the baseline-position block: `at_<field key>`,
+/// after the delta columns. Bare-key delta columns stay where every reader
+/// has always found them.
+const POS_PREFIX: &str = "at_";
+
 fn fx_cell(fx: &effects::Effects, key: &str) -> String {
     fx.iter()
         .find(|(k, _)| *k == key)
@@ -369,14 +380,31 @@ fn fx_cell(fx: &effects::Effects, key: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The current schema's header line. Also the refresh cache's staleness
+/// check: an on-disk file with a different header was written by another
+/// build and is rebuilt wholesale.
+fn header() -> String {
+    let field_keys: Vec<&str> = effects::FIELDS.iter().map(|(k, ..)| *k).collect();
+    let pos_keys: Vec<String> = field_keys
+        .iter()
+        .map(|k| format!("{POS_PREFIX}{k}"))
+        .collect();
+    format!(
+        "{}\t{}\t{}",
+        PREFIX_COLS.join("\t"),
+        field_keys.join("\t"),
+        pos_keys.join("\t")
+    )
+}
+
 /// Render the map as TSV: a header, one `s` row per sample, one `f` row per
 /// campaign's floors (floor values in the effect columns, drift in delta_s).
+/// Sample rows carry the baseline position in the trailing `at_` block;
+/// floor rows have no single baseline and leave it off.
 pub fn render(map: &EffectMap) -> String {
     let mut out = String::new();
     let field_keys: Vec<&str> = effects::FIELDS.iter().map(|(k, ..)| *k).collect();
-    out.push_str(&PREFIX_COLS.join("\t"));
-    out.push('\t');
-    out.push_str(&field_keys.join("\t"));
+    out.push_str(&header());
     out.push('\n');
     let opt = |v: Option<f32>| v.map(|v| v.to_string()).unwrap_or_default();
     let flag = |b: bool| if b { "1" } else { "0" };
@@ -410,6 +438,7 @@ pub fn render(map: &EffectMap) -> String {
             flag(s.clean).into(),
         ];
         cols.extend(field_keys.iter().map(|k| fx_cell(&s.effects, k)));
+        cols.extend(field_keys.iter().map(|k| fx_cell(&s.position, k)));
         out.push_str(&cols.join("\t"));
         out.push('\n');
     }
@@ -440,6 +469,12 @@ pub fn parse(text: &str) -> Result<EffectMap, String> {
         .skip(PREFIX_COLS.len())
         .filter_map(|(i, name)| effects::key_of(name).map(|k| (i, k)))
         .collect();
+    let pos_cols: Vec<(usize, &'static str)> = cols
+        .iter()
+        .enumerate()
+        .skip(PREFIX_COLS.len())
+        .filter_map(|(i, name)| effects::key_of(name.strip_prefix(POS_PREFIX)?).map(|k| (i, k)))
+        .collect();
     let mut map = EffectMap::default();
     for (ln, line) in lines.enumerate() {
         if line.is_empty() {
@@ -450,6 +485,10 @@ pub fn parse(text: &str) -> Result<EffectMap, String> {
         let num = |i: usize| cell(i).parse::<f32>().ok();
         let bad = |what: &str| format!("line {}: bad {what}", ln + 2);
         let fx: effects::Effects = fx_cols
+            .iter()
+            .filter_map(|(i, k)| Some((*k, num(*i)?)))
+            .collect();
+        let pos: effects::Effects = pos_cols
             .iter()
             .filter_map(|(i, k)| Some((*k, num(*i)?)))
             .collect();
@@ -478,6 +517,7 @@ pub fn parse(text: &str) -> Result<EffectMap, String> {
                 direct: cell(16) == "1",
                 clean: cell(17) == "1",
                 effects: fx,
+                position: pos,
             }),
             "f" => map.floors.push(CampaignFloor {
                 driver: cell(1).to_string(),
@@ -916,10 +956,7 @@ pub fn refresh(
     // an older build: its rows would be carried verbatim and stay stale
     // forever (missing the new columns, and any family re-keying that
     // shipped alongside). Treat the whole file as stale and rebuild.
-    let current_header = {
-        let field_keys: Vec<&str> = effects::FIELDS.iter().map(|(k, ..)| *k).collect();
-        format!("{}\t{}", PREFIX_COLS.join("\t"), field_keys.join("\t"))
-    };
+    let current_header = header();
     let old: Option<EffectMap> = (!force)
         .then(|| {
             let text = std::fs::read_to_string(out).ok()?;
@@ -1089,6 +1126,7 @@ mod tests {
             direct: true,
             clean: true,
             effects: vec![("balance", -0.05), ("temp_front", -6.0)],
+            position: vec![("balance", 0.22), ("temp_front", 168.0)],
         }
     }
 
@@ -1115,9 +1153,30 @@ mod tests {
         assert!((s.delta_s - -0.3).abs() < 1e-6);
         assert_eq!(s.split, Some((0.1, -0.2, 0.05)));
         assert_eq!(s.effects, vec![("balance", -0.05), ("temp_front", -6.0)]);
+        assert_eq!(s.position, vec![("balance", 0.22), ("temp_front", 168.0)]);
         let f = &back.floors[0];
         assert_eq!(f.drift_s, Some(0.25));
         assert_eq!(f.effects, vec![("balance", 0.02)]);
+    }
+
+    #[test]
+    fn position_columns_stay_out_of_deltas() {
+        // A position must never be misread as a movement: the delta block
+        // and the at_ block round-trip independently, including a field
+        // present on only one side.
+        let mut s = sample("front roll", true, -0.3, false);
+        s.effects = vec![("balance", -0.05)];
+        s.position = vec![("balance", 0.22), ("margin_ratio", 1.6)];
+        let map = EffectMap {
+            samples: vec![s],
+            floors: Vec::new(),
+        };
+        let back = parse(&render(&map)).unwrap();
+        assert_eq!(back.samples[0].effects, vec![("balance", -0.05)]);
+        assert_eq!(
+            back.samples[0].position,
+            vec![("balance", 0.22), ("margin_ratio", 1.6)]
+        );
     }
 
     #[test]
