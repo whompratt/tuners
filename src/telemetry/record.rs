@@ -9,6 +9,12 @@
 //! see telemetry.md). Menu/pause frames inside a session are buffered and
 //! flushed when racing resumes, preserving the race-off gaps that gap
 //! classification (pause/rewind/restart) depends on.
+//!
+//! A finish certificate (results-screen flicker carrying the official run
+//! time, see `analysis::finish_certificate`) closes the session eagerly: the
+//! run is over, so the stint finalizes seconds after the finish instead of
+//! waiting out the 5-minute menu gap. Gaps without a certificate (mid-run
+//! pauses, abandons) keep the long window so a paused run is never severed.
 
 use crate::telemetry::packet;
 use crate::telemetry::stint::StintWriter;
@@ -32,6 +38,9 @@ const FREEROAM_MIN_SPEED_MPS: f32 = 5.0;
 /// This many consecutive undecodable packets open a raw failsafe recording:
 /// if a game patch breaks the format, we still capture raw data to fix later.
 const UNDECODABLE_FAILSAFE_RUN: u32 = 100;
+/// After an eager finish close, results screens can flash the certificate
+/// again; within this window such a flash is menu noise, not a new session.
+const FINISH_GUARD_US: u64 = 60_000_000;
 
 pub enum Action {
     Open { car: i32 },
@@ -53,6 +62,13 @@ pub struct Cutter {
     undecodable_run: u32,
     /// Format broke mid-stream: record everything raw, close only on silence.
     raw_failsafe: bool,
+    /// Last driving frame of the active session (race mode, car moving):
+    /// the anchor a finish certificate is matched against.
+    last_drive: Option<packet::TelemetryFrame>,
+    /// A finish certificate closed the session: (when, the run's last driving
+    /// frame). Survives the close so trailing certificate re-flashes are
+    /// recognized as noise instead of opening a junk session.
+    finished: Option<(u64, packet::TelemetryFrame)>,
 }
 
 impl Cutter {
@@ -83,6 +99,7 @@ impl Cutter {
         self.freeroam_since = None;
         self.buf.clear();
         self.car = 0;
+        self.last_drive = None;
     }
 
     /// One received datagram → the file actions it triggers.
@@ -121,6 +138,17 @@ impl Cutter {
         if race_mode {
             self.freeroam_since = None;
             if !self.active {
+                // A certificate re-flash shortly after an eager finish close
+                // is results-screen noise, not a new session.
+                if let Some((t, last)) = &self.finished
+                    && recv_us.saturating_sub(*t) < FINISH_GUARD_US
+                    && crate::analysis::finish_certificate(last, &frame)
+                {
+                    self.buf.push_back((recv_us, payload.to_vec()));
+                    self.trim_prelude(recv_us);
+                    return out;
+                }
+                self.finished = None;
                 self.active = true;
                 self.car = frame.car_ordinal;
                 out.push(Action::Open { car: self.car });
@@ -135,12 +163,35 @@ impl Cutter {
                 if self.car == 0 {
                     self.car = frame.car_ordinal;
                 }
+                // Race-off gap resolved by a finish certificate: the run
+                // demonstrably ended (a mid-run pause can never match: its
+                // race clock resumes within hundredths, under the predicate's
+                // +0.5s advance guard). Close now instead of waiting out the
+                // menu gap: the session is final and advice recomputes on a
+                // complete stint before any setup decision. The flicker is
+                // written first so analysis adopts the official time in-file.
+                if !self.buf.is_empty()
+                    && let Some(last) = self.last_drive
+                    && crate::analysis::finish_certificate(&last, &frame)
+                {
+                    self.flush(&mut out); // gap frames belong before the flicker
+                    out.push(Action::Write {
+                        recv_us,
+                        payload: payload.to_vec(),
+                    });
+                    self.finished = Some((recv_us, last));
+                    self.close(&mut out);
+                    return out;
+                }
                 self.flush(&mut out); // gap frames belong before this one
             }
             out.push(Action::Write {
                 recv_us,
                 payload: payload.to_vec(),
             });
+            if frame.speed > FREEROAM_MIN_SPEED_MPS {
+                self.last_drive = Some(frame);
+            }
             return out;
         }
 
@@ -576,6 +627,119 @@ mod tests {
         assert!(kinds(&c.split()).is_empty(), "idempotent when idle");
         let k = kinds(&c.feed(S, &race_frame(20.0, 42)));
         assert_eq!(k, vec!["open", "write"]);
+    }
+
+    /// Driving frame with the clock/lap state the certificate predicate reads.
+    fn drive_frame(race_t: f32, lap: u16, lap_t: f32) -> Vec<u8> {
+        packet::encode(&TelemetryFrame {
+            is_race_on: true,
+            distance_traveled: 400.0,
+            car_ordinal: 42,
+            speed: 40.0,
+            current_race_time: race_t,
+            lap_number: lap,
+            current_lap: lap_t,
+            ..Default::default()
+        })
+        .to_vec()
+    }
+
+    /// Results-screen flicker: race-on, lap incremented, LastLap = official
+    /// time, race clock run forward, car stationary, position garbage.
+    fn cert_frame(race_t: f32, lap: u16, official: f32) -> Vec<u8> {
+        packet::encode(&TelemetryFrame {
+            is_race_on: true,
+            distance_traveled: 123.0,
+            car_ordinal: 42,
+            speed: 0.0,
+            current_race_time: race_t,
+            lap_number: lap,
+            last_lap: official,
+            ..Default::default()
+        })
+        .to_vec()
+    }
+
+    #[test]
+    fn finish_certificate_closes_eagerly() {
+        let mut c = Cutter::default();
+        c.feed(0, &drive_frame(100.0, 2, 45.0));
+        // Race-off at the line, then the certificate flicker ~4s later.
+        for i in 1..=4 {
+            assert!(c.feed(i * S, &menu_frame()).is_empty());
+        }
+        let k = kinds(&c.feed(5 * S, &cert_frame(104.0, 3, 45.2)));
+        // Gap frames, then the flicker (analysis adopts the time in-file),
+        // then the eager close.
+        assert_eq!(
+            k,
+            vec!["write", "write", "write", "write", "write", "close"]
+        );
+        assert!(!c.is_active());
+    }
+
+    #[test]
+    fn pause_at_lap_line_stays_stitched() {
+        let mut c = Cutter::default();
+        c.feed(0, &drive_frame(100.0, 2, 45.0));
+        for i in 1..=20 {
+            assert!(c.feed(i * S, &menu_frame()).is_empty());
+        }
+        // Resume on lap+1 with a matching LastLap but the race clock
+        // continuous: a pause taken right at a lap line, not a finish.
+        let resume = packet::encode(&TelemetryFrame {
+            is_race_on: true,
+            distance_traveled: 401.0,
+            car_ordinal: 42,
+            speed: 40.0,
+            current_race_time: 100.1,
+            lap_number: 3,
+            current_lap: 0.1,
+            last_lap: 45.1,
+            ..Default::default()
+        })
+        .to_vec();
+        let k = kinds(&c.feed(21 * S, &resume));
+        assert!(!k.contains(&"close"), "paused run must not be severed");
+        assert!(c.is_active());
+    }
+
+    #[test]
+    fn trailing_flicker_after_finish_does_not_reopen() {
+        let mut c = Cutter::default();
+        c.feed(0, &drive_frame(100.0, 2, 45.0));
+        c.feed(S, &menu_frame());
+        c.feed(2 * S, &cert_frame(104.0, 3, 45.2));
+        assert!(!c.is_active());
+        // The results screen flashes the certificate again: noise, no session.
+        assert!(c.feed(10 * S, &cert_frame(110.0, 3, 45.2)).is_empty());
+        assert!(!c.is_active());
+        // A real new run still opens normally.
+        let k = kinds(&c.feed(30 * S, &drive_frame(0.5, 0, 0.5)));
+        assert_eq!(k[0], "open");
+        assert!(c.is_active());
+    }
+
+    #[test]
+    fn pause_past_gap_window_severs_and_resume_reopens() {
+        // Pin of the severed-run shape: a mid-run pause outliving the gap
+        // window splits the run over two files; the resumed file starts
+        // mid-run and the two pool at the campaign level as same-setup stints.
+        let mut c = Cutter::default();
+        c.feed(0, &drive_frame(100.0, 2, 45.0));
+        let mut closed = false;
+        for i in 1..=301 {
+            let k = kinds(&c.feed(i * S, &menu_frame()));
+            if k.contains(&"close") {
+                closed = true;
+                break;
+            }
+        }
+        assert!(closed, "no certificate: the long window still cuts");
+        // Resume mid-run: a new file opens for the remainder.
+        let k = kinds(&c.feed(320 * S, &drive_frame(105.0, 2, 50.0)));
+        assert_eq!(k[0], "open");
+        assert!(c.is_active());
     }
 
     #[test]
