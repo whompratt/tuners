@@ -14,6 +14,11 @@
 //!
 //!   GET /healthz -> 200 (unauthenticated, for proxy health checks)
 //!
+//!   GET /v1/priors -> the crowd-prior artifact (`--priors <file>`), with a
+//!   content ETag, 304 on If-None-Match, and the sibling `<file>.sig`'s hex
+//!   in X-Priors-Signature. Unauthenticated by design: receiving the crowd's
+//!   priors must not require contributing. 404 when unconfigured or missing.
+//!
 //! The body is hashed while streaming to a temp file and only renamed into
 //! place when the hash matches the header, so a truncated or corrupted upload
 //! never lands. The stored name carries the first 16 hash hex chars, so a
@@ -52,6 +57,8 @@ pub struct ReceiveConfig {
     /// Ceiling on total stored bytes across all senders: hostile uploads can
     /// pin storage at this worst case but never grow it.
     pub global_cap_bytes: u64,
+    /// Crowd-prior artifact served at GET /v1/priors (None = 404).
+    pub priors_path: Option<PathBuf>,
 }
 
 pub fn run(bind: &str, port: u16, cfg: ReceiveConfig) -> std::io::Result<()> {
@@ -104,6 +111,7 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
     let mut content_length: Option<u64> = None;
     let mut auth: Option<String> = None;
     let mut claimed_sha: Option<String> = None;
+    let mut if_none_match: Option<String> = None;
     let mut expect_continue = false;
     for _ in 0..64 {
         let mut header = String::new();
@@ -117,6 +125,8 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
                     content_length = v.trim().parse().ok();
                 } else if let Some(v) = lower.strip_prefix("x-bundle-sha256:") {
                     claimed_sha = Some(v.trim().to_string());
+                } else if let Some(v) = lower.strip_prefix("if-none-match:") {
+                    if_none_match = Some(v.trim().to_string());
                 } else if lower.starts_with("expect:") && lower.contains("100-continue") {
                     expect_continue = true;
                 } else if let Some(v) = header.to_ascii_lowercase().strip_prefix("authorization:") {
@@ -132,8 +142,14 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
     }
 
     let mut body_consumed = 0u64;
+    let mut extra_headers = String::new();
     let (status, body) = match (method, target) {
         ("GET", "/healthz") => ("200 OK", "{\"ok\":true}".to_string()),
+        ("GET", "/v1/priors") => {
+            let (status, body, extra) = get_priors(cfg, if_none_match.as_deref());
+            extra_headers = extra;
+            (status, body)
+        }
         ("PUT", t) if t.starts_with("/v1/bundle/") => {
             let name = &t["/v1/bundle/".len()..];
             match put_bundle(
@@ -158,7 +174,7 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
     };
     let _ = write!(
         stream,
-        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{extra_headers}Connection: close\r\n\r\n",
         body.len(),
     );
     let _ = stream.write_all(body.as_bytes());
@@ -181,6 +197,46 @@ fn handle(mut stream: TcpStream, cfg: &ReceiveConfig) {
 }
 
 type Reply = (&'static str, String);
+
+/// GET /v1/priors: serve the artifact with a content ETag (sha256 prefix —
+/// the Worker's R2 etag differs in value, not protocol; clients treat etags
+/// as opaque) and the detached signature riding X-Priors-Signature.
+fn get_priors(cfg: &ReceiveConfig, if_none_match: Option<&str>) -> (&'static str, String, String) {
+    let missing = || {
+        (
+            "404 Not Found",
+            err_json("no priors published"),
+            String::new(),
+        )
+    };
+    let Some(path) = &cfg.priors_path else {
+        return missing();
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return missing();
+    };
+    let etag = crate::util::sha256_hex(&bytes)[..32].to_string();
+    let mut extra = format!("ETag: \"{etag}\"\r\nCache-Control: public, max-age=3600\r\n");
+    let presented = if_none_match
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches("W/")
+        .replace('"', "");
+    if presented == etag {
+        return ("304 Not Modified", String::new(), extra);
+    }
+    let sig_path = path.with_file_name(format!(
+        "{}.sig",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    if let Ok(sig) = std::fs::read_to_string(sig_path) {
+        extra.push_str(&format!("X-Priors-Signature: {}\r\n", sig.trim()));
+    }
+    match String::from_utf8(bytes) {
+        Ok(body) => ("200 OK", body, extra),
+        Err(_) => missing(),
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn put_bundle(

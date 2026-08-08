@@ -55,6 +55,7 @@ USAGE:
   tuners receive  [--port 8090] [--bind 127.0.0.1] [--root inbox]
                   [--tokens receive-tokens.txt] [--blocklist receive-blocklist.txt]
                   [--max-mb 64] [--daily-mb 512] [--global-mb 20480]
+                  [--priors crowd-priors.json]
                     telemetry-collection endpoint, local twin of
                     worker/: bundle PUTs stored per sender under --root. Open
                     mode by default (client-generated 64-hex tokens, sender =
@@ -748,6 +749,7 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
     let mut max_mb: u64 = 64;
     let mut daily_mb: u64 = 512;
     let mut global_mb: u64 = 20 * 1024;
+    let mut priors: Option<String> = None;
     let mut issue: Option<String> = None;
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -760,6 +762,7 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
             "--max-mb" => max_mb = parse(flag, it.next())?,
             "--daily-mb" => daily_mb = parse(flag, it.next())?,
             "--global-mb" => global_mb = parse(flag, it.next())?,
+            "--priors" => priors = Some(value(flag, it.next())?.clone()),
             "--issue" => issue = Some(value(flag, it.next())?.clone()),
             other => return Err(format!("unknown flag '{other}' for receive")),
         }
@@ -777,6 +780,7 @@ fn cmd_receive(args: &[String]) -> Result<(), String> {
         max_bundle_bytes: max_mb * 1024 * 1024,
         daily_cap_bytes: daily_mb * 1024 * 1024,
         global_cap_bytes: global_mb * 1024 * 1024,
+        priors_path: priors.map(PathBuf::from),
     };
     tuners::sharing::receive::run(&bind, port, cfg).map_err(|e| e.to_string())
 }

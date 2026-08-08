@@ -9,6 +9,15 @@
 //     X-Bundle-SHA256: <64 hex of the body>
 //   -> 200 {"ok":true,"stored":"<sender>/<name>-<hash16>.tar.zst","duplicate":bool}
 //
+//   GET /v1/priors
+//   -> 200 crowd-priors.json body, ETag + X-Priors-Signature (ed25519 hex,
+//      clients verify against their pinned key), 304 on If-None-Match,
+//      404 until an artifact is published. Public and unauthenticated by
+//      design: receiving the crowd's priors must not require contributing.
+//      The maintainer pipeline uploads the artifact directly to R2
+//      (wrangler r2 object put; sender prefixes are 16-hex so `_priors/`
+//      can never collide) — the Worker has no write surface for it.
+//
 // Auth is OPEN by default (strangers-scale opt-in): the app generates its own
 // 64-hex token at opt-in and the sender id is sha256(token)[..16]: stable
 // pseudonymous identity without issuance. Misbehaving senders go in the
@@ -30,6 +39,9 @@ const NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}\.tar\.zst$/;
 const TOKEN_RE = /^[0-9a-f]{64}$/;
 const RATE_LIMIT = 30;
 const RATE_PERIOD_MS = 60_000;
+const PRIORS_KEY = "_priors/crowd-priors.json";
+const PRIORS_SIG_KEY = "_priors/crowd-priors.json.sig";
+const PRIORS_MAX_AGE_S = 3600;
 
 // In-isolate sliding-window throttle: the enforced rate limit. Per-isolate,
 // so it's a bound on a single noisy client, not a global guarantee: the
@@ -110,6 +122,36 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
       return json(200, { ok: true });
+    }
+    if (request.method === "GET" && url.pathname === "/v1/priors") {
+      const ip = request.headers.get("cf-connecting-ip") ?? "local";
+      if (isolateThrottled(ip, RATE_LIMIT, RATE_PERIOD_MS)) {
+        return fail(429, "rate limited, slow down");
+      }
+      // R2 conditionals take the bare etag; If-None-Match arrives quoted.
+      const inm = (request.headers.get("if-none-match") ?? "")
+        .replace(/^W\//, "")
+        .replace(/"/g, "");
+      let obj;
+      try {
+        obj = await env.BUNDLES.get(
+          PRIORS_KEY,
+          inm ? { onlyIf: { etagDoesNotMatch: inm } } : undefined,
+        );
+      } catch {
+        obj = null;
+      }
+      if (!obj) return fail(404, "no priors published");
+      const headers = {
+        etag: obj.httpEtag,
+        "cache-control": `public, max-age=${PRIORS_MAX_AGE_S}`,
+      };
+      // Precondition failed: R2 answers with metadata but no body.
+      if (!obj.body) return new Response(null, { status: 304, headers });
+      const sig = await env.BUNDLES.get(PRIORS_SIG_KEY);
+      if (sig) headers["x-priors-signature"] = (await sig.text()).trim();
+      headers["content-type"] = "application/json";
+      return new Response(obj.body, { status: 200, headers });
     }
     if (request.method !== "PUT") {
       return fail(405, "PUT bundles to /v1/bundle/<name>.tar.zst");

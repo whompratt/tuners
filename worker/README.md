@@ -19,7 +19,19 @@ PUT https://<worker-url>/v1/bundle/<name>.tar.zst
    400 bad name / bad or missing hash 422 body hash != claimed
    403 sender blocklisted             429 rate limited, or over DAILY_CAP_MB
    507 global storage ceiling reached GET /healthz -> 200
+
+GET https://<worker-url>/v1/priors
+-> 200 crowd-priors.json body, ETag, X-Priors-Signature (ed25519 hex; the
+   app verifies against its pinned key before touching the content)
+   304 on If-None-Match               404 until an artifact is published
 ```
+
+The priors route is public and unauthenticated by design (receiving the
+crowd's priors must not require contributing); it shares the per-IP
+throttle. The artifact lives in the same bucket under `_priors/` (sender
+prefixes are 16-hex, so the prefix can never collide) and the Worker has
+no write surface for it — publishing is a maintainer-side `wrangler r2
+object put`.
 
 **Auth is open**: no tokens are issued. The app generates a random 64-hex
 token once at opt-in and its sender id is `sha256(token)[..16]`: a stable
@@ -89,6 +101,24 @@ curl -i -X PUT --data-binary @/tmp/b.bin \
 
 ## Operations
 
+- **Publish the crowd priors** (also the pipeline's upload step): build the
+  signed artifact, then put both objects — artifact first, signature second
+  (a client fetching in the gap fails signature verification, keeps its old
+  artifact, and self-heals on its next poll):
+
+  ```sh
+  tuners priors build
+  npx wrangler r2 object put tuners-bundles/_priors/crowd-priors.json \
+    --file <data-root>/crowd-priors.json --remote
+  npx wrangler r2 object put tuners-bundles/_priors/crowd-priors.json.sig \
+    --file <data-root>/crowd-priors.json.sig --remote
+  ```
+
+  `tuners priors build` is content-gated: an unchanged map leaves the file
+  (and its signature) untouched, so skip the upload when it prints
+  "unchanged". Verify a publish through the worker (`curl .../v1/priors`),
+  not `r2 object get` — the latter can serve stale content after an
+  overwrite (measured 2026-07-26).
 - **Block a sender**: `npx wrangler secret put BLOCKLIST` with a JSON array
   of sender ids, e.g. `["a3f9c2e811d04b57"]` (seconds, no redeploy).
 - **Emergency lockdown**: `npx wrangler secret put TOKENS` with
@@ -118,3 +148,9 @@ per-sender 429, global 507, and lockdown mode via `--var TOKENS:...`.
 Live smoke test against the deployed endpoint 2026-07-25/26: all of the
 above verified except the platform ratelimit binding (see Cost protection);
 uploads round-tripped byte-identical through real R2.
+
+GET /v1/priors validated green against the emulator 2026-08-08 (real
+126 KB artifact seeded via `r2 object put --local`): body byte-identical,
+served signature verifies against the pinned pubkey, 304 on matching
+If-None-Match, 200 on stale, 404 before publish, bundle PUT unaffected.
+Not yet deployed or smoke-tested live.

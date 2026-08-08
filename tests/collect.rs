@@ -27,6 +27,7 @@ fn start_receiver(dir: &Path) -> (String, PathBuf) {
         max_bundle_bytes: 64 << 20,
         daily_cap_bytes: 512 << 20,
         global_cap_bytes: u64::MAX,
+        priors_path: None,
     };
     std::thread::spawn(move || run_listener(listener, cfg));
     (endpoint, root)

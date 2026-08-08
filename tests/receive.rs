@@ -43,9 +43,31 @@ fn start_mode(
         max_bundle_bytes,
         daily_cap_bytes,
         global_cap_bytes,
+        priors_path: None,
     };
     std::thread::spawn(move || run_listener(listener, cfg));
     Server { addr, root }
+}
+
+/// Raw GET returning (status, joined header lines, body).
+fn get(addr: SocketAddr, path: &str, extra_headers: &str) -> (u16, String, String) {
+    let mut s = TcpStream::connect(addr).unwrap();
+    s.write_all(format!("GET {path} HTTP/1.1\r\nHost: t\r\n{extra_headers}\r\n").as_bytes())
+        .unwrap();
+    let mut resp = String::new();
+    s.read_to_string(&mut resp).unwrap();
+    let status = resp.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let (head, body) = resp.split_once("\r\n\r\n").unwrap();
+    (status, head.to_string(), body.to_string())
+}
+
+fn header_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+    head.lines()
+        .find_map(|l| {
+            l.split_once(": ")
+                .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+        })
+        .map(|(_, v)| v)
 }
 
 /// Lockdown-mode server (issued-token allowlist), generous global cap.
@@ -346,4 +368,77 @@ fn health_and_unknown_routes() {
     let mut resp = String::new();
     s.read_to_string(&mut resp).unwrap();
     assert!(resp.starts_with("HTTP/1.1 405"), "{resp}");
+}
+
+/// GET /v1/priors pins the crowd-prior distribution protocol (plan 025):
+/// public and unauthenticated, content ETag with 304 on If-None-Match, the
+/// detached ed25519 signature riding X-Priors-Signature so a client verifies
+/// against its pinned key in one round trip, 404 while unpublished. The
+/// Worker serves the same shape from R2 (etag values differ; both opaque).
+#[test]
+fn priors_route() {
+    use tuners::advice::priors;
+
+    // Unconfigured server: 404, same as an empty bucket.
+    let srv = start(64 << 20, 512 << 20, "priors-off");
+    let (status, _, body) = get(srv.addr, "/v1/priors", "");
+    assert_eq!(status, 404, "{body}");
+    assert!(body.contains("no priors published"), "{body}");
+
+    // Published artifact + signature: the full maintainer-to-client loop.
+    let dir = std::env::temp_dir().join(format!("tuners-receive-priors-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let artifact = dir.join("crowd-priors.json");
+    let content = "{\"schema\":1,\"minAppSchema\":1,\"cells\":[]}\n";
+    std::fs::write(&artifact, content).unwrap();
+    let key = dir.join("priors.key");
+    let pubkey = priors::keygen(&key).unwrap();
+    let sig = priors::sign(&key, content.as_bytes()).unwrap();
+    std::fs::write(dir.join("crowd-priors.json.sig"), format!("{sig}\n")).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let cfg = ReceiveConfig {
+        root: dir.join("inbox"),
+        tokens_path: dir.join("no-tokens.txt"),
+        blocklist_path: dir.join("no-blocklist.txt"),
+        max_bundle_bytes: 64 << 20,
+        daily_cap_bytes: 512 << 20,
+        global_cap_bytes: u64::MAX,
+        priors_path: Some(artifact.clone()),
+    };
+    std::thread::spawn(move || run_listener(listener, cfg));
+
+    let (status, head, got) = get(addr, "/v1/priors", "");
+    assert_eq!(status, 200, "{got}");
+    assert_eq!(got, content);
+    let etag = header_value(&head, "etag")
+        .expect("etag header")
+        .to_string();
+    assert!(etag.starts_with('"') && etag.ends_with('"'), "{etag}");
+    assert!(header_value(&head, "cache-control").is_some(), "{head}");
+    let served_sig = header_value(&head, "x-priors-signature").expect("sig header");
+    assert!(priors::verify(&pubkey, got.as_bytes(), served_sig));
+    assert!(!priors::verify(&pubkey, b"tampered", served_sig));
+
+    // Matching If-None-Match: 304, no body, etag still present.
+    let (status, head, got) = get(addr, "/v1/priors", &format!("If-None-Match: {etag}\r\n"));
+    assert_eq!(status, 304, "{got}");
+    assert!(got.is_empty(), "{got}");
+    assert_eq!(header_value(&head, "etag"), Some(etag.as_str()));
+
+    // Stale etag: full 200 again.
+    let (status, ..) = get(addr, "/v1/priors", "If-None-Match: \"stale\"\r\n");
+    assert_eq!(status, 200);
+
+    // Updated artifact: the etag moves, the old one stops matching.
+    std::fs::write(
+        &artifact,
+        "{\"schema\":1,\"minAppSchema\":1,\"cells\":[{}]}\n",
+    )
+    .unwrap();
+    let (status, head, _) = get(addr, "/v1/priors", &format!("If-None-Match: {etag}\r\n"));
+    assert_eq!(status, 200);
+    assert_ne!(header_value(&head, "etag"), Some(etag.as_str()));
 }
