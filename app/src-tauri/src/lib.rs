@@ -35,9 +35,10 @@ pub struct LiveStateEvent(pub api::LiveStateView);
 #[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct QualityEvent(pub Option<api::QualityView>);
 
-/// A recording closed (the run auto-cut or the recorder stopped): refresh
-/// verdicts. In external mode (another capture owns the socket) the close is
-/// inferred from the tailed newest file: rotation, or the tail going stale.
+/// A run is over (recording closed, or the tail went stale at race-off while
+/// the recording is still open — advise reads in-progress data honestly):
+/// refresh verdicts. In external mode (another capture owns the socket)
+/// closes are only ever inferred: rotation, or the tail going stale.
 #[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct RunFinishedEvent {
     pub file: String,
@@ -360,20 +361,24 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         ])
 }
 
-/// Tail age at which an externally captured run is assumed cut: the cutter
-/// closes 5s after race-off. A race-on gap (pause) can fire this early with
-/// the run still open, which advise already tolerates as in-progress; the
-/// latch re-arms when data resumes, so the true close notifies again.
-const EXTERNAL_STALE_MS: u32 = 10_000;
+/// Tail age at which a run is assumed over: race-off frames are never
+/// written (the recorder buffers them; an external capture behaves the
+/// same), so the tailed file stops growing the moment the race ends,
+/// long before the file actually closes (the in-process cutter's
+/// no-certificate fallback is a 300s menu gap). A pause fires this early
+/// with the run still open, which advise already tolerates as in-progress;
+/// the latch re-arms when data resumes, so the true close notifies again.
+const TAIL_STALE_MS: u32 = 10_000;
 
 /// Edge detection for run boundaries, one `observe` per emitter poll.
 ///
-/// When the in-process recorder is the writer, its recording-file edge is the
-/// exact close signal. In external mode nothing is ever "recording"
-/// in-process, so a close is inferred from the tailed newest file instead:
-/// rotation (a new newest means the previous one was cut) or the tail going
-/// stale (run over, next not started). The latch keeps the two inferences
-/// from notifying the same file twice.
+/// When the in-process recorder is the writer, its recording-file edge is
+/// the exact close signal; the stale-tail inference additionally notifies
+/// early (at race-off) so advice never waits out a menu gap. In external
+/// mode nothing is ever "recording" in-process, so closes are only
+/// inferred: rotation (a new newest means the previous one was cut) or the
+/// tail going stale. The latch keeps the inferences from notifying the
+/// same file twice.
 #[derive(Default)]
 struct RunEdges {
     prev_recording: Option<String>,
@@ -411,10 +416,10 @@ impl RunEdges {
             }
             self.stale_notified = false;
             self.prev_newest = newest.map(str::to_string);
-        } else if mode == "external"
+        } else if (mode == "external" || mode == "recording")
             && let (Some(age), Some(f)) = (age_ms, newest)
         {
-            if age < EXTERNAL_STALE_MS {
+            if age < TAIL_STALE_MS {
                 self.stale_notified = false;
             } else if !self.stale_notified {
                 self.stale_notified = true;
@@ -622,7 +627,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{EXTERNAL_STALE_MS, RunEdges};
+    use super::{RunEdges, TAIL_STALE_MS};
 
     #[test]
     fn recorder_close_finishes_run() {
@@ -634,11 +639,41 @@ mod tests {
         // run closed: recorder idles, newest unchanged
         let (fin, _) = e.observe("waiting", None, Some("a.ftel"), Some(500));
         assert_eq!(fin.as_deref(), Some("a.ftel"));
-        // idle polls stay quiet; recorder-owned modes never use the stale path
+        // idle polls stay quiet; waiting mode never uses the stale path
         assert_eq!(
-            e.observe("waiting", None, Some("a.ftel"), Some(EXTERNAL_STALE_MS * 2)),
+            e.observe("waiting", None, Some("a.ftel"), Some(TAIL_STALE_MS * 2)),
             (None, false)
         );
+    }
+
+    #[test]
+    fn recording_stale_tail_notifies_early_then_close_notifies_again() {
+        let mut e = RunEdges::default();
+        e.observe("recording", Some("a.ftel"), Some("a.ftel"), Some(0));
+        // race-off: the recorder stops writing, the tail goes stale while
+        // the recording is still open — notify early (advise tolerates
+        // in-progress), once
+        let (fin, _) = e.observe(
+            "recording",
+            Some("a.ftel"),
+            Some("a.ftel"),
+            Some(TAIL_STALE_MS),
+        );
+        assert_eq!(fin.as_deref(), Some("a.ftel"), "early notify at race-off");
+        assert_eq!(
+            e.observe(
+                "recording",
+                Some("a.ftel"),
+                Some("a.ftel"),
+                Some(TAIL_STALE_MS * 2)
+            ),
+            (None, false)
+        );
+        // racing resumes (pause came back): re-armed
+        e.observe("recording", Some("a.ftel"), Some("a.ftel"), Some(100));
+        // the real close still notifies via the recorder edge
+        let (fin, _) = e.observe("waiting", None, Some("a.ftel"), Some(500));
+        assert_eq!(fin.as_deref(), Some("a.ftel"));
     }
 
     #[test]
@@ -658,21 +693,16 @@ mod tests {
     fn external_stale_tail_finishes_once_and_rearms() {
         let mut e = RunEdges::default();
         e.observe("external", None, Some("a.ftel"), Some(100));
-        let (fin, _) = e.observe("external", None, Some("a.ftel"), Some(EXTERNAL_STALE_MS));
+        let (fin, _) = e.observe("external", None, Some("a.ftel"), Some(TAIL_STALE_MS));
         assert_eq!(fin.as_deref(), Some("a.ftel"), "stale tail = run over");
         // latched: staying stale must not re-notify
         assert_eq!(
-            e.observe(
-                "external",
-                None,
-                Some("a.ftel"),
-                Some(EXTERNAL_STALE_MS * 3)
-            ),
+            e.observe("external", None, Some("a.ftel"), Some(TAIL_STALE_MS * 3)),
             (None, false)
         );
         // data resumes (paused race came back), then goes stale again
         e.observe("external", None, Some("a.ftel"), Some(200));
-        let (fin, _) = e.observe("external", None, Some("a.ftel"), Some(EXTERNAL_STALE_MS));
+        let (fin, _) = e.observe("external", None, Some("a.ftel"), Some(TAIL_STALE_MS));
         assert_eq!(fin.as_deref(), Some("a.ftel"), "re-armed after fresh data");
     }
 
@@ -680,7 +710,7 @@ mod tests {
     fn external_rotation_after_stale_does_not_double_notify() {
         let mut e = RunEdges::default();
         e.observe("external", None, Some("a.ftel"), Some(100));
-        e.observe("external", None, Some("a.ftel"), Some(EXTERNAL_STALE_MS));
+        e.observe("external", None, Some("a.ftel"), Some(TAIL_STALE_MS));
         // next run starts: a.ftel already notified, only the rotation fires
         assert_eq!(
             e.observe("external", None, Some("b.ftel"), Some(100)),
