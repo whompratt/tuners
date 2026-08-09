@@ -290,20 +290,51 @@ pub(super) fn pair_weak(stints: &[CampaignStint], i: usize, j: usize) -> bool {
     pair_thin(stints, i, j) || stints[i].suspect || stints[j].suspect
 }
 
+/// Lap-pooling identity of one stint's profile: what decides whether its
+/// laps can pool with a same-setup neighbor's.
+#[derive(Clone, Copy)]
+pub(super) struct PoolChar {
+    /// Point-to-point route (standing runs whose lap clock never resets).
+    pub point_to_point: bool,
+    /// Route length in shared bins.
+    pub bins: usize,
+}
+
+impl PoolChar {
+    pub fn of(p: &analysis::profile::StintProfile) -> Self {
+        PoolChar {
+            point_to_point: p.point_to_point,
+            bins: p.shared_bins,
+        }
+    }
+
+    /// Same route (compare's tolerance) and same route KIND. Standing
+    /// character deliberately does NOT split: a circuit stint holding only
+    /// an aborted out lap pools with its flying-lap siblings (the pooled
+    /// profile drops the standing lap, the same rule a single recording
+    /// applies), while genuine p2p runs can never meet flying laps because
+    /// their point_to_point flags always differ.
+    fn poolable(&self, o: &PoolChar) -> bool {
+        let (short, long) = (self.bins.min(o.bins), self.bins.max(o.bins));
+        self.point_to_point == o.point_to_point
+            && (long - short) as f32 <= long as f32 * analysis::compare::ROUTE_LENGTH_TOLERANCE
+    }
+}
+
 /// Consecutive same-setup group id per stint (the group head's index). A
 /// new group starts whenever the bound setup changes, either side is
-/// unbound, or the standing-start character differs (their laps are not
-/// poolable).
+/// unbound, or the laps are not poolable (different route or route kind).
 pub(super) fn consecutive_groups(
-    standing: &[bool],
+    chars: &[PoolChar],
     setups: &[Option<&crate::advice::tuning::Revision>],
 ) -> Vec<usize> {
-    let n = standing.len();
+    let n = chars.len();
     let mut groups = vec![0usize; n];
     for k in 1..n {
         let same = match (setups[k - 1], setups[k]) {
             (Some(a), Some(b)) => {
-                crate::advice::tuning::diff_keys(a, b).is_empty() && standing[k - 1] == standing[k]
+                crate::advice::tuning::diff_keys(a, b).is_empty()
+                    && chars[k - 1].poolable(&chars[k])
             }
             _ => false,
         };
@@ -651,11 +682,8 @@ pub(crate) fn load_campaign<'s>(
     // corroboration runs, so state comparisons pool their laps. The drift
     // floor below deliberately keeps RAW stint pairs (it measures per-stint
     // spread), and A-B-A stays per-stint too.
-    let standing: Vec<bool> = stints
-        .iter()
-        .map(|s| s.profile().standing_start_only)
-        .collect();
-    let groups = consecutive_groups(&standing, &setups);
+    let chars: Vec<PoolChar> = stints.iter().map(|s| PoolChar::of(s.profile())).collect();
+    let groups = consecutive_groups(&chars, &setups);
     let mut last_member: Vec<usize> = (0..n).collect();
     for k in (0..n.saturating_sub(1)).rev() {
         if groups[k + 1] == groups[k] {
@@ -669,9 +697,14 @@ pub(crate) fn load_campaign<'s>(
         if groups[g] != g || last_member[g] == g {
             continue; // not a group head, or a singleton
         }
-        let laps: Vec<analysis::profile::LapProfile> = (g..=last_member[g])
+        let mut laps: Vec<analysis::profile::LapProfile> = (g..=last_member[g])
             .flat_map(|k| stints[k].profile().laps.iter().cloned())
             .collect();
+        // An aborted out lap pooled with flying siblings is dropped, the
+        // same rule a single recording applies to its own out lap.
+        if laps.iter().any(|l| !l.standing_start) {
+            laps.retain(|l| !l.standing_start);
+        }
         let Some(profile) =
             analysis::profile::StintProfile::from_laps(laps, stints[g].profile().car_ordinal)
         else {

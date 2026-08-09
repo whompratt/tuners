@@ -8,7 +8,7 @@ use std::fmt::Write;
 /// Bins per reported segment (250 m at 10 m bins).
 const SEGMENT_BINS: usize = 25;
 /// Sessions must be the same route: shared bin counts within this fraction.
-const ROUTE_LENGTH_TOLERANCE: f32 = 0.02;
+pub const ROUTE_LENGTH_TOLERANCE: f32 = 0.02;
 /// Route lengths can coincide across different tracks (DistanceTraveled is route
 /// units, and two routes measured ~5.95km while one drove in 50s and the other in
 /// 92s), so lap times are the tiebreaker. No tune change moves lap time this much.

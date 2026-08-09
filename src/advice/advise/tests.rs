@@ -825,11 +825,13 @@ fn fd_scale_bases_on_driven_setup() {
 }
 
 /// Consecutive same-setup stints group into one state; a setup change, an
-/// unbound side, or a standing-start mismatch starts a new group, and a
-/// non-consecutive return to an old setup stays separate (A-B-A identity).
+/// unbound side, a route-kind mismatch, or a route-length mismatch starts a
+/// new group, and a non-consecutive return to an old setup stays separate
+/// (A-B-A identity). A standing-only circuit stint (aborted out lap) pools
+/// with flying siblings; genuine p2p never meets flying laps.
 #[test]
 fn consecutive_same_setup_stints_group() {
-    use super::campaign::consecutive_groups;
+    use super::campaign::{PoolChar, consecutive_groups};
     let rev = |stamp: &str, arb: &str| Revision {
         stamp: stamp.into(),
         values: [("arb_front".to_string(), arb.to_string())].into(),
@@ -847,9 +849,35 @@ fn consecutive_same_setup_stints_group() {
         Some(&a),
         None,
     ];
-    let standing = vec![false, false, false, false, false, true, true, false];
-    let groups = consecutive_groups(&standing, &setups);
-    assert_eq!(groups, vec![0, 0, 2, 2, 4, 5, 5, 7]);
+    let circuit = PoolChar {
+        point_to_point: false,
+        bins: 590,
+    };
+    // Standing-start character no longer splits: a circuit stint holding
+    // only its out lap (aborted first flying lap) pools with its flying
+    // siblings, so this timeline groups purely on setup identity. (Stints
+    // 5-6 being standing-only is invisible here by design.)
+    let chars = vec![circuit; 8];
+    let groups = consecutive_groups(&chars, &setups);
+    assert_eq!(groups, vec![0, 0, 2, 2, 4, 4, 4, 7]);
+
+    // Point-to-point runs never pool with circuit laps, even same-setup.
+    let p2p = PoolChar {
+        point_to_point: true,
+        bins: 590,
+    };
+    let mixed = vec![circuit, p2p, p2p, circuit];
+    let same: Vec<Option<&Revision>> = vec![Some(&a); 4];
+    assert_eq!(consecutive_groups(&mixed, &same), vec![0, 1, 1, 3]);
+
+    // A different route length (beyond compare's tolerance) splits too.
+    let short = PoolChar {
+        point_to_point: false,
+        bins: 300,
+    };
+    let reroute = vec![circuit, circuit, short];
+    let same3: Vec<Option<&Revision>> = vec![Some(&a); 3];
+    assert_eq!(consecutive_groups(&reroute, &same3), vec![0, 0, 2]);
 }
 
 /// Consecutive same-setup runs collapse into ONE trajectory row: the state
