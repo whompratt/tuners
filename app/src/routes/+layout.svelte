@@ -5,7 +5,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { events } from "$lib/bindings";
   import { app, loadAdvice, loadPending, loadSession, loadStints } from "$lib/app.svelte";
-  import { initAdvanced } from "$lib/advanced.svelte";
+  import { initPrefs } from "$lib/prefs.svelte";
   import { initOnboarding, onboarding } from "$lib/onboarding.svelte";
   import { checkForUpdate } from "$lib/update";
   import DialogHost from "$lib/ui/DialogHost.svelte";
@@ -24,7 +24,7 @@
   ] as const;
 
   onMount(() => {
-    initAdvanced();
+    initPrefs();
     // Last-resort net: anything the loaders' own catches miss surfaces as
     // the banner instead of wedging navigation as a silent dead click.
     const onRejection = (e: PromiseRejectionEvent) => {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app, baseName, errMsg, loadAdvice, loadPending, show } from "$lib/app.svelte";
   import { confTag, isAccepted } from "$lib/advice";
-  import { advanced } from "$lib/advanced.svelte";
+  import { prefs } from "$lib/prefs.svelte";
   import { commands } from "$lib/bindings";
   import { fmtLap } from "$lib/units";
   import { drawLandscape, landscapeLayout, type LandscapeData } from "$lib/charts/landscape";
@@ -402,7 +402,7 @@
       </div>
       {#if a.recommendations.length}
         {#each a.recommendations as r (r.area + r.advice)}
-          <details class="adv-rec" open={advanced.on}>
+          <details class="adv-rec" open={prefs.expandAdvice}>
             <summary style="cursor:pointer">
               <span class="adv-conf" style="color:{CONF_COLOR[r.confidence]}">[{confTag(r)}]</span>
               {#if r.suggestion}<b>{r.suggestion}</b>: {r.advice}{:else}<b>{r.area}</b>: {r.advice}{/if}

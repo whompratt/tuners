@@ -3,7 +3,6 @@
   import { goto } from "$app/navigation";
   import { app, errMsg, loadAdvice, loadPending, loadSession } from "$lib/app.svelte";
   import { AREA_GROUP, isAccepted, isHold, primaryRec } from "$lib/advice";
-  import { advanced } from "$lib/advanced.svelte";
   import { commands, type RecommendationView } from "$lib/bindings";
   import { TUNE_GROUPS } from "$lib/fields";
   import { UNIT_PRESETS, UNIVERSAL_LIMITS, activePreset, limToCanon, limToDisp, toCanon, toDisp, unitOf, unitPrefs } from "$lib/units";
@@ -353,34 +352,32 @@
                   onchange={() => commitField(k)}
                 />
                 <span class="unit">{unitOf(k)?.l ?? ""}</span>
-                {#if advanced.on}
-                  {#if UNIVERSAL_LIMITS(k) && !app.session?.facts[`limit_${k}`]}
-                    <span style="opacity:.45;font-size:11px" title="range fixed across cars">
-                      {UNIVERSAL_LIMITS(k)?.replace("..", " – ")}
-                    </span>
-                  {:else if limDraft[k]}
-                    <span class="lim" title="slider range on this car (for limit-aware advice)">
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="min"
-                        bind:value={limDraft[k].min}
-                        onfocus={() => (editing = k)}
-                        onblur={() => editing === k && (editing = null)}
-                        onchange={() => commitLimit(k)}
-                      />
-                      –
-                      <input
-                        type="number"
-                        step="any"
-                        placeholder="max"
-                        bind:value={limDraft[k].max}
-                        onfocus={() => (editing = k)}
-                        onblur={() => editing === k && (editing = null)}
-                        onchange={() => commitLimit(k)}
-                      />
-                    </span>
-                  {/if}
+                {#if UNIVERSAL_LIMITS(k) && !app.session?.facts[`limit_${k}`]}
+                  <span style="opacity:.45;font-size:11px" title="range fixed across cars">
+                    {UNIVERSAL_LIMITS(k)?.replace("..", " – ")}
+                  </span>
+                {:else if limDraft[k]}
+                  <span class="lim" title="slider range on this car (for limit-aware advice)">
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="min"
+                      bind:value={limDraft[k].min}
+                      onfocus={() => (editing = k)}
+                      onblur={() => editing === k && (editing = null)}
+                      onchange={() => commitLimit(k)}
+                    />
+                    –
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="max"
+                      bind:value={limDraft[k].max}
+                      onfocus={() => (editing = k)}
+                      onblur={() => editing === k && (editing = null)}
+                      onchange={() => commitLimit(k)}
+                    />
+                  </span>
                 {/if}
               </div>
             {/key}

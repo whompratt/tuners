@@ -3,7 +3,7 @@
   import { app, errMsg, loadSession } from "$lib/app.svelte";
   import { commands, type EffectMapStatus, type PriorsView, type SharingView } from "$lib/bindings";
   import { UNITS, UNIT_DIMS, UNIT_PRESETS, activePreset, unitPrefs } from "$lib/units";
-  import { advanced, toggleAdvanced } from "$lib/advanced.svelte";
+  import { prefs, toggleExpandAdvice } from "$lib/prefs.svelte";
   import { reopenOnboarding } from "$lib/onboarding.svelte";
   import { alertDialog, confirmDialog } from "$lib/ui/dialogs.svelte";
   import Button from "$lib/ui/Button.svelte";
@@ -271,8 +271,8 @@
   <div class="panel">
     <h2 style="margin:0 0 8px">Interface</h2>
     <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink-2);cursor:pointer">
-      <input type="checkbox" style="width:auto" checked={advanced.on} onchange={toggleAdvanced} />
-      advanced mode: expand expert detail (evidence, measurements, slider ranges) by default
+      <input type="checkbox" style="width:auto" checked={prefs.expandAdvice} onchange={toggleExpandAdvice} />
+      expand advice detail (evidence and measurements) by default
     </label>
     <div style="margin-top:12px">
       <Button onclick={openGuide}>show the first-time setup guide again</Button>

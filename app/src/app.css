@@ -240,11 +240,6 @@ pre { white-space: pre-wrap; font: 14px/1.45 var(--font-mono); }
 }
 .wiz-skip:hover { color: var(--ink-2); }
 .btn-danger:hover { border-color: var(--danger); color: var(--ink); background: rgba(230,103,103,0.15); }
-.adv-toggle {
-  margin-top: 14px; font-size: 13px; color: var(--muted);
-  display: flex; align-items: center; gap: 6px; cursor: pointer;
-}
-
 /* --- navigation rail (phase 3) --- */
 .rail {
   width: max-content; min-width: 92px; flex: none; border-right: 1px solid var(--border);
