@@ -4387,7 +4387,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tuners"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "ring",
  "serde",
@@ -4399,7 +4399,7 @@ dependencies = [
 
 [[package]]
 name = "tuners-app"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "serde",
  "serde_json",
