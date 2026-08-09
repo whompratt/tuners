@@ -209,12 +209,17 @@ regime between free roam and race modes:
   stays 0, and `LastLap`/`BestLap` never update for the entire event
   (verified over all 53,547 frames of the capture). The on-screen event timer
   is not exported, and no finish certificate ever arrives.
-- Consequence: time-attack driving **passes the recorder's race-mode gate**
+- Consequence: time-attack driving **passes the naive race-mode gate**
   (`IsRaceOn && DistanceTraveled != 0`; 44,111 of 53,547 frames on the
-  capture, and the cutter replay writes a session), so it gets recorded, but
-  the stint has no laps and no times and can never produce a verdict. A
-  candidate live discriminator is the frozen lap clock: circuits and
-  point-to-point routes both tick `CurrentLap` from GO.
+  capture), yet its stints could never have laps, times, or verdicts. The
+  recorder therefore excludes it via the frozen lap channels (race clock past
+  any measured rollout with `CurrentLap`, `LapNumber`, `LastLap`, and
+  `BestLap` all still exactly 0; circuits and point-to-point routes tick
+  `CurrentLap` from GO, and finish certificates carry nonzero lap fields).
+  Two pre-exclusion library recordings contain time-attack driving
+  (2026-07-25 20:04 entirely; 2026-08-01 23:03 has a ~3-minute time-attack
+  head before its races, which gap classification already separates into its
+  own lap-less segment).
 - Weather and time of day are live in free roam and have no packet channel,
   so even self-derived timing (e.g. from distance-bin crossings) would be
   condition-confounded across runs.

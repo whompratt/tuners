@@ -216,7 +216,7 @@
       <p class="muted">
         Then go drive: a rivals event is ideal (identical conditions every
         run, and restarting is free). Races and route events work too; free
-        roam and open-world time attack can't be used for advice.
+        roam and open-world time attack aren't recorded.
       </p>
       <div class="wiz-actions">
         <Button go onclick={enterBaseline}>enter my tune</Button>

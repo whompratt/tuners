@@ -310,7 +310,7 @@
         <span style="color:var(--ink-2)">
           now go drive, recording is armed. A rivals lap is best (identical conditions
           every run); races and route events work too. Free roam and time attack
-          aren't usable. Your first run unlocks advice.
+          aren't recorded. Your first run unlocks advice.
         </span>
         <span style="flex:1"></span>
         <Button go onclick={() => goto("/drive")}>open the Drive view</Button>

@@ -6,9 +6,11 @@
 //!
 //! Recording is gated on race mode: `IsRaceOn` with a live `DistanceTraveled`
 //! (exactly 0.0 in free roam; nonzero, even negative at spawn, in race modes,
-//! see telemetry.md). Menu/pause frames inside a session are buffered and
-//! flushed when racing resumes, preserving the race-off gaps that gap
-//! classification (pause/rewind/restart) depends on.
+//! see telemetry.md). Open-world time attack also drives with both set but
+//! never moves a lap channel, so its stints could never be timed or compared:
+//! the cutter excludes it like free roam. Menu/pause frames inside a session
+//! are buffered and flushed when racing resumes, preserving the race-off gaps
+//! that gap classification (pause/rewind/restart) depends on.
 //!
 //! A finish certificate (results-screen flicker carrying the official run
 //! time, see `analysis::finish_certificate`) closes the session eagerly: the
@@ -41,6 +43,25 @@ const UNDECODABLE_FAILSAFE_RUN: u32 = 100;
 /// After an eager finish close, results screens can flash the certificate
 /// again; within this window such a flash is menu noise, not a new session.
 const FINISH_GUARD_US: u64 = 60_000_000;
+/// Race modes tick `CurrentLap` from the countdown's GO, and the longest
+/// measured lap-0 rollout is 5.74s of race clock: past this, a zero lap clock
+/// with positive distance cannot be a race (telemetry.md, route-kind clocks).
+const LAPLESS_MIN_RACE_T_S: f32 = 6.0;
+
+/// Open-world time attack: race-on with a live route distance but every lap
+/// channel pinned at zero for the whole event (telemetry.md "Open-world time
+/// attack"). Countdowns read both clocks 0.0 with distance still negative, so
+/// launches stay recorded; finish certificates and mid-race frames carry a
+/// nonzero lap channel, so they never match.
+fn time_attack(f: &packet::TelemetryFrame) -> bool {
+    f.is_race_on
+        && f.distance_traveled > 0.0
+        && f.current_race_time >= LAPLESS_MIN_RACE_T_S
+        && f.current_lap == 0.0
+        && f.lap_number == 0
+        && f.last_lap == 0.0
+        && f.best_lap == 0.0
+}
 
 pub enum Action {
     Open { car: i32 },
@@ -134,7 +155,7 @@ impl Cutter {
         };
         self.undecodable_run = 0;
 
-        let race_mode = frame.is_race_on && frame.distance_traveled != 0.0;
+        let race_mode = frame.is_race_on && frame.distance_traveled != 0.0 && !time_attack(&frame);
         if race_mode {
             self.freeroam_since = None;
             if !self.active {
@@ -201,9 +222,11 @@ impl Cutter {
             self.trim_prelude(recv_us);
             return out;
         }
+        // Free roam (dead odometer) or time attack: sustained unrecordable
+        // driving closes an open session fast instead of polluting it.
         let freeroam_driving = frame.is_race_on
-            && frame.distance_traveled == 0.0
-            && frame.speed > FREEROAM_MIN_SPEED_MPS;
+            && frame.speed > FREEROAM_MIN_SPEED_MPS
+            && (frame.distance_traveled == 0.0 || time_attack(&frame));
         if freeroam_driving {
             let since = *self.freeroam_since.get_or_insert(recv_us);
             if recv_us.saturating_sub(since) >= FREEROAM_CLOSE_US {
@@ -609,6 +632,70 @@ mod tests {
         }
         assert_eq!(kinds(&last), vec!["close"]);
         // and the free-roam frames were dropped, not written
+    }
+
+    /// Open-world time attack: race-on, live route distance, free-roam race
+    /// clock, every lap channel zero (the measured signature).
+    fn ta_frame(race_t: f32, dist: f32) -> Vec<u8> {
+        packet::encode(&TelemetryFrame {
+            is_race_on: true,
+            distance_traveled: dist,
+            car_ordinal: 42,
+            speed: 40.0,
+            current_race_time: race_t,
+            ..Default::default()
+        })
+        .to_vec()
+    }
+
+    #[test]
+    fn time_attack_driving_never_opens() {
+        let mut c = Cutter::default();
+        for i in 0..600u64 {
+            let t = 180.0 + i as f32 / 10.0;
+            assert!(c.feed(i * S / 10, &ta_frame(t, 5.0 + i as f32)).is_empty());
+        }
+        assert!(!c.is_active());
+    }
+
+    #[test]
+    fn time_attack_after_race_closes_within_seconds() {
+        let mut c = Cutter::default();
+        c.feed(0, &drive_frame(100.0, 2, 45.0));
+        let mut last = Vec::new();
+        for i in 0..100u64 {
+            last = c.feed(
+                S + i * S / 10,
+                &ta_frame(200.0 + i as f32 / 10.0, 50.0 + i as f32),
+            );
+            if !c.is_active() {
+                break;
+            }
+        }
+        assert_eq!(kinds(&last), vec!["close"]);
+    }
+
+    #[test]
+    fn lap_line_reset_frame_does_not_sever() {
+        let mut c = Cutter::default();
+        c.feed(0, &drive_frame(100.0, 2, 45.0));
+        // A lap-boundary frame could read CurrentLap exactly 0.0 with the race
+        // clock large, but LapNumber is nonzero mid-race: still race mode.
+        let boundary = packet::encode(&TelemetryFrame {
+            is_race_on: true,
+            distance_traveled: 400.0,
+            car_ordinal: 42,
+            speed: 40.0,
+            current_race_time: 100.1,
+            lap_number: 3,
+            last_lap: 45.1,
+            best_lap: 45.1,
+            ..Default::default()
+        })
+        .to_vec();
+        let k = kinds(&c.feed(S, &boundary));
+        assert_eq!(k, vec!["write"]);
+        assert!(c.is_active());
     }
 
     #[test]

@@ -13,6 +13,9 @@
   );
   let stale = $derived(app.live?.ageMs == null || app.live.ageMs > STALE_MS);
   let f = $derived(app.live?.frame ?? null);
+  // Raw datagrams flowing (menus and free roam included): the wiring works,
+  // whether or not anything is being recorded.
+  let receiving = $derived(rec.udpAgeMs != null && rec.udpAgeMs < STALE_MS);
   // Cold/hot coloring follows the session compound's working band (the same
   // band the advice engine judges pressures against); slick band if no project.
   let band = $derived([app.session?.tempBandF?.[0] ?? 160, app.session?.tempBandF?.[1] ?? 210]);
@@ -59,11 +62,15 @@
     {/if}
   </div>
 
-  {#if !f && rec.udpAgeMs != null && rec.udpAgeMs < STALE_MS}
+  {#if rec.mode === "waiting" && receiving}
+    <!-- Telemetry flows but nothing records: say so explicitly, and say what
+         starts a recording. This is the state free roam and time attack sit
+         in, where the dimmed gauge alone reads as a mystery. -->
     <div class="banner" style="margin-top:12px">
-      receiving telemetry{rec.udpCarName ? ` from the ${rec.udpCarName}` : ""}. Menus and free roam
-      aren't recorded; start a rivals lap (best), race, or route event to record a run.
-      Open-world time attack records but can't be timed, so it won't feed advice
+      not recording{rec.udpCarName ? ` (receiving telemetry from the ${rec.udpCarName})` : ""}.
+      Recording starts by itself when you enter an event: a rivals lap is best
+      (identical conditions every run); races and route events work too.
+      Free roam and open-world time attack aren't recorded
     </div>
   {:else if !f && app.booted}
     <div class="banner" style="margin-top:12px">

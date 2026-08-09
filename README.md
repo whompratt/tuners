@@ -77,10 +77,10 @@ confidence gauge, and journals every tune change for A/B comparison and advice.
 every run, restarts are free, and lap times come through in telemetry, which
 is exactly what tune A/B comparison needs. Regular races, custom races, and
 route events work too, including point-to-point sprints. Free roam and
-open-world time attack can't be used: free roam isn't recorded, and time
-attack sends no lap timing (the game keeps the on-screen timer to itself),
-so runs can't be compared. Weather and time of day also vary in the open
-world, which would muddy verdicts even with times.
+open-world time attack aren't recorded: time attack sends no lap timing
+(the game keeps the on-screen timer to itself), so its runs could never be
+timed or compared. Weather and time of day also vary in the open world,
+which would muddy verdicts even with times.
 
 **The loop**: enter your car's current tune once as a baseline, drive a
 handful of laps, read the verdict, apply the suggested change, drive again.
