@@ -365,8 +365,10 @@
 <style>
   .proj-list {
     display: grid;
-    /* name · car · versions · runs · description · id · actions */
-    grid-template-columns: max-content max-content max-content max-content 1fr max-content max-content;
+    /* name · car · versions · runs · description · id · actions
+       name/car shrink (and wrap) below their content width when the window
+       is narrow, instead of the description column absorbing all of it */
+    grid-template-columns: minmax(12ch, max-content) minmax(12ch, max-content) max-content max-content 1fr max-content max-content;
     column-gap: 14px;
   }
   .proj-row {
