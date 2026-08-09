@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   UNIT_PRESETS,
   UNIVERSAL_LIMITS,
+  activePreset,
   fmtLap,
   limToCanon,
   limToDisp,
@@ -17,6 +18,18 @@ import {
 
 beforeEach(() => {
   Object.assign(unitPrefs, UNIT_PRESETS.imperial);
+});
+
+describe("activePreset", () => {
+  it("names the preset that matches every dimension", () => {
+    expect(activePreset({ ...UNIT_PRESETS.imperial })).toBe("imperial");
+    expect(activePreset({ ...UNIT_PRESETS.metric })).toBe("metric");
+    expect(activePreset({ ...UNIT_PRESETS.uk })).toBe("uk");
+  });
+
+  it("reads a per-dimension mix as no preset", () => {
+    expect(activePreset({ ...UNIT_PRESETS.uk, temp: "f" })).toBe(null);
+  });
 });
 
 describe("toDisp/toCanon", () => {

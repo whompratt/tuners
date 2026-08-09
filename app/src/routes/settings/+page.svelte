@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { app, errMsg, loadSession } from "$lib/app.svelte";
   import { commands, type EffectMapStatus, type PriorsView, type SharingView } from "$lib/bindings";
-  import { UNITS, UNIT_DIMS, UNIT_PRESETS, unitPrefs } from "$lib/units";
+  import { UNITS, UNIT_DIMS, UNIT_PRESETS, activePreset, unitPrefs } from "$lib/units";
   import { advanced, toggleAdvanced } from "$lib/advanced.svelte";
   import { reopenOnboarding } from "$lib/onboarding.svelte";
   import { alertDialog, confirmDialog } from "$lib/ui/dialogs.svelte";
@@ -30,6 +30,7 @@
     for (const [dim, u] of Object.entries(UNIT_PRESETS[p])) units[dim] = u;
     saveUnits();
   }
+  let preset = $derived(activePreset(units));
 
   // --- telemetry sharing (moved here from Projects) ---
   let sharing: SharingView | null = $state(null);
@@ -177,9 +178,12 @@
       </span>
     </div>
     <div style="display:flex;gap:8px;align-items:baseline;margin-bottom:10px">
-      <Button onclick={() => applyPreset("imperial")}>imperial</Button>
-      <Button onclick={() => applyPreset("metric")}>metric</Button>
-      <Button onclick={() => applyPreset("uk")}>UK</Button>
+      <Button active={preset === "imperial"} onclick={() => applyPreset("imperial")}>imperial</Button>
+      <Button active={preset === "metric"} onclick={() => applyPreset("metric")}>metric</Button>
+      <Button active={preset === "uk"} onclick={() => applyPreset("uk")}>UK</Button>
+      {#if preset === null}
+        <span style="color:var(--muted);font-size:12px">custom mix (per-field below)</span>
+      {/if}
     </div>
     <div class="form-grid" style="max-width:760px">
       {#each UNIT_DIMS as [dim, l] (dim)}

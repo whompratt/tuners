@@ -90,6 +90,13 @@ pre { white-space: pre-wrap; font: 14px/1.45 var(--font-mono); }
 }
 #rec-split:hover, .btn:hover { border-color: var(--accent); color: var(--ink); }
 .btn-go { border-color: var(--accent); }
+/* Selected state (e.g. the active unit preset): distinct from hover via the
+   tinted fill, not just the border. */
+.btn-active {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
 .form-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 10px 14px;

@@ -6,7 +6,7 @@
   import { advanced } from "$lib/advanced.svelte";
   import { commands, type RecommendationView } from "$lib/bindings";
   import { TUNE_GROUPS } from "$lib/fields";
-  import { UNIT_PRESETS, UNIVERSAL_LIMITS, limToCanon, limToDisp, toCanon, toDisp, unitOf, unitPrefs } from "$lib/units";
+  import { UNIT_PRESETS, UNIVERSAL_LIMITS, activePreset, limToCanon, limToDisp, toCanon, toDisp, unitOf, unitPrefs } from "$lib/units";
   import { drawLandscape, landscapeLayout, type LandscapeData } from "$lib/charts/landscape";
   import { palette } from "$lib/charts/palette";
   import Chart from "$lib/ui/Chart.svelte";
@@ -28,6 +28,12 @@
   // asynchronously, and the reseed below must not clobber whatever the user
   // has already tabbed into and started typing meanwhile.
   let editing: string | null = $state(null);
+
+  // unitPrefs is a plain object; unitsTick is its change signal.
+  let unitsPreset = $derived.by(() => {
+    void app.unitsTick;
+    return activePreset(unitPrefs);
+  });
 
   // Re-seed the draft from the saved version whenever it (or units) change.
   // In baseline mode the draft IS the user's in-progress transcription and
@@ -291,9 +297,9 @@
         {#if msg}<span style="color:var(--accent)">{msg}</span>{/if}
         <div style="flex-basis:100%;display:flex;gap:8px;align-items:baseline;margin-top:6px">
           <span style="font-size:12px;color:var(--muted)">units (match what the game shows you):</span>
-          <Button onclick={() => applyUnits("imperial")}>imperial</Button>
-          <Button onclick={() => applyUnits("metric")}>metric</Button>
-          <Button onclick={() => applyUnits("uk")}>UK</Button>
+          <Button active={unitsPreset === "imperial"} onclick={() => applyUnits("imperial")}>imperial</Button>
+          <Button active={unitsPreset === "metric"} onclick={() => applyUnits("metric")}>metric</Button>
+          <Button active={unitsPreset === "uk"} onclick={() => applyUnits("uk")}>UK</Button>
           <span style="font-size:12px;color:var(--muted)">
             switching re-converts anything already typed; per-field prefs live in Settings
           </span>

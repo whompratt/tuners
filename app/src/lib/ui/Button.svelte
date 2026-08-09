@@ -5,11 +5,20 @@
   let {
     go = false,
     danger = false,
+    active = false,
     children,
     ...rest
-  }: { go?: boolean; danger?: boolean; children: Snippet } & HTMLButtonAttributes = $props();
+  }: { go?: boolean; danger?: boolean; active?: boolean; children: Snippet } & HTMLButtonAttributes =
+    $props();
 </script>
 
-<button class="btn" class:btn-go={go} class:btn-danger={danger} {...rest}>
+<button
+  class="btn"
+  class:btn-go={go}
+  class:btn-danger={danger}
+  class:btn-active={active}
+  aria-pressed={active || undefined}
+  {...rest}
+>
   {@render children()}
 </button>

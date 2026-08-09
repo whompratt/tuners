@@ -31,6 +31,15 @@ export const UNIT_PRESETS: Record<string, Record<string, string>> = {
   uk: { pressure: "psi", springs: "kgfmm", length: "cm", force: "kgf", mass: "kg", speed: "mph", temp: "c" },
 };
 
+/** The preset whose units match `prefs` on every dimension, or null for a
+ * custom per-dimension mix. Drives the highlighted preset button. */
+export function activePreset(prefs: Record<string, string>): string | null {
+  for (const [name, dims] of Object.entries(UNIT_PRESETS)) {
+    if (Object.entries(dims).every(([d, u]) => prefs[d] === u)) return name;
+  }
+  return null;
+}
+
 export const UNIT_DIMS: [string, string][] = [
   ["pressure", "tire pressure"],
   ["springs", "spring rate"],
