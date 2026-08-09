@@ -31,8 +31,10 @@ Two things worth knowing:
 
 ## The tuning journal: advice that remembers
 
-Keep a `tune-journal.txt`: one session per line, chronological, with what you
-changed since the previous session:
+The desktop app maintains the journal automatically: saving a changed tune
+records the diff for you. This section describes the command-line workflow,
+where you keep a `tune-journal.txt` yourself: one session per line,
+chronological, with what you changed since the previous session:
 
 ```
 sessions/session-A.ftel | baseline
@@ -68,6 +70,10 @@ read yourself):
 
 - Rivals (or any restartable race mode) is the intended loop: identical conditions
   every session, lap times, and live distance data.
+- Open-world time attack looks like it records but can't be timed: the game sends
+  no lap data there (the on-screen timer stays on-screen), and weather and time of
+  day vary run to run. Free roam isn't recorded at all. Use rivals or any race
+  event for anything you want compared.
 - 3+ flying laps per session give the ideal-lap splicer real material; the out lap
   is detected and excluded automatically on circuits.
 - **Drive a similar number of laps in sessions you'll compare**: the session with

@@ -162,7 +162,7 @@
           {#if rec.mode === "recording"}
             <span style="color:var(--danger)">●</span> recording ({rec.packets.toLocaleString()} pkts)
           {:else if rec.mode === "waiting"}
-            {receiving ? "receiving: armed, waiting for an event (free roam isn't recorded)" : "armed, no telemetry"}
+            {receiving ? "receiving: armed, waiting for an event (rivals is best; free roam isn't recorded)" : "armed, no telemetry"}
           {:else}
             view-only: another capture owns the telemetry port
           {/if}
@@ -206,7 +206,7 @@
             <div class="dash-line">analyzing your runs…</div>
           {:else}
             <div class="dash-line">
-              no verdict yet. Finish a few laps of a race, rivals lap, or route event
+              no verdict yet. Finish a few laps of a rivals event, race, or route event
             </div>
             {#if app.adviceError}
               <div class="dash-line" style="font-size:12px">analysis said: {app.adviceError}</div>

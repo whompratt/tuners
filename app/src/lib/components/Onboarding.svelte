@@ -213,6 +213,11 @@
         Advice stays locked until this baseline exists: the app can't reason
         about a setup it can't see.
       </p>
+      <p class="muted">
+        Then go drive: a rivals event is ideal (identical conditions every
+        run, and restarting is free). Races and route events work too; free
+        roam and open-world time attack can't be used for advice.
+      </p>
       <div class="wiz-actions">
         <Button go onclick={enterBaseline}>enter my tune</Button>
         <button class="wiz-skip" onclick={finishOnboarding}>later</button>

@@ -192,6 +192,33 @@ FH6 vs Forza Motorsport: adds `CarGroup`, `SmashableVelDiff`, `SmashableMass` (a
   route where wall-bouncing is net-faster would make a spliced ideal
   leaderboard-illegal; revisit if observed in practice.
 
+## Open-world time attack (measured 2026-08-09, Ram TRX capture)
+
+Time attack runs inside free roam: drive over the start line and the event
+begins; there is no lobby and no results screen, and the event ends when the
+driver leaves the route or misses a checkpoint. Telemetry-wise it is a third
+regime between free roam and race modes:
+
+- `IsRaceOn` is 1 while driving in free roam anyway, so it distinguishes
+  nothing here.
+- Crossing the start line **activates `DistanceTraveled`** (route-spline
+  progress; always 0.0 in plain free roam): the only packet-level marker that
+  an event is running. Leaving the event zeroes it, and crossing into another
+  route reassigns it (observed teleporting 24182 -> 366 in one frame pair).
+- **No lap telemetry at all**: `CurrentLap` stays exactly 0.00, `LapNumber`
+  stays 0, and `LastLap`/`BestLap` never update for the entire event
+  (verified over all 53,547 frames of the capture). The on-screen event timer
+  is not exported, and no finish certificate ever arrives.
+- Consequence: time-attack driving **passes the recorder's race-mode gate**
+  (`IsRaceOn && DistanceTraveled != 0`; 44,111 of 53,547 frames on the
+  capture, and the cutter replay writes a session), so it gets recorded, but
+  the stint has no laps and no times and can never produce a verdict. A
+  candidate live discriminator is the frozen lap clock: circuits and
+  point-to-point routes both tick `CurrentLap` from GO.
+- Weather and time of day are live in free roam and have no packet channel,
+  so even self-derived timing (e.g. from distance-bin crossings) would be
+  condition-confounded across runs.
+
 ## Still to verify
 
 - Whether `NumCylinders == 0` reliably identifies EVs (needs a capture in an EV).

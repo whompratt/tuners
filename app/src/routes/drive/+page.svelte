@@ -62,7 +62,8 @@
   {#if !f && rec.udpAgeMs != null && rec.udpAgeMs < STALE_MS}
     <div class="banner" style="margin-top:12px">
       receiving telemetry{rec.udpCarName ? ` from the ${rec.udpCarName}` : ""}. Menus and free roam
-      aren't recorded; start a race, rivals lap, or route event to record a run
+      aren't recorded; start a rivals lap (best), race, or route event to record a run.
+      Open-world time attack records but can't be timed, so it won't feed advice
     </div>
   {:else if !f && app.booted}
     <div class="banner" style="margin-top:12px">

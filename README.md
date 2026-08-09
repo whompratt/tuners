@@ -61,7 +61,8 @@ pnpm tauri build    # or `pnpm tauri dev` to run unpackaged
 However you installed it, the app needs Forza Horizon 6 to send it telemetry:
 Settings → HUD and Gameplay → Data Out: On, IP: as shown in the app's
 first-time setup, port: anything outside 5200-5300 (default 20440), then fully
-restart the game.
+restart the game. (The game binds its own socket in the 5200-5300 range; see
+the [official Data Out documentation](https://support.forza.net/hc/en-us/articles/51744149102611-Forza-Horizon-6-Data-Out-Documentation).)
 
 If running _tuners_ under WSL NAT, use the WSL address from `hostname -I`;
 localhost is not forwarded for UDP.
@@ -71,6 +72,21 @@ localhost is not forwarded for UDP.
 The desktop app is the main way in: it records automatically while you drive
 (race mode only; menus and free roam are skipped), shows live charts and a
 confidence gauge, and journals every tune change for A/B comparison and advice.
+
+**What to drive**: Rivals is the recommended loop. Conditions are identical
+every run, restarts are free, and lap times come through in telemetry, which
+is exactly what tune A/B comparison needs. Regular races, custom races, and
+route events work too, including point-to-point sprints. Free roam and
+open-world time attack can't be used: free roam isn't recorded, and time
+attack sends no lap timing (the game keeps the on-screen timer to itself),
+so runs can't be compared. Weather and time of day also vary in the open
+world, which would muddy verdicts even with times.
+
+**The loop**: enter your car's current tune once as a baseline, drive a
+handful of laps, read the verdict, apply the suggested change, drive again.
+The confidence gauge shows how well your laps corroborate each other: more
+clean laps, more trust in the comparison. Advice always cites the evidence
+it's based on.
 
 The same engine is also available as command line tools:
 
