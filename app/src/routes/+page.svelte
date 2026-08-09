@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { app, loadAdvice, loadPending } from "$lib/app.svelte";
   import { reopenOnboarding } from "$lib/onboarding.svelte";
-  import { confTag, isAccepted, isHold, primaryRec } from "$lib/advice";
+  import { BAND_COLOR, confTag, isAccepted, isHold, primaryRec } from "$lib/advice";
   import { commands } from "$lib/bindings";
   import { FACT_FIELDS, label } from "$lib/fields";
   import { SPD, fmtLap, toDisp, unitLabel } from "$lib/units";
@@ -54,13 +54,16 @@
     return { tone: "meh", text: `${label}: within noise of ${prevLabel} (${d}s), inconclusive` };
   });
 
-  // Verdict trust readout: the engine grades each comparison from its own
-  // evidence (corroboration, suspect tags, drift floor, currency agreement);
-  // Home hedges only when it's below high. Detail lives on Analysis.
-  let confNote = $derived.by(() => {
-    const o = lastStep?.outcome;
-    if (!o || "error" in o || o.word === "drift" || !o.confidence || o.confidence === "high") return null;
-    return `${o.confidence} confidence${o.why ? `: ${o.why}` : ""}`;
+  // The last state's corroboration: the same confidence the drive gauge
+  // showed while these runs were driven, pooled over the state's runs.
+  let conf = $derived.by(() => {
+    const st = lastStep;
+    if (!st) return null;
+    return {
+      pct: Math.round((st.corroboration ?? 0) * 100),
+      band: st.corroborationBand,
+      runs: st.first !== st.last ? ` across ${st.runs.length} runs` : "",
+    };
   });
 
   // Consequence display for compound runs where several families changed at
@@ -196,8 +199,13 @@
             <div class="dash-line">recording; the verdict lands here when the run ends</div>
           {:else if verdict}
             <div class="dash-verdict {verdict.tone}">{verdict.text}</div>
-            {#if confNote}
-              <div class="dash-line">{confNote}</div>
+            {#if conf}
+              <div
+                class="dash-line"
+                title="optimal-lap corroboration of the runs behind this verdict: the same confidence the drive gauge showed"
+              >
+                confidence <span style="color:{BAND_COLOR[conf.band] || 'var(--muted)'}">{conf.pct}%</span>{conf.runs}
+              </div>
             {/if}
             {#if consequence}
               <div class="dash-line" style="margin-top:6px">{consequence}</div>

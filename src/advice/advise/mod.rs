@@ -415,41 +415,18 @@ pub fn advise(
                         }
                         _ => journal::judge(cmp.verdict_delta_s).word(),
                     };
-                    let d = cmp.verdict_delta_s;
-                    let (confidence, why) = if word == "drift" {
-                        (None, None)
-                    } else if c.thin(prev, g) {
-                        (Some("low"), Some("single lap on a side; corroborate"))
-                    } else if c.weak_pair(prev, g) {
-                        (Some("low"), Some("suspect-tagged run in the comparison"))
-                    } else if c.drift_floor.is_some_and(|(_, f)| d.abs() <= f) {
-                        (Some("low"), Some("margin within the measured drift"))
-                    } else if d.signum() != cmp.ideal_delta_s.signum()
-                        && (d.abs() >= 0.05 || cmp.ideal_delta_s.abs() >= 0.05)
-                    {
-                        (
-                            Some("medium"),
-                            Some("optimal-lap read overruled by the vote"),
-                        )
-                    } else if c.drift_floor.is_none() {
-                        (
-                            Some("medium"),
-                            Some("no same-setup drift floor measured yet"),
-                        )
-                    } else {
-                        (Some("high"), None)
-                    };
                     Ok(StepOutcome {
                         word,
-                        delta_s: d,
-                        confidence,
-                        why,
+                        delta_s: cmp.verdict_delta_s,
                     })
                 }
                 Err(e) => Err(e),
             }
         });
         let head = &c.stints[g];
+        // The drive gauge's confidence, on the state's pooled laps: the
+        // trajectory quotes the same number the user watched while driving.
+        let corr = sp.corroboration().score;
         steps.push(StepView {
             first: g + 1,
             last: e + 1,
@@ -458,6 +435,8 @@ pub fn advise(
             best_s: sp.best_lap_time_s,
             ideal_s: sp.composite.time_s,
             scatter_s: lap_scatter(sp),
+            corroboration: corr,
+            corroboration_band: crate::telemetry::live::Band::from_score(corr).as_str(),
             currencies,
             balance: members.iter().rev().find_map(|&m| {
                 let met = c.stints[m].met.as_ref()?;

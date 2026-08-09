@@ -288,15 +288,7 @@ export type MeasurementView = {
 	effects: { [key in string]: number | null },
 };
 
-export type OutcomeView = ({ word: string; deltaS: number | null; 
-/**
- *  "high" | "medium" | "low" trust in this verdict, from the
- *  campaign's own evidence (corroboration, suspect tags, measured
- *  drift floor, currency agreement). None on drift rows.
- */
-confidence: string | null; 
-/**  The deciding reason when confidence is below high. */
-why: string | null }) & { error?: never } | ({ error: string }) & { confidence?: never; deltaS?: never; why?: never; word?: never };
+export type OutcomeView = ({ word: string; deltaS: number | null }) & { error?: never } | ({ error: string }) & { deltaS?: never; word?: never };
 
 /**  One slider in the pending set: differs from the last DRIVEN revision. */
 export type PendingChange = {
@@ -525,6 +517,13 @@ export type StepView = {
 	 *  Report-only consistency channel.
 	 */
 	scatterS: number | null,
+	/**
+	 *  Graded corroboration of the state's pooled laps (0..1): the drive
+	 *  gauge's confidence metric, pooled the same way.
+	 */
+	corroboration: number | null,
+	/**  The gauge's calibrated band on that score: "good" | "ok" | "low". */
+	corroborationBand: string,
 	/**  (understeer index, front slip frac, rear slip frac). */
 	balance: [number | null, number | null, number | null] | null,
 	note: string | null,

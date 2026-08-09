@@ -165,19 +165,8 @@ pub fn report_text(file: &str) -> Result<String, ApiError> {
 #[derive(Serialize, Type, Debug, Clone)]
 #[serde(rename_all_fields = "camelCase", untagged)]
 pub enum OutcomeView {
-    Measured {
-        word: String,
-        delta_s: f32,
-        /// "high" | "medium" | "low" trust in this verdict, from the
-        /// campaign's own evidence (corroboration, suspect tags, measured
-        /// drift floor, currency agreement). None on drift rows.
-        confidence: Option<String>,
-        /// The deciding reason when confidence is below high.
-        why: Option<String>,
-    },
-    NotComparable {
-        error: String,
-    },
+    Measured { word: String, delta_s: f32 },
+    NotComparable { error: String },
 }
 
 #[derive(Serialize, Type, Debug, Clone)]
@@ -234,6 +223,11 @@ pub struct StepView {
     /// Sample sd of the state's flying-lap times (None under 3 laps).
     /// Report-only consistency channel.
     pub scatter_s: Option<f32>,
+    /// Graded corroboration of the state's pooled laps (0..1): the drive
+    /// gauge's confidence metric, pooled the same way.
+    pub corroboration: f32,
+    /// The gauge's calibrated band on that score: "good" | "ok" | "low".
+    pub corroboration_band: String,
     /// (understeer index, front slip frac, rear slip frac).
     pub balance: Option<(f32, f32, f32)>,
     pub note: Option<String>,
@@ -393,6 +387,8 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
                 best_s: s.best_s,
                 ideal_s: s.ideal_s,
                 scatter_s: s.scatter_s,
+                corroboration: s.corroboration,
+                corroboration_band: s.corroboration_band.to_string(),
                 balance: s.balance,
                 note: s.note.clone(),
                 pos: s.pos,
@@ -400,8 +396,6 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
                     Ok(so) => OutcomeView::Measured {
                         word: so.word.to_string(),
                         delta_s: so.delta_s,
-                        confidence: so.confidence.map(str::to_string),
-                        why: so.why.map(str::to_string),
                     },
                     Err(e) => OutcomeView::NotComparable { error: e.clone() },
                 }),

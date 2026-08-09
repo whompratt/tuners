@@ -33,20 +33,10 @@ pub struct RunView {
     pub drift_s: Option<f32>,
 }
 
-/// A judged state-vs-state comparison with its confidence readout, from the
-/// campaign's own evidence. LOW: a single-lap or splice-untrusted side, a
-/// suspect-tagged run, or a margin inside the measured same-setup drift.
-/// MEDIUM: the optimal-lap component lost the 2-of-3 vote, or no drift
-/// floor is measured yet. HIGH: corroborated both sides, clear of the
-/// floor, currencies aligned.
+/// A judged state-vs-state comparison.
 pub struct StepOutcome {
     pub word: &'static str,
     pub delta_s: f32,
-    /// "high" | "medium" | "low". None on drift rows: a same-setup repeat
-    /// measures noise, there is no verdict to trust.
-    pub confidence: Option<&'static str>,
-    /// The deciding reason when confidence is below high.
-    pub why: Option<&'static str>,
 }
 
 /// One trajectory row = one SETUP STATE: a run plus any consecutive
@@ -68,6 +58,13 @@ pub struct StepView {
     /// equal pace made the car easier to drive, but no rule reads this yet
     /// (its same-setup noise floor is uncalibrated).
     pub scatter_s: Option<f32>,
+    /// Graded corroboration of the state's pooled profile: the drive
+    /// gauge's metric (time-weighted share of the optimal lap reproduced by
+    /// the other laps), pooled over the state's runs exactly as the live
+    /// gauge pools same-setup recordings. 0..1.
+    pub corroboration: f32,
+    /// The gauge's calibrated band on that score: "good" | "ok" | "low".
+    pub corroboration_band: &'static str,
     /// (understeer index, front slip frac, rear slip frac), from the state's
     /// freshest run that measured one.
     pub balance: Option<(f32, f32, f32)>,

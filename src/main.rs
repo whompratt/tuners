@@ -307,6 +307,10 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
             if let Some(sc) = step.scatter_s {
                 line.push_str(&format!("  scatter {sc:.2}s"));
             }
+            line.push_str(&format!(
+                "  conf {:.0}%",
+                step.corroboration.clamp(0.0, 1.0) * 100.0
+            ));
             if let Some((idx, front, rear)) = step.balance {
                 line.push_str(&format!(
                     "  balance {idx:+.2} (F {:.0}%/R {:.0}% of limit)",
@@ -329,12 +333,6 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                         ));
                     } else {
                         line.push_str(&format!("  → {} ({:+.2}s)", so.word, so.delta_s));
-                    }
-                    if let Some(conf) = so.confidence {
-                        match so.why {
-                            Some(why) => line.push_str(&format!("  [{conf}: {why}]")),
-                            None => line.push_str(&format!("  [{conf}]")),
-                        }
                     }
                     if so.word != "drift"
                         && let Some((id, bd, md)) = step.currencies

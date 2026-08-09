@@ -6,6 +6,14 @@ import type { AdviseView, RecommendationView } from "./bindings";
 
 const CONF_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
+/** Corroboration band colors, matching the drive gauge (app.css
+ * .live-quality --qcolor values). */
+export const BAND_COLOR: Record<string, string> = {
+  good: "#199e70",
+  ok: "#c98500",
+  low: "#e66767",
+};
+
 /** A suggestion whose values already sit on the latest saved version is
  * accepted-but-undriven: pending, not re-acceptable. */
 export function isAccepted(

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app, baseName, errMsg, loadAdvice, loadPending, show } from "$lib/app.svelte";
-  import { confTag, isAccepted } from "$lib/advice";
+  import { BAND_COLOR, confTag, isAccepted } from "$lib/advice";
   import { prefs } from "$lib/prefs.svelte";
   import { commands } from "$lib/bindings";
   import { fmtLap } from "$lib/units";
@@ -130,7 +130,7 @@
               <th>change</th>
               <th>pos F/R</th><th>outcome</th>
               <th
-                title="how much to trust the verdict, from this campaign's own evidence: corroboration on both sides, suspect tags, the measured drift floor, and whether the optimal-lap read won the 2-of-3 vote"
+                title="optimal-lap corroboration across the state's pooled runs: the same confidence the drive gauge showed while you drove them"
                 >conf</th>
               <th title="corner-entry share of the delta">entry</th>
               <th title="corner-exit share of the delta">exit</th>
@@ -230,13 +230,11 @@
                     {/if}
                   {/if}
                 </td>
-                <td>
-                  {#if st.outcome && !("error" in st.outcome) && st.outcome.confidence}
-                    <span
-                      style="color:{CONF_COLOR[st.outcome.confidence] || 'var(--muted)'}"
-                      title={st.outcome.why ?? "corroborated both sides, clear of the drift floor, currencies aligned"}
-                      >{st.outcome.confidence}</span>
-                  {/if}
+                <td class="num">
+                  <span
+                    style="color:{BAND_COLOR[st.corroborationBand] || 'var(--muted)'}"
+                    title="optimal-lap corroboration across this state's pooled runs: the same confidence the drive gauge showed"
+                    >{Math.round(N(st.corroboration) * 100)}%</span>
                 </td>
                 {#if st.split}
                   {#each st.split as v, j (j)}

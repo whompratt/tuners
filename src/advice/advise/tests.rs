@@ -915,10 +915,13 @@ fn trajectory_rows_pool_same_setup_runs() {
         .as_ref()
         .expect("states comparable");
     assert_ne!(so.word, "drift", "a setup change is judged, not drift");
-    assert!(
-        so.confidence.is_some(),
-        "a judged outcome carries a confidence readout"
-    );
+    for st in [a, b] {
+        assert!(
+            (0.0..=1.0).contains(&st.corroboration),
+            "state corroboration is the gauge's 0..1 score"
+        );
+        assert!(!st.corroboration_band.is_empty());
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
