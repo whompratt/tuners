@@ -186,15 +186,9 @@
 
   const rowName = (r: { name: string | null; carName: string | null; car: number | null }) =>
     r.name || r.carName || (r.car != null ? `car #${r.car}` : "(no car)");
-  const rowMeta = (r: { name: string | null; carName: string | null; car: number | null; revisions: number; stints: number; id: string | null }) =>
-    [
-      r.name ? r.carName || (r.car != null ? `car #${r.car}` : null) : null,
-      `${r.revisions} version${r.revisions === 1 ? "" : "s"}`,
-      `${r.stints} run${r.stints === 1 ? "" : "s"}`,
-      r.id,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+  // Car shown separately only when a custom name occupies the name column.
+  const rowCar = (r: { name: string | null; carName: string | null; car: number | null }) =>
+    r.name ? r.carName || (r.car != null ? `car #${r.car}` : "") : "";
 </script>
 
 <div class="screen">
@@ -321,25 +315,29 @@
     <div style="font-size:13px;color:var(--muted);margin-bottom:6px">
       archiving keeps the whole project (setup history + notes); resume it any time
     </div>
-    <div style="font-size:13px">
+    <div class="proj-list" style="font-size:13px">
       {#if listError}
-        <div class="placeholder">project list failed: {listError}</div>
+        <div class="placeholder" style="grid-column:1/-1">project list failed: {listError}</div>
       {:else if list}
         {#each [list.active, ...list.archived] as r, i (r.id ?? "active")}
           <div class="proj-row" class:alt={i % 2 === 1}>
             <b>{rowName(r)}</b>
-            <span style="color:var(--muted)">{rowMeta(r)}</span>
-            {#if r.description}<span style="color:var(--ink-2)">{r.description}</span>{/if}
-            <span style="flex:1"></span>
-            {#if r.car != null}
-              <Button onclick={() => openDuplicate(r)}>duplicate</Button>
-            {/if}
-            {#if i === 0}
-              <span style="color:var(--accent)">active</span>
-            {:else if r.id}
-              <Button onclick={() => resumeProject(r.id!)}>resume</Button>
-              <Button danger onclick={() => deleteProject({ ...r, id: r.id! })}>delete</Button>
-            {/if}
+            <span style="color:var(--muted)">{rowCar(r)}</span>
+            <span style="color:var(--muted)">{r.revisions} version{r.revisions === 1 ? "" : "s"}</span>
+            <span style="color:var(--muted)">{r.stints} run{r.stints === 1 ? "" : "s"}</span>
+            <span style="color:var(--ink-2)">{r.description ?? ""}</span>
+            <span style="color:var(--muted)">{r.id ?? ""}</span>
+            <span class="actions">
+              {#if r.car != null}
+                <Button onclick={() => openDuplicate(r)}>duplicate</Button>
+              {/if}
+              {#if i === 0}
+                <span style="color:var(--accent)">active</span>
+              {:else if r.id}
+                <Button onclick={() => resumeProject(r.id!)}>resume</Button>
+                <Button danger onclick={() => deleteProject({ ...r, id: r.id! })}>delete</Button>
+              {/if}
+            </span>
           </div>
           {#if dupOpen && dupRowKey === (r.id ?? "active")}
             <div class="dup-form" class:alt={i % 2 === 1}>
@@ -365,11 +363,20 @@
 </div>
 
 <style>
+  .proj-list {
+    display: grid;
+    /* name · car · versions · runs · description · id · actions */
+    grid-template-columns: max-content max-content max-content max-content 1fr max-content max-content;
+    column-gap: 14px;
+  }
   .proj-row {
-    display: flex; gap: 10px; align-items: baseline;
+    grid-column: 1 / -1;
+    display: grid; grid-template-columns: subgrid; align-items: baseline;
     padding: 5px 8px; border-top: 1px solid var(--border);
   }
+  .proj-row .actions { display: flex; gap: 8px; align-items: baseline; justify-content: end; }
   .dup-form {
+    grid-column: 1 / -1;
     display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
     padding: 6px 8px 8px; color: var(--muted);
   }
