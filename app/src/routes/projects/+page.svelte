@@ -326,7 +326,7 @@
         <div class="placeholder">project list failed: {listError}</div>
       {:else if list}
         {#each [list.active, ...list.archived] as r, i (r.id ?? "active")}
-          <div style="display:flex;gap:10px;align-items:baseline;padding:5px 0;border-top:1px solid var(--border)">
+          <div class="proj-row" class:alt={i % 2 === 1}>
             <b>{rowName(r)}</b>
             <span style="color:var(--muted)">{rowMeta(r)}</span>
             {#if r.description}<span style="color:var(--ink-2)">{r.description}</span>{/if}
@@ -342,7 +342,7 @@
             {/if}
           </div>
           {#if dupOpen && dupRowKey === (r.id ?? "active")}
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0 8px;color:var(--muted)">
+            <div class="dup-form" class:alt={i % 2 === 1}>
               <span>
                 copies the setup (car, facts, limits, tune) into a new project — no runs or notes come along;
                 the first save in Setup is the new baseline
@@ -363,3 +363,17 @@
   </div>
 
 </div>
+
+<style>
+  .proj-row {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 5px 8px; border-top: 1px solid var(--border);
+  }
+  .dup-form {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 6px 8px 8px; color: var(--muted);
+  }
+  .proj-row.alt, .dup-form.alt {
+    background: color-mix(in srgb, var(--ink) 4%, transparent);
+  }
+</style>
