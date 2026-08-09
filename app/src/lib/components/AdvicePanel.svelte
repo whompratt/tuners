@@ -24,6 +24,8 @@
   let loading = $derived(app.adviceLoading);
   let acceptNote = $state("");
   let histSel = $state(0);
+  // Pooled state rows expanded to their member runs, keyed by head path.
+  let expanded = $state<Record<string, boolean>>({});
 
   // f32 crosses IPC as `number | null` (NaN honesty); formatters tolerate it.
   const N = (v: number | null | undefined) => v ?? 0;
@@ -133,13 +135,23 @@
             </tr>
           </thead>
           <tbody>
-            {#each a.steps as st, i (st.path)}
+            {#each a.steps as st (st.runs[0].path)}
+              {@const headPath = st.runs[0].path}
+              {@const pooled = st.runs.length > 1}
               <tr>
-                <td class="num">{i + 1}</td>
+                <td class="num">{pooled ? `${st.first}-${st.last}` : st.first}</td>
                 <td style="white-space:nowrap">
-                  <a
-                    href="#top"
-                    onclick={(e) => { e.preventDefault(); jump(st.path); }}>{base(st.path)}</a>
+                  {#if pooled}
+                    <a
+                      href="#top"
+                      title="consecutive same-setup runs pooled into one state; their laps back this row's numbers"
+                      onclick={(e) => { e.preventDefault(); expanded[headPath] = !expanded[headPath]; }}
+                      >{st.runs.length} runs · {expanded[headPath] ? "hide" : "show"}</a>
+                  {:else}
+                    <a
+                      href="#top"
+                      onclick={(e) => { e.preventDefault(); jump(headPath); }}>{base(headPath)}</a>
+                  {/if}
                 </td>
                 <td class="num">{st.laps}</td>
                 <td class="num">
@@ -223,6 +235,40 @@
                   <td></td><td></td><td></td>
                 {/if}
               </tr>
+              {#if pooled && expanded[headPath]}
+                {#each st.runs as r (r.path)}
+                  <tr style="color:var(--muted)">
+                    <td class="num">{r.n}</td>
+                    <td style="white-space:nowrap;padding-left:14px">
+                      <a
+                        href="#top"
+                        onclick={(e) => { e.preventDefault(); jump(r.path); }}>{base(r.path)}</a>
+                    </td>
+                    <td class="num">{r.laps}</td>
+                    <td class="num">
+                      {#if r.scatterS != null}±{N(r.scatterS).toFixed(2)}s{/if}
+                    </td>
+                    <td class="num">{fl(r.bestS)}</td>
+                    <td class="num">{fl(r.idealS)}</td>
+                    <td class="num">
+                      {#if r.balance}
+                        <span
+                          title={`front ${(N(r.balance[1]) * 100).toFixed(0)}% / rear ${(N(r.balance[2]) * 100).toFixed(0)}% of grip limit`}
+                          >{N(r.balance[0]) > 0 ? "+" : ""}{N(r.balance[0]).toFixed(2)}</span>
+                      {:else}–{/if}
+                    </td>
+                    <td>{r.note ?? ""}</td>
+                    <td></td>
+                    <td>
+                      {#if r.driftS != null}
+                        <span title="delta vs the previous run of this state: pure driver/track drift"
+                          >drift {sgn(r.driftS)}</span>
+                      {/if}
+                    </td>
+                    <td></td><td></td><td></td>
+                  </tr>
+                {/each}
+              {/if}
             {/each}
           </tbody>
         </table>

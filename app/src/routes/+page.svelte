@@ -24,26 +24,34 @@
   let lastStep = $derived(app.advice?.steps.at(-1) ?? null);
   let prevStep = $derived(app.advice?.steps.at(-2) ?? null);
 
-  // Verdict headline for the last run, honest about weak comparisons.
+  // A step is one setup state: a run plus any consecutive same-setup
+  // corroboration runs pooled behind it.
+  type Step = NonNullable<typeof lastStep>;
+  const runLabel = (st: Step) => (st.first === st.last ? `run ${st.first}` : `runs ${st.first}-${st.last}`);
+  const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+  // Verdict headline for the last state, honest about weak comparisons.
   let verdict = $derived.by(() => {
     const st = lastStep;
     if (!st?.outcome) return null;
-    const runN = app.advice!.steps.length;
+    const label = cap(runLabel(st));
+    const prevLabel = prevStep ? runLabel(prevStep) : "the previous run";
     if ("error" in st.outcome) {
-      return { tone: "meh", text: `Run ${runN}: not comparable: ${st.outcome.error}` };
+      return { tone: "meh", text: `${label}: not comparable: ${st.outcome.error}` };
     }
     const d = Math.abs(st.outcome.deltaS ?? 0).toFixed(2);
     const word = st.outcome.word;
+    const pooled = st.first !== st.last ? ` (${st.runs.length} same-setup runs pooled)` : "";
     if (word === "drift")
       return {
         tone: "meh",
-        text: `Run ${runN}: same setup as run ${runN - 1}, corroboration run (${d}s is drift, not a change effect)`,
+        text: `${label}: same setup as ${prevLabel}, corroboration (${d}s is drift, not a change effect)`,
       };
     if (word === "improved")
-      return { tone: "ok", text: `Run ${runN}: ${d}s faster than run ${runN - 1}. Your last change worked` };
+      return { tone: "ok", text: `${label}: ${d}s faster than ${prevLabel}${pooled}. Your last change worked` };
     if (word === "WORSE")
-      return { tone: "bad", text: `Run ${runN}: ${d}s slower than run ${runN - 1}. Your last change hurt` };
-    return { tone: "meh", text: `Run ${runN}: within noise of run ${runN - 1} (${d}s), inconclusive` };
+      return { tone: "bad", text: `${label}: ${d}s slower than ${prevLabel}${pooled}. Your last change hurt` };
+    return { tone: "meh", text: `${label}: within noise of ${prevLabel} (${d}s), inconclusive` };
   });
 
   // The verdict is a 2-of-3 vote (ideal / best / median lap). When the
@@ -96,7 +104,7 @@
   // Mini trajectory tail for the Last-run card (newest last, numbered).
   let recentSteps = $derived.by(() => {
     const steps = app.advice?.steps ?? [];
-    return steps.slice(-4).map((st, i) => ({ st, n: steps.length - Math.min(4, steps.length) + i + 1 }));
+    return steps.slice(-4);
   });
   let shownFacts = $derived(
     app.session
@@ -214,9 +222,9 @@
         </div>
         {#if recentSteps.length}
           <div class="dash-steps">
-            {#each recentSteps as { st, n } (n)}
+            {#each recentSteps as st (st.first)}
               <div class="row">
-                <span style="color:var(--ink-2);flex:none">run {n}</span>
+                <span style="color:var(--ink-2);flex:none">{runLabel(st)}</span>
                 <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{st.note || "baseline"}</span>
                 <span class="num">
                   {#if st.outcome && !("error" in st.outcome)}

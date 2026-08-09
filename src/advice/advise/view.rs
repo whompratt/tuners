@@ -11,30 +11,63 @@ pub struct StepFamily {
     pub channel: &'static str,
 }
 
-pub struct StepView {
+/// One run inside a step's setup state. A step with 2+ runs pools
+/// consecutive same-setup corroboration runs; the per-run detail lives here.
+pub struct RunView {
+    /// 1-based run number in the trajectory (stint order).
+    pub n: usize,
     pub path: String,
     pub laps: usize,
     pub best_s: f32,
     pub ideal_s: f32,
-    /// Sample sd of the stint's flying-lap times (None under 3 laps).
+    /// Sample sd of this run's flying-lap times (None under 3 laps).
+    pub scatter_s: Option<f32>,
+    /// (understeer index, front slip frac, rear slip frac).
+    pub balance: Option<(f32, f32, f32)>,
+    /// A note carried by a non-head run (rare: a hand-tagged journal line
+    /// with no setup change, e.g. "suspect").
+    pub note: Option<String>,
+    /// Verdict delta vs the previous run of the same state: pure
+    /// driver/track drift. None for the state's first run, or when the runs
+    /// aren't comparable.
+    pub drift_s: Option<f32>,
+}
+
+/// One trajectory row = one SETUP STATE: a run plus any consecutive
+/// same-setup runs after it (corroboration, pooled). The row's numbers are
+/// the pooled state's; `runs` keeps the per-run detail.
+pub struct StepView {
+    /// 1-based run span this state covers (first == last: a single run).
+    pub first: usize,
+    pub last: usize,
+    /// Member runs, oldest first (never empty).
+    pub runs: Vec<RunView>,
+    /// Flying laps across the state's runs.
+    pub laps: usize,
+    pub best_s: f32,
+    /// The pooled state profile's composite (optimal-lap) time.
+    pub ideal_s: f32,
+    /// Sample sd of the state's flying-lap times (None under 3 laps).
     /// REPORT-ONLY consistency channel: a change that shrinks scatter at
     /// equal pace made the car easier to drive, but no rule reads this yet
     /// (its same-setup noise floor is uncalibrated).
     pub scatter_s: Option<f32>,
-    /// (understeer index, front slip frac, rear slip frac).
+    /// (understeer index, front slip frac, rear slip frac), from the state's
+    /// freshest run that measured one.
     pub balance: Option<(f32, f32, f32)>,
     pub note: Option<String>,
     /// Slider positions relative to baseline, when the note trail supports them.
     pub pos: Option<(f32, f32)>,
-    /// Measured outcome vs the previous step: Ok((word, verdict delta,
-    /// unequal laps)) or Err(reason) when not comparable. None for the first
-    /// step. The delta is the 2-of-3 vote (median of ideal/best/median-lap).
+    /// Measured outcome vs the previous STATE (pooled profiles both sides):
+    /// Ok((word, verdict delta, unequal laps)) or Err(reason) when not
+    /// comparable. None for the first state. The delta is the 2-of-3 vote
+    /// (median of ideal/best/median-lap).
     pub outcome: Option<Result<(&'static str, f32, bool), String>>,
-    /// The vote's component deltas vs the previous step (ideal, best,
+    /// The vote's component deltas vs the previous state (ideal, best,
     /// median lap), for disagreement hedges. Set whenever outcome is Ok.
     pub currencies: Option<(f32, f32, f32)>,
-    /// Where the time moved vs the previous step: (corner entry, corner exit,
-    /// straights). Corner total = entry + exit.
+    /// Where the time moved vs the previous state: (corner entry, corner
+    /// exit, straights). Corner total = entry + exit.
     pub split: Option<(f32, f32, f32)>,
     /// The step's honest setup-state verdict when its minimal-diff ancestor
     /// is NOT the previous step (chained experiments make the neighbor

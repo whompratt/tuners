@@ -264,9 +264,6 @@ impl CampaignStint {
 #[derive(Clone, Copy)]
 pub(crate) struct PairVerdict {
     pub verdict_s: f32,
-    pub ideal_s: f32,
-    pub best_s: f32,
-    pub median_lap_s: f32,
     pub attr: analysis::attribution::Attribution,
 }
 
@@ -594,9 +591,6 @@ pub(crate) fn load_campaign<'s>(
         let vs_prev = stints.last().map(|prev: &CampaignStint| {
             analysis::compare::compare(prev.profile(), profile).map(|cmp| PairVerdict {
                 verdict_s: cmp.verdict_delta_s,
-                ideal_s: cmp.ideal_delta_s,
-                best_s: cmp.best_lap_delta_s,
-                median_lap_s: cmp.median_lap_delta_s,
                 attr: analysis::attribution::split_delta(prev.profile(), &cmp.bin_delta_s),
             })
         });

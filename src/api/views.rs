@@ -193,26 +193,53 @@ pub struct RowAnchorView {
     pub weak: bool,
 }
 
+/// One run inside a step's setup state (2+ runs = consecutive same-setup
+/// corroboration runs pooled into one row).
 #[derive(Serialize, Type, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct StepView {
+pub struct RunView {
+    /// 1-based run number in the trajectory.
+    pub n: u32,
     pub path: String,
     pub laps: u32,
     pub best_s: f32,
     pub ideal_s: f32,
-    /// Sample sd of flying-lap times (None under 3 laps). Report-only
-    /// consistency channel.
+    pub scatter_s: Option<f32>,
+    /// (understeer index, front slip frac, rear slip frac).
+    pub balance: Option<(f32, f32, f32)>,
+    /// A note carried by a non-head run (rare: hand-tagged, no setup change).
+    pub note: Option<String>,
+    /// Verdict delta vs the previous run of the same state: pure drift.
+    pub drift_s: Option<f32>,
+}
+
+/// One trajectory row = one setup state; numbers are the pooled state's.
+#[derive(Serialize, Type, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StepView {
+    /// 1-based run span this state covers (first == last: a single run).
+    pub first: u32,
+    pub last: u32,
+    /// Member runs, oldest first (never empty).
+    pub runs: Vec<RunView>,
+    /// Flying laps across the state's runs.
+    pub laps: u32,
+    pub best_s: f32,
+    pub ideal_s: f32,
+    /// Sample sd of the state's flying-lap times (None under 3 laps).
+    /// Report-only consistency channel.
     pub scatter_s: Option<f32>,
     /// (understeer index, front slip frac, rear slip frac).
     pub balance: Option<(f32, f32, f32)>,
     pub note: Option<String>,
     /// Slider positions relative to baseline, when the note trail supports them.
     pub pos: Option<(f32, f32)>,
+    /// Outcome vs the previous state (pooled profiles both sides).
     pub outcome: Option<OutcomeView>,
-    /// The vote's component deltas vs the previous step (ideal, best, median
+    /// The vote's component deltas vs the previous state (ideal, best, median
     /// lap); the outcome's deltaS is their median. For disagreement hedges.
     pub currencies: Option<(f32, f32, f32)>,
-    /// Where the time moved vs the previous step: (entry, exit, straights).
+    /// Where the time moved vs the previous state: (entry, exit, straights).
     pub split: Option<(f32, f32, f32)>,
     pub anchor: Option<RowAnchorView>,
     /// Families this step's note changed, each with its judged channel.
@@ -340,7 +367,23 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
             .steps
             .iter()
             .map(|s| StepView {
-                path: s.path.clone(),
+                first: s.first as u32,
+                last: s.last as u32,
+                runs: s
+                    .runs
+                    .iter()
+                    .map(|r| RunView {
+                        n: r.n as u32,
+                        path: r.path.clone(),
+                        laps: r.laps as u32,
+                        best_s: r.best_s,
+                        ideal_s: r.ideal_s,
+                        scatter_s: r.scatter_s,
+                        balance: r.balance,
+                        note: r.note.clone(),
+                        drift_s: r.drift_s,
+                    })
+                    .collect(),
                 laps: s.laps as u32,
                 best_s: s.best_s,
                 ideal_s: s.ideal_s,

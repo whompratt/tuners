@@ -852,6 +852,72 @@ fn consecutive_same_setup_stints_group() {
     assert_eq!(groups, vec![0, 0, 2, 2, 4, 5, 5, 7]);
 }
 
+/// Consecutive same-setup runs collapse into ONE trajectory row: the state
+/// row pools their laps and judges vs the previous STATE (pooled profiles
+/// both sides), member runs ride along with per-run drift deltas, and a
+/// setup change starts a new row.
+#[test]
+fn trajectory_rows_pool_same_setup_runs() {
+    use crate::advice::tuning::{Revision, TuningSession};
+    let dir = std::env::temp_dir().join(format!("tuners-steppool-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // Four stints: baseline, corroboration repeat, arb change, repeat.
+    let stamps = [
+        "20260101-080000",
+        "20260101-083000",
+        "20260101-090000",
+        "20260101-093000",
+    ];
+    for stamp in stamps {
+        write_stint_with_laps(&dir.join(format!("stint-{stamp}.ftel")));
+    }
+    let rev = |stamp: &str, arb: &str| Revision {
+        stamp: stamp.into(),
+        values: [("arb_front".to_string(), arb.to_string())].into(),
+    };
+    let session = TuningSession {
+        car: Some(42),
+        revisions: vec![rev("20260101-075000", "30"), rev("20260101-085900", "28")],
+        ..Default::default()
+    };
+    let session_path = dir.join("tune-session.txt");
+    session.save(&session_path).unwrap();
+    let sd = dir.to_string_lossy();
+    let journal_path = dir.join("tune-journal.txt");
+    std::fs::write(
+        &journal_path,
+        format!(
+            "{sd}/stint-20260101-080000.ftel | baseline\n\
+             {sd}/stint-20260101-090000.ftel | front arb -2\n"
+        ),
+    )
+    .unwrap();
+
+    let v = advise(&journal_path.to_string_lossy(), &session_path, &sd).unwrap();
+    assert_eq!(v.steps.len(), 2, "four runs, two setup states");
+    let (a, b) = (&v.steps[0], &v.steps[1]);
+    assert_eq!((a.first, a.last), (1, 2));
+    assert_eq!((b.first, b.last), (3, 4));
+    for st in [a, b] {
+        assert_eq!(st.runs.len(), 2);
+        assert_eq!(
+            st.laps,
+            st.runs.iter().map(|r| r.laps).sum::<usize>(),
+            "state row pools its members' laps"
+        );
+        assert!(st.runs[0].drift_s.is_none(), "head has no drift delta");
+        assert!(st.runs[1].drift_s.is_some(), "repeat carries its drift");
+    }
+    let (word, ..) = b
+        .outcome
+        .as_ref()
+        .expect("second state has an outcome")
+        .as_ref()
+        .expect("states comparable");
+    assert_ne!(*word, "drift", "a setup change is judged, not drift");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The setup-lint tier (plan 016): bump/rebound band, dampers-mirror-springs
 /// inconsistency, and ride-height-above-minimum all fire from tune state,
 /// phrase themselves as convention, and defer to existing evidence on the

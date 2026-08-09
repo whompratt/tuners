@@ -345,55 +345,109 @@ pub fn advise(
     }
     let n = c.stints.len();
 
+    // One trajectory row per SETUP STATE: a consecutive same-setup group is
+    // one experiment corroborated over several runs, and its honest outcome
+    // is state-vs-state on the pooled profiles (the per-run neighbor verdict
+    // on a 1-lap p2p run is a coin flip the measurements already refuse to
+    // judge on). Per-run detail rides along in `runs`.
+    let heads: Vec<usize> = (0..n).filter(|&k| c.groups[k] == k).collect();
     let mut steps = Vec::new();
-    for (i, cs) in c.stints.iter().enumerate() {
+    for (gi, &g) in heads.iter().enumerate() {
+        let members: Vec<usize> = (g..n).take_while(|&m| c.groups[m] == g).collect();
+        let e = *members.last().expect("group has its head");
+        let runs: Vec<RunView> = members
+            .iter()
+            .map(|&m| {
+                let cs = &c.stints[m];
+                RunView {
+                    n: m + 1,
+                    path: cs.entry.path.clone(),
+                    laps: cs.profile().laps.len(),
+                    best_s: cs.profile().best_lap_time_s,
+                    ideal_s: cs.profile().composite.time_s,
+                    scatter_s: lap_scatter(cs.profile()),
+                    balance: cs.met.as_ref().and_then(|m| {
+                        Some((
+                            m.understeer_index?,
+                            m.cornering_front_slip?,
+                            m.cornering_rear_slip?,
+                        ))
+                    }),
+                    note: (m > g)
+                        .then(|| {
+                            cs.entry
+                                .note
+                                .as_deref()
+                                .map(|n| crate::advice::tuning::display_note(n, &session.facts))
+                        })
+                        .flatten(),
+                    drift_s: (m > g)
+                        .then(|| {
+                            cs.vs_prev
+                                .as_ref()
+                                .and_then(|r| r.as_ref().ok().map(|pv| pv.verdict_s))
+                        })
+                        .flatten(),
+                }
+            })
+            .collect();
+        let sp = c.state_profile(g);
         let mut split = None;
         let mut currencies = None;
-        let outcome = match (i, &cs.vs_prev) {
-            (0, _) | (_, None) => None,
-            (_, Some(Ok(pv))) => {
-                split = Some((
-                    pv.attr.entry_delta_s,
-                    pv.attr.exit_delta_s,
-                    pv.attr.straight_delta_s,
-                ));
-                currencies = Some((pv.ideal_s, pv.best_s, pv.median_lap_s));
-                // A consecutive same-setup repeat is a corroboration run,
-                // not an experiment: its delta is pure drift, and judging it
-                // would read as a failed change.
-                let word = if c.groups[i] == c.groups[i - 1] {
-                    "drift"
-                } else {
-                    journal::judge(pv.verdict_s).word()
-                };
-                Some(Ok((
-                    word,
-                    pv.verdict_s,
-                    c.stints[i - 1].profile().laps.len() != cs.profile().laps.len(),
-                )))
+        let outcome = (gi > 0).then(|| {
+            let prev = g - 1; // last run of the previous state
+            match analysis::compare::compare(c.state_profile(prev), sp) {
+                Ok(cmp) => {
+                    let attr =
+                        analysis::attribution::split_delta(c.state_profile(prev), &cmp.bin_delta_s);
+                    split = Some((attr.entry_delta_s, attr.exit_delta_s, attr.straight_delta_s));
+                    currencies = Some((
+                        cmp.ideal_delta_s,
+                        cmp.best_lap_delta_s,
+                        cmp.median_lap_delta_s,
+                    ));
+                    // Adjacent states with identical setups (a group break on
+                    // standing-start character or an unpoolable repeat): the
+                    // delta is still pure drift, not a change effect.
+                    let word = match (c.setups[prev], c.setups[g]) {
+                        (Some(a), Some(b)) if crate::advice::tuning::diff_keys(a, b).is_empty() => {
+                            "drift"
+                        }
+                        _ => journal::judge(cmp.verdict_delta_s).word(),
+                    };
+                    Ok((
+                        word,
+                        cmp.verdict_delta_s,
+                        c.state_profile(prev).laps.len() != sp.laps.len(),
+                    ))
+                }
+                Err(e) => Err(e),
             }
-            (_, Some(Err(e))) => Some(Err(e.clone())),
-        };
+        });
+        let head = &c.stints[g];
         steps.push(StepView {
-            path: cs.entry.path.clone(),
-            laps: cs.profile().laps.len(),
-            best_s: cs.profile().best_lap_time_s,
-            ideal_s: cs.profile().composite.time_s,
-            scatter_s: lap_scatter(cs.profile()),
+            first: g + 1,
+            last: e + 1,
+            runs,
+            laps: sp.laps.len(),
+            best_s: sp.best_lap_time_s,
+            ideal_s: sp.composite.time_s,
+            scatter_s: lap_scatter(sp),
             currencies,
-            balance: cs.met.as_ref().and_then(|m| {
+            balance: members.iter().rev().find_map(|&m| {
+                let met = c.stints[m].met.as_ref()?;
                 Some((
-                    m.understeer_index?,
-                    m.cornering_front_slip?,
-                    m.cornering_rear_slip?,
+                    met.understeer_index?,
+                    met.cornering_front_slip?,
+                    met.cornering_rear_slip?,
                 ))
             }),
-            note: cs
+            note: head
                 .entry
                 .note
                 .as_deref()
                 .map(|n| crate::advice::tuning::display_note(n, &session.facts)),
-            pos: match c.positions[i] {
+            pos: match c.positions[g] {
                 (Some(f), Some(r)) if f != 0.0 || r != 0.0 => Some((f, r)),
                 _ => None,
             },
@@ -401,7 +455,8 @@ pub fn advise(
             split,
             anchor: None,
             families: {
-                let mut fams: Vec<journal::Family> = cs.changes.iter().map(|c| c.family).collect();
+                let mut fams: Vec<journal::Family> =
+                    head.changes.iter().map(|c| c.family).collect();
                 fams.dedup();
                 fams.into_iter()
                     .map(|f| StepFamily {
@@ -417,24 +472,25 @@ pub fn advise(
         });
     }
 
-    // Per-row honest verdicts: each step compared against its minimal-diff
-    // ancestor, shown only when that ancestor is NOT the previous step (the
+    // Per-row honest verdicts: each state compared against its minimal-diff
+    // ancestor, shown only when that ancestor is NOT the previous state (the
     // row's own outcome column already covers the neighbor) and not for the
-    // last step (the prominent anchor line below covers it).
-    for (j, step) in steps
+    // last state (the prominent anchor line below covers it).
+    for (gi, step) in steps
         .iter_mut()
         .enumerate()
-        .take(n.saturating_sub(1))
+        .take(heads.len().saturating_sub(1))
         .skip(1)
     {
-        let Some(sj) = c.setups[j] else { continue };
-        let Some((i, keys)) = min_diff_ancestor(&c.setups[..j], sj) else {
+        let g = heads[gi];
+        let Some(sg) = c.setups[g] else { continue };
+        let Some((i, keys)) = min_diff_ancestor(&c.setups[..g], sg) else {
             continue;
         };
-        if i == j - 1 {
-            continue;
+        if c.groups[i] == heads[gi - 1] {
+            continue; // the previous state: the row outcome covers it
         }
-        let Ok(cmp) = analysis::compare::compare(c.state_profile(i), c.state_profile(j)) else {
+        let Ok(cmp) = analysis::compare::compare(c.state_profile(i), c.state_profile(g)) else {
             continue;
         };
         step.anchor = Some(RowAnchor {
@@ -442,7 +498,7 @@ pub fn advise(
             areas: area_list(&keys).join(", "),
             delta_s: cmp.verdict_delta_s,
             word: journal::judge(cmp.verdict_delta_s).word(),
-            weak: c.thin(i, j),
+            weak: c.thin(i, g),
         });
     }
 

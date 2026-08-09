@@ -273,16 +273,37 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
              with your first tune change\n"
         );
     } else {
-        println!("tuning trajectory ({} stints):", view.steps.len());
-        for (i, step) in view.steps.iter().enumerate() {
-            let mut line = format!(
-                "  {}. {}  {} lap(s)  best {}  ideal {}",
-                i + 1,
-                step.path,
-                step.laps,
-                tuners::util::format_lap_time(step.best_s),
-                tuners::util::format_lap_time(step.ideal_s),
+        let stint_count = view.steps.last().map_or(0, |s| s.last);
+        if view.steps.len() == stint_count {
+            println!("tuning trajectory ({stint_count} stints):");
+        } else {
+            println!(
+                "tuning trajectory ({stint_count} stints, {} setup states):",
+                view.steps.len()
             );
+        }
+        for step in view.steps.iter() {
+            let pooled = step.runs.len() > 1;
+            let mut line = if pooled {
+                format!(
+                    "  {}-{}. {} same-setup runs pooled  {} lap(s)  best {}  ideal {}",
+                    step.first,
+                    step.last,
+                    step.runs.len(),
+                    step.laps,
+                    tuners::util::format_lap_time(step.best_s),
+                    tuners::util::format_lap_time(step.ideal_s),
+                )
+            } else {
+                format!(
+                    "  {}. {}  {} lap(s)  best {}  ideal {}",
+                    step.first,
+                    step.runs[0].path,
+                    step.laps,
+                    tuners::util::format_lap_time(step.best_s),
+                    tuners::util::format_lap_time(step.ideal_s),
+                )
+            };
             if let Some(sc) = step.scatter_s {
                 line.push_str(&format!("  scatter {sc:.2}s"));
             }
@@ -346,6 +367,24 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                 }
             }
             println!("{line}");
+            if pooled {
+                for r in &step.runs {
+                    let mut rl = format!(
+                        "       {}. {}  {} lap(s)  best {}",
+                        r.n,
+                        r.path,
+                        r.laps,
+                        tuners::util::format_lap_time(r.best_s),
+                    );
+                    if let Some(d) = r.drift_s {
+                        rl.push_str(&format!("  (drift {d:+.2}s)"));
+                    }
+                    if let Some(note) = &r.note {
+                        rl.push_str(&format!("  - {note}"));
+                    }
+                    println!("{rl}");
+                }
+            }
         }
         let movers = |fx: &tuners::analysis::effects::Effects| {
             let m = tuners::analysis::effects::movers(fx, Some(&view.effect_floor));

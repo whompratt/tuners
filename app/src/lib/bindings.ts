@@ -397,6 +397,26 @@ export type RunFinishedEvent = {
 };
 
 /**
+ *  One run inside a step's setup state (2+ runs = consecutive same-setup
+ *  corroboration runs pooled into one row).
+ */
+export type RunView = {
+	/**  1-based run number in the trajectory. */
+	n: number,
+	path: string,
+	laps: number,
+	bestS: number | null,
+	idealS: number | null,
+	scatterS: number | null,
+	/**  (understeer index, front slip frac, rear slip frac). */
+	balance: [number | null, number | null, number | null] | null,
+	/**  A note carried by a non-head run (rare: hand-tagged, no setup change). */
+	note: string | null,
+	/**  Verdict delta vs the previous run of the same state: pure drift. */
+	driftS: number | null,
+};
+
+/**
  *  The newest recording rotated (covers external capture too): refresh run
  *  lists.
  */
@@ -481,14 +501,20 @@ export type StepFamilyView = {
 	channel: string,
 };
 
+/**  One trajectory row = one setup state; numbers are the pooled state's. */
 export type StepView = {
-	path: string,
+	/**  1-based run span this state covers (first == last: a single run). */
+	first: number,
+	last: number,
+	/**  Member runs, oldest first (never empty). */
+	runs: RunView[],
+	/**  Flying laps across the state's runs. */
 	laps: number,
 	bestS: number | null,
 	idealS: number | null,
 	/**
-	 *  Sample sd of flying-lap times (None under 3 laps). Report-only
-	 *  consistency channel.
+	 *  Sample sd of the state's flying-lap times (None under 3 laps).
+	 *  Report-only consistency channel.
 	 */
 	scatterS: number | null,
 	/**  (understeer index, front slip frac, rear slip frac). */
@@ -496,13 +522,14 @@ export type StepView = {
 	note: string | null,
 	/**  Slider positions relative to baseline, when the note trail supports them. */
 	pos: [number | null, number | null] | null,
+	/**  Outcome vs the previous state (pooled profiles both sides). */
 	outcome: OutcomeView | null,
 	/**
-	 *  The vote's component deltas vs the previous step (ideal, best, median
+	 *  The vote's component deltas vs the previous state (ideal, best, median
 	 *  lap); the outcome's deltaS is their median. For disagreement hedges.
 	 */
 	currencies: [number | null, number | null, number | null] | null,
-	/**  Where the time moved vs the previous step: (entry, exit, straights). */
+	/**  Where the time moved vs the previous state: (entry, exit, straights). */
 	split: [number | null, number | null, number | null] | null,
 	anchor: RowAnchorView | null,
 	/**  Families this step's note changed, each with its judged channel. */
