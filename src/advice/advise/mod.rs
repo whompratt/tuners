@@ -415,11 +415,36 @@ pub fn advise(
                         }
                         _ => journal::judge(cmp.verdict_delta_s).word(),
                     };
-                    Ok((
+                    let d = cmp.verdict_delta_s;
+                    let (confidence, why) = if word == "drift" {
+                        (None, None)
+                    } else if c.thin(prev, g) {
+                        (Some("low"), Some("single lap on a side; corroborate"))
+                    } else if c.weak_pair(prev, g) {
+                        (Some("low"), Some("suspect-tagged run in the comparison"))
+                    } else if c.drift_floor.is_some_and(|(_, f)| d.abs() <= f) {
+                        (Some("low"), Some("margin within the measured drift"))
+                    } else if d.signum() != cmp.ideal_delta_s.signum()
+                        && (d.abs() >= 0.05 || cmp.ideal_delta_s.abs() >= 0.05)
+                    {
+                        (
+                            Some("medium"),
+                            Some("optimal-lap read overruled by the vote"),
+                        )
+                    } else if c.drift_floor.is_none() {
+                        (
+                            Some("medium"),
+                            Some("no same-setup drift floor measured yet"),
+                        )
+                    } else {
+                        (Some("high"), None)
+                    };
+                    Ok(StepOutcome {
                         word,
-                        cmp.verdict_delta_s,
-                        c.state_profile(prev).laps.len() != sp.laps.len(),
-                    ))
+                        delta_s: d,
+                        confidence,
+                        why,
+                    })
                 }
                 Err(e) => Err(e),
             }

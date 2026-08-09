@@ -33,6 +33,22 @@ pub struct RunView {
     pub drift_s: Option<f32>,
 }
 
+/// A judged state-vs-state comparison with its confidence readout, from the
+/// campaign's own evidence. LOW: a single-lap or splice-untrusted side, a
+/// suspect-tagged run, or a margin inside the measured same-setup drift.
+/// MEDIUM: the optimal-lap component lost the 2-of-3 vote, or no drift
+/// floor is measured yet. HIGH: corroborated both sides, clear of the
+/// floor, currencies aligned.
+pub struct StepOutcome {
+    pub word: &'static str,
+    pub delta_s: f32,
+    /// "high" | "medium" | "low". None on drift rows: a same-setup repeat
+    /// measures noise, there is no verdict to trust.
+    pub confidence: Option<&'static str>,
+    /// The deciding reason when confidence is below high.
+    pub why: Option<&'static str>,
+}
+
 /// One trajectory row = one SETUP STATE: a run plus any consecutive
 /// same-setup runs after it (corroboration, pooled). The row's numbers are
 /// the pooled state's; `runs` keeps the per-run detail.
@@ -59,10 +75,9 @@ pub struct StepView {
     /// Slider positions relative to baseline, when the note trail supports them.
     pub pos: Option<(f32, f32)>,
     /// Measured outcome vs the previous STATE (pooled profiles both sides):
-    /// Ok((word, verdict delta, unequal laps)) or Err(reason) when not
-    /// comparable. None for the first state. The delta is the 2-of-3 vote
-    /// (median of ideal/best/median-lap).
-    pub outcome: Option<Result<(&'static str, f32, bool), String>>,
+    /// Err(reason) when not comparable, None for the first state. The delta
+    /// is the 2-of-3 vote (median of ideal/best/median-lap).
+    pub outcome: Option<Result<StepOutcome, String>>,
     /// The vote's component deltas vs the previous state (ideal, best,
     /// median lap), for disagreement hedges. Set whenever outcome is Ok.
     pub currencies: Option<(f32, f32, f32)>,

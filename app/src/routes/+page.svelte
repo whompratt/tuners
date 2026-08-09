@@ -54,17 +54,13 @@
     return { tone: "meh", text: `${label}: within noise of ${prevLabel} (${d}s), inconclusive` };
   });
 
-  // The verdict is a 2-of-3 vote (ideal / best / median lap). When the
-  // spliced ideal lost the vote, one honest line says so; detail lives on
-  // the Analysis screen.
-  let voteNote = $derived.by(() => {
-    const st = lastStep;
-    if (st?.outcome && !("error" in st.outcome) && st.outcome.word === "drift") return null;
-    const v = st?.outcome && !("error" in st.outcome) ? st.outcome.deltaS : null;
-    const ideal = st?.currencies?.[0];
-    if (v == null || ideal == null) return null;
-    if (Math.sign(v) === Math.sign(ideal) || (Math.abs(v) < 0.05 && Math.abs(ideal) < 0.05)) return null;
-    return "best and median lap agreed against the optimal-lap comparison here; the verdict follows the majority";
+  // Verdict trust readout: the engine grades each comparison from its own
+  // evidence (corroboration, suspect tags, drift floor, currency agreement);
+  // Home hedges only when it's below high. Detail lives on Analysis.
+  let confNote = $derived.by(() => {
+    const o = lastStep?.outcome;
+    if (!o || "error" in o || o.word === "drift" || !o.confidence || o.confidence === "high") return null;
+    return `${o.confidence} confidence${o.why ? `: ${o.why}` : ""}`;
   });
 
   // Consequence display for compound runs where several families changed at
@@ -200,14 +196,11 @@
             <div class="dash-line">recording; the verdict lands here when the run ends</div>
           {:else if verdict}
             <div class="dash-verdict {verdict.tone}">{verdict.text}</div>
-            {#if voteNote}
-              <div class="dash-line">{voteNote}</div>
+            {#if confNote}
+              <div class="dash-line">{confNote}</div>
             {/if}
             {#if consequence}
               <div class="dash-line" style="margin-top:6px">{consequence}</div>
-            {/if}
-            {#if lastStep?.outcome && !("error" in lastStep.outcome) && lastStep.outcome.unequalLaps && prevStep}
-              <div class="dash-line">unequal lap counts ({prevStep.laps} vs {lastStep.laps}) bias this comparison</div>
             {/if}
           {:else if app.adviceLoading}
             <div class="dash-line">analyzing your runs…</div>

@@ -129,6 +129,9 @@
               <th title="cornering balance index (+ = understeer); hover a value for the front/rear grip shares">balance</th>
               <th>change</th>
               <th>pos F/R</th><th>outcome</th>
+              <th
+                title="how much to trust the verdict, from this campaign's own evidence: corroboration on both sides, suspect tags, the measured drift floor, and whether the optimal-lap read won the 2-of-3 vote"
+                >conf</th>
               <th title="corner-entry share of the delta">entry</th>
               <th title="corner-exit share of the delta">exit</th>
               <th title="straights share of the delta">straights</th>
@@ -227,6 +230,14 @@
                     {/if}
                   {/if}
                 </td>
+                <td>
+                  {#if st.outcome && !("error" in st.outcome) && st.outcome.confidence}
+                    <span
+                      style="color:{CONF_COLOR[st.outcome.confidence] || 'var(--muted)'}"
+                      title={st.outcome.why ?? "corroborated both sides, clear of the drift floor, currencies aligned"}
+                      >{st.outcome.confidence}</span>
+                  {/if}
+                </td>
                 {#if st.split}
                   {#each st.split as v, j (j)}
                     <td class="num"><span style="color:{dcol(v)}">{sgn(v)}</span></td>
@@ -265,6 +276,7 @@
                           >drift {sgn(r.driftS)}</span>
                       {/if}
                     </td>
+                    <td></td>
                     <td></td><td></td><td></td>
                   </tr>
                 {/each}

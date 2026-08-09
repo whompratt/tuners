@@ -908,13 +908,17 @@ fn trajectory_rows_pool_same_setup_runs() {
         assert!(st.runs[0].drift_s.is_none(), "head has no drift delta");
         assert!(st.runs[1].drift_s.is_some(), "repeat carries its drift");
     }
-    let (word, ..) = b
+    let so = b
         .outcome
         .as_ref()
         .expect("second state has an outcome")
         .as_ref()
         .expect("states comparable");
-    assert_ne!(*word, "drift", "a setup change is judged, not drift");
+    assert_ne!(so.word, "drift", "a setup change is judged, not drift");
+    assert!(
+        so.confidence.is_some(),
+        "a judged outcome carries a confidence readout"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

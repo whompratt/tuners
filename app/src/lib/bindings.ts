@@ -288,7 +288,15 @@ export type MeasurementView = {
 	effects: { [key in string]: number | null },
 };
 
-export type OutcomeView = ({ word: string; deltaS: number | null; unequalLaps: boolean }) & { error?: never } | ({ error: string }) & { deltaS?: never; unequalLaps?: never; word?: never };
+export type OutcomeView = ({ word: string; deltaS: number | null; 
+/**
+ *  "high" | "medium" | "low" trust in this verdict, from the
+ *  campaign's own evidence (corroboration, suspect tags, measured
+ *  drift floor, currency agreement). None on drift rows.
+ */
+confidence: string | null; 
+/**  The deciding reason when confidence is below high. */
+why: string | null }) & { error?: never } | ({ error: string }) & { confidence?: never; deltaS?: never; why?: never; word?: never };
 
 /**  One slider in the pending set: differs from the last DRIVEN revision. */
 export type PendingChange = {

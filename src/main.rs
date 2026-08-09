@@ -321,17 +321,24 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                 line.push_str(&format!("  [pos F {f:+.1} / R {r:+.1}]"));
             }
             match &step.outcome {
-                Some(Ok((word, delta, unequal))) => {
-                    if *word == "drift" {
+                Some(Ok(so)) => {
+                    if so.word == "drift" {
                         line.push_str(&format!(
-                            "  → same setup, corroboration run ({delta:+.2}s = drift)"
+                            "  → same setup, corroboration run ({:+.2}s = drift)",
+                            so.delta_s
                         ));
                     } else {
-                        line.push_str(&format!("  → {word} ({delta:+.2}s)"));
+                        line.push_str(&format!("  → {} ({:+.2}s)", so.word, so.delta_s));
                     }
-                    if *word != "drift"
+                    if let Some(conf) = so.confidence {
+                        match so.why {
+                            Some(why) => line.push_str(&format!("  [{conf}: {why}]")),
+                            None => line.push_str(&format!("  [{conf}]")),
+                        }
+                    }
+                    if so.word != "drift"
                         && let Some((id, bd, md)) = step.currencies
-                        && currencies_conflict(*delta, id)
+                        && currencies_conflict(so.delta_s, id)
                     {
                         line.push_str(&format!(
                             "  [vote: ideal {id:+.2}s overruled by best {bd:+.2}s + median {md:+.2}s]"
@@ -341,9 +348,6 @@ fn cmd_advise(args: &[String]) -> Result<(), String> {
                         line.push_str(&format!(
                             "  [entry {e:+.2}s / exit {x:+.2}s / straights {st:+.2}s]"
                         ));
-                    }
-                    if *unequal {
-                        line.push_str("  [unequal lap counts]");
                     }
                 }
                 Some(Err(e)) => line.push_str(&format!("  → not comparable ({e})")),

@@ -168,7 +168,12 @@ pub enum OutcomeView {
     Measured {
         word: String,
         delta_s: f32,
-        unequal_laps: bool,
+        /// "high" | "medium" | "low" trust in this verdict, from the
+        /// campaign's own evidence (corroboration, suspect tags, measured
+        /// drift floor, currency agreement). None on drift rows.
+        confidence: Option<String>,
+        /// The deciding reason when confidence is below high.
+        why: Option<String>,
     },
     NotComparable {
         error: String,
@@ -392,10 +397,11 @@ pub fn advise_view(v: &crate::advice::advise::AdviseView) -> AdviseView {
                 note: s.note.clone(),
                 pos: s.pos,
                 outcome: s.outcome.as_ref().map(|o| match o {
-                    Ok((word, delta, unequal)) => OutcomeView::Measured {
-                        word: word.to_string(),
-                        delta_s: *delta,
-                        unequal_laps: *unequal,
+                    Ok(so) => OutcomeView::Measured {
+                        word: so.word.to_string(),
+                        delta_s: so.delta_s,
+                        confidence: so.confidence.map(str::to_string),
+                        why: so.why.map(str::to_string),
                     },
                     Err(e) => OutcomeView::NotComparable { error: e.clone() },
                 }),
