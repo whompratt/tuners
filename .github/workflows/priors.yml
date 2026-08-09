@@ -1,0 +1,127 @@
+# Daily crowd-prior pipeline (plan 025 stage 4): pull the collection
+# bucket, ingest, rebuild the effect map, distill + sign the priors
+# artifact, and publish it — but only when its content actually changed.
+# The change gate is structural: `tuners priors fetch` seeds the data root
+# with the currently-published artifact, and `tuners priors build` leaves
+# it byte-identical (stamp included) when no new data landed, so a quiet
+# day costs a few runner-minutes and uploads nothing.
+#
+# This workflow is THE publisher. A maintainer-machine `tuners priors
+# build` sees local campaigns the bucket may lack, so its artifact can
+# differ — publish from here only, keep manual `r2 object put` for
+# bootstrap/emergencies (runbook in worker/README.md).
+#
+# Secrets: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY (S3 API
+# token scoped to the tuners-bundles bucket, Object Read & Write) and
+# PRIORS_SIGNING_KEY (base64 of the ed25519 PKCS#8 key; pubkey pinned in
+# src/advice/priors.rs). Same trust model as the release updater key.
+#
+# Caveat: GitHub disables cron workflows on public repos after 60 days
+# without repo activity. The failure mode is graceful (installs keep the
+# last artifact) but silent — re-enable from the Actions tab if it stops.
+name: priors
+
+on:
+  schedule:
+    # Daily, off the top of the hour (GitHub load-sheds :00 crons).
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: priors
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TUNERS_DATA: ${{ github.workspace }}/work
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # Only the CLI: the app crate would drag in webview deps for nothing.
+      - name: build tuners CLI
+        run: cargo build --release -p tuners
+
+      - name: install rclone
+        run: sudo apt-get update && sudo apt-get install -y rclone
+
+      - name: pull collection bucket
+        run: |
+          mkdir -p work
+          rclone sync r2:tuners-bundles work/inbox --exclude "_priors/**"
+          echo "$(find work/inbox -name '*.tar.zst' | wc -l) bundle(s) in the bucket"
+
+      - name: ingest
+        run: |
+          ./target/release/tuners ingest work/inbox \
+            --library work/library --quarantine work/quarantine
+
+      # Anything quarantined evaporates with the runner: keep it visible.
+      - name: report quarantine
+        run: |
+          if [ -d work/quarantine ] && [ -n "$(ls -A work/quarantine)" ]; then
+            echo "::warning::ingest quarantined bundles this run:"
+            find work/quarantine -name '*.reason.txt' -exec sh -c 'echo "$1"; cat "$1"' _ {} \;
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('work/quarantine/**') != '' }}
+        with:
+          name: quarantine
+          path: work/quarantine
+          retention-days: 14
+
+      # Seed the content gate with what installs currently see; a 404
+      # (nothing published yet) just means the gate compares against
+      # nothing and this run publishes.
+      - name: fetch published artifact
+        run: ./target/release/tuners priors fetch
+
+      - name: build artifact
+        id: build
+        run: |
+          echo "${{ secrets.PRIORS_SIGNING_KEY }}" | base64 -d > work/priors.key
+          chmod 600 work/priors.key
+          ./target/release/tuners priors build --key work/priors.key | tee build.out
+          if grep -q ": unchanged" build.out; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Artifact first, signature second: a client fetching in the gap
+      # fails verification, keeps its old artifact, and self-heals on its
+      # next poll (worker/README.md).
+      - name: publish
+        if: ${{ steps.build.outputs.changed == 'true' }}
+        run: |
+          rclone copyto work/crowd-priors.json r2:tuners-bundles/_priors/crowd-priors.json
+          rclone copyto work/crowd-priors.json.sig r2:tuners-bundles/_priors/crowd-priors.json.sig
+
+      # Verify through the worker, not the bucket: r2 reads can serve
+      # stale content right after an overwrite.
+      - name: verify published artifact
+        if: ${{ steps.build.outputs.changed == 'true' }}
+        run: |
+          curl -sf -D headers.txt -o served.json \
+            https://tuners-collect.jaker1342.workers.dev/v1/priors
+          cmp served.json work/crowd-priors.json
+          served_sig=$(grep -i '^x-priors-signature' headers.txt | cut -d' ' -f2 | tr -d '\r')
+          [ "$served_sig" = "$(cat work/crowd-priors.json.sig)" ]
+          echo "published and verified: $(wc -c < served.json) bytes"

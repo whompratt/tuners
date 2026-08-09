@@ -101,10 +101,15 @@ curl -i -X PUT --data-binary @/tmp/b.bin \
 
 ## Operations
 
-- **Publish the crowd priors** (also the pipeline's upload step): build the
-  signed artifact, then put both objects — artifact first, signature second
-  (a client fetching in the gap fails signature verification, keeps its old
-  artifact, and self-heals on its next poll):
+- **Publish the crowd priors**: the `priors` GitHub Actions workflow
+  (`.github/workflows/priors.yml`) is THE publisher — daily pull + ingest +
+  rebuild + content-gated upload from the bucket alone. A maintainer-machine
+  build sees local campaigns the bucket may lack, so its artifact differs;
+  publish manually only for bootstrap or emergencies, knowing the next
+  workflow run will replace it. The manual form: build the signed artifact,
+  then put both objects — artifact first, signature second (a client
+  fetching in the gap fails signature verification, keeps its old artifact,
+  and self-heals on its next poll):
 
   ```sh
   tuners priors build
