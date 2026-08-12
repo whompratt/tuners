@@ -349,7 +349,9 @@
           <div style="font-size:13px;color:var(--muted)">
             setup history:
             <select bind:value={histSel}>
-              {#each a.landscapes as l, i (l.area + l.phrase)}
+              <!-- index-keyed: view strings are not guaranteed unique, and a
+                   duplicate key in a keyed each kills the whole page render -->
+              {#each a.landscapes as l, i (i)}
                 <option value={i}>
                   {l.phrase}{l.vertex != null ? ` (optimum ≈ ${l.vertex})` : ""}, {l.measurements.length}
                   measurement{l.measurements.length === 1 ? "" : "s"}
@@ -368,7 +370,7 @@
                   <tr><th>steps</th><th>change</th><th>Δ ideal</th><th>entry</th><th>exit</th><th>straights</th><th></th></tr>
                 </thead>
                 <tbody>
-                  {#each land.measurements as m (m.fromStep + "-" + m.toStep + m.desc)}
+                  {#each land.measurements as m, mi (mi)}
                     <tr>
                       <td class="num">{m.fromStep}→{m.toStep}</td>
                       <td>{m.desc}</td>
@@ -399,7 +401,7 @@
         {/if}
       </div>
       {#if a.recommendations.length}
-        {#each a.recommendations as r (r.area + r.advice)}
+        {#each a.recommendations as r, ri (ri)}
           <details class="adv-rec" open={prefs.expandAdvice}>
             <summary style="cursor:pointer">
               <span class="adv-conf" style="color:{CONF_COLOR[r.confidence]}">[{confTag(r)}]</span>

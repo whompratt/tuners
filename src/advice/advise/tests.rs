@@ -953,6 +953,108 @@ fn trajectory_rows_pool_same_setup_runs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A family whose measurements span several sliders (arb AND springs) has no
+/// single landscape axis, so its phrase falls back to the FAMILY name — which
+/// must stay unique per landscape. Falling back to the shared area ("balance")
+/// gave front and rear roll identical phrases, and the app's keyed each threw
+/// on the duplicate, killing the whole Analysis screen (github issue 3).
+#[test]
+fn keyless_landscapes_get_distinct_family_phrases() {
+    use crate::advice::tuning::{Revision, TuningSession};
+    let dir = std::env::temp_dir().join(format!("tuners-landphrase-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let stamps = [
+        "20260101-080000",
+        "20260101-083000",
+        "20260101-090000",
+        "20260101-093000",
+        "20260101-100000",
+    ];
+    for stamp in stamps {
+        write_stint_with_laps(&dir.join(format!("stint-{stamp}.ftel")));
+    }
+    let base: Vec<(&str, &str)> = vec![
+        ("arb_f", "30"),
+        ("springs_f", "500"),
+        ("arb_r", "30"),
+        ("springs_r", "500"),
+    ];
+    let rev = |stamp: &str, over: &[(&str, &str)]| Revision {
+        stamp: stamp.into(),
+        values: base
+            .iter()
+            .chain(over)
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+    };
+    let session = TuningSession {
+        car: Some(42),
+        revisions: vec![
+            rev("20260101-075000", &[]),
+            rev("20260101-082900", &[("arb_f", "28")]),
+            rev("20260101-085900", &[("arb_f", "28"), ("springs_f", "470")]),
+            rev(
+                "20260101-092900",
+                &[("arb_f", "28"), ("springs_f", "470"), ("arb_r", "28")],
+            ),
+            rev(
+                "20260101-095900",
+                &[
+                    ("arb_f", "28"),
+                    ("springs_f", "470"),
+                    ("arb_r", "28"),
+                    ("springs_r", "470"),
+                ],
+            ),
+        ],
+        ..Default::default()
+    };
+    let session_path = dir.join("tune-session.txt");
+    session.save(&session_path).unwrap();
+    let sd = dir.to_string_lossy();
+    let journal_path = dir.join("tune-journal.txt");
+    std::fs::write(
+        &journal_path,
+        format!(
+            "{sd}/stint-20260101-080000.ftel | baseline\n\
+             {sd}/stint-20260101-083000.ftel | front arb -2\n\
+             {sd}/stint-20260101-090000.ftel | front springs -30 lb/in\n\
+             {sd}/stint-20260101-093000.ftel | rear arb -2\n\
+             {sd}/stint-20260101-100000.ftel | rear springs -30 lb/in\n"
+        ),
+    )
+    .unwrap();
+
+    let v = advise(&journal_path.to_string_lossy(), &session_path, &sd).unwrap();
+    let roll: Vec<&LandscapeView> = v
+        .landscapes
+        .iter()
+        .filter(|l| l.area == "balance")
+        .collect();
+    assert_eq!(roll.len(), 2, "front and rear roll each get a landscape");
+    for l in &roll {
+        assert!(l.key.is_none(), "mixed-slider family has no single axis");
+    }
+    let phrases: Vec<&str> = roll.iter().map(|l| l.phrase.as_str()).collect();
+    assert!(
+        phrases.contains(&"front roll") && phrases.contains(&"rear roll"),
+        "keyless landscapes phrase as their family, got {phrases:?}"
+    );
+    let mut keys: Vec<String> = v
+        .landscapes
+        .iter()
+        .map(|l| format!("{}{}", l.area, l.phrase))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(
+        keys.len(),
+        v.landscapes.len(),
+        "area+phrase unique per landscape"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The setup-lint tier (plan 016): bump/rebound band, dampers-mirror-springs
 /// inconsistency, and ride-height-above-minimum all fire from tune state,
 /// phrase themselves as convention, and defer to existing evidence on the

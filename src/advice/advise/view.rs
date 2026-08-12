@@ -170,7 +170,9 @@ pub struct MeasurementView {
 /// historically".
 pub struct LandscapeView {
     pub area: &'static str,
-    /// Slider label when the axis is a single known key, else the area.
+    /// Slider label when the axis is a single known key, else the family
+    /// name ("front roll") — unique per landscape, unlike the area, which
+    /// several families can share.
     pub phrase: String,
     pub key: Option<String>,
     /// (value, cumulative verdict delta s, samples), ascending by value.

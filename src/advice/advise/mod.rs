@@ -1043,7 +1043,7 @@ pub fn advise(
             phrase: key
                 .as_deref()
                 .map(|k| crate::advice::tuning::field_phrase(k).to_string())
-                .unwrap_or_else(|| journal::family_area(family).to_string()),
+                .unwrap_or_else(|| journal::family_key(family).to_string()),
             key,
             nodes: disp_nodes,
             provisional: disp_provisional,

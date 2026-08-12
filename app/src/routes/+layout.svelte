@@ -77,4 +77,22 @@
   {/each}
   {#if version}<div class="rail-version">v{version}</div>{/if}
 </nav>
-{@render children()}
+<!-- Render errors are not promise rejections: without a boundary a throw
+     mid-render leaves the screen half-built and the tab reads as dead
+     (the Analysis lockout). Keyed on pathname so a crashed screen never
+     poisons the others. -->
+{#key page.url.pathname}
+  <svelte:boundary onerror={(e) => console.error("render error", e)}>
+    {@render children()}
+    {#snippet failed(error, reset)}
+      <main class="screen">
+        <div class="hero">This screen hit a rendering bug.</div>
+        <div style="margin-top:8px;color:var(--muted);max-width:560px">
+          The rest of the app still works. This is a bug worth reporting:
+          <div style="margin-top:6px;font-family:monospace;font-size:12px">{String(error)}</div>
+        </div>
+        <button class="btn" style="margin-top:10px" onclick={reset}>try again</button>
+      </main>
+    {/snippet}
+  </svelte:boundary>
+{/key}
